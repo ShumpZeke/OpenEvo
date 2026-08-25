@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-surface-0 text-ink font-sans text-base antialiased;
+    overflow: hidden;
+  }
+  /* Dense console scrollbars: present but unobtrusive. */
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: theme(colors.surface.1); }
+  ::-webkit-scrollbar-thumb {
+    background: theme(colors.line.strong); border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: theme(colors.ink.faint); }
+  ::selection { background: theme(colors.info / 30%); }
+  /* Respect reduced-motion; there is little motion here by design. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .tabular { font-variant-numeric: tabular-nums; }
+}

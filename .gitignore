@@ -1,0 +1,23 @@
+# Environments and build output — reproduced by bootstrap, never committed
+.venv/
+node_modules/
+web/dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+
+# Runtime workspace: event logs, SQLite, checkpoints, sandboxes
+.evolution/
+openevolve_output/
+
+# The source handoff package (inputs, not project source)
+.handoff/
+
+.DS_Store
+*.log
+web/tsconfig.tsbuildinfo

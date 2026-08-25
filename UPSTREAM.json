@@ -1,0 +1,11 @@
+{
+  "upstream_repo": "https://github.com/codelion/openevolve",
+  "upstream_commit": "411fb59c886c18704caaffb611e17cf9e7d824d2",
+  "upstream_commit_date": "2026-07-18T18:45:47+05:30",
+  "upstream_subject": "Boolean metrics: fix formatting and exclude from fitness; README badges (#473)",
+  "upstream_version": "0.3.2",
+  "upstream_license": "Apache-2.0",
+  "vendored_paths": ["openevolve/", "scripts/", "configs/", "examples/", "tests/", "openevolve-run.py"],
+  "baseline_tests": {"passed": 437, "deselected_slow": 17, "subtests_passed": 43, "command": "pytest tests/ -m 'not slow'"},
+  "frozen_at": "2026-08-25T22:45:45+00:00"
+}

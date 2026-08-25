@@ -1,0 +1,25 @@
+max_iterations: 12
+checkpoint_interval: 4
+random_seed: 42
+llm:
+  primary_model: "evolution-local"
+  primary_model_weight: 1.0
+  api_base: "http://127.0.0.1:8765/v1"
+  api_key: "local-not-a-secret"
+  temperature: 0.7
+  max_tokens: 4000
+  timeout: 60
+prompt:
+  system_message: "You are improving a function minimization algorithm."
+database:
+  population_size: 40
+  archive_size: 15
+  num_islands: 3
+  migration_interval: 5
+  feature_dimensions: ["complexity", "diversity"]
+  feature_bins: 6
+evaluator:
+  timeout: 60
+  parallel_evaluations: 2
+diff_based_evolution: true
+max_code_length: 20000
