@@ -233,8 +233,53 @@ def render(broker_url: str, control_url: Optional[str], run_id: Optional[str]) -
                         f"↓{i.get('migrants_received', 0)}{RESET}"
                     )
 
+                out.extend(_route_quality_lines(control_url, target))
+
     out.append(_rule())
     return "\n".join(out)
+
+
+def _route_quality_lines(control_url: str, run_id: str) -> List[str]:
+    """
+    Mutation quality per route, alongside the reliability shown above.
+
+    The two are different questions and were measured coming apart: Ox Alpha at
+    26% success and a 284s p50 against a fallback at 100% and 112s. Reliability
+    alone would say "switch"; whether the slower route's mutations are better is
+    what this row answers.
+
+    Rendered only when a route has attempts, and never with a recommendation
+    the data does not support — the verdict comes from the tracker, which says
+    when the evidence is too thin rather than ranking noise.
+    """
+    q = _get(f"{control_url}/api/query/runs/{run_id}/route-quality", timeout=10.0)
+    routes = list((q or {}).get("routes", {}).values())
+    if not routes:
+        return []
+
+    out = [_rule("ROUTE QUALITY")]
+    out.append(f"  {DIM}{'route':<34}{'n':>4}{'fail':>6}{'dup':>6}"
+               f"{'valid':>7}{'improv':>8}{'mean s':>9}{'impr/req':>11}{RESET}")
+    for r in sorted(routes, key=lambda d: d.get("attempts", 0), reverse=True):
+        mean = r.get("mean_latency_s")
+        out.append(
+            f"  {r['route'][:33]:<34}"
+            f"{_fmt(r.get('attempts')):>4}"
+            f"{(RED if r.get('failures') else GREY) + _fmt(r.get('failures')) + RESET:>{6 + len(RED) + len(RESET)}}"
+            f"{_fmt(r.get('duplicates')):>6}"
+            f"{r.get('validity_rate', 0) * 100:>6.0f}%"
+            f"{r.get('improvement_rate', 0) * 100:>7.0f}%"
+            f"{(f'{mean:.0f}' if mean else '-'):>9}"
+            f"{r.get('improvement_per_request', 0):>11.4f}"
+        )
+
+    cov = (q or {}).get("coverage") or {}
+    if isinstance(cov, dict) and cov.get("note"):
+        out.append(f"  {GREY}{cov['note']}{RESET}")
+    verdict = ((q or {}).get("comparison") or {}).get("verdict")
+    if verdict:
+        out.append(f"  {DIM}verdict:{RESET} {verdict}")
+    return out
 
 
 def main() -> int:
