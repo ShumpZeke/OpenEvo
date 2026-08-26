@@ -22,9 +22,11 @@ Routes: GET /health · GET /v1/models · POST /v1/chat/completions
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -91,31 +93,43 @@ class BrokerState:
 def create_app(registry: Optional[Registry] = None,
                verify_on_start: bool = False) -> FastAPI:
     state = BrokerState(registry)
-    app = FastAPI(title="OE-MAX Broker", version=BROKER_VERSION)
-    app.state.oe = state
 
-    @app.on_event("startup")
-    async def _startup() -> None:
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI):
         # One shared client: connection reuse matters when a single evolution
         # run makes thousands of calls.
         state.client = httpx.AsyncClient(
             timeout=httpx.Timeout(180.0, connect=15.0),
             limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
         )
+        task: Optional[asyncio.Task] = None
         if verify_on_start:
-            try:
-                await state.registry.discover(state.client)
-                await state.registry.verify(state.client)
-                state.verified_at = time.time()
-            except Exception:
-                # A failed startup probe must not prevent the broker booting;
-                # /health reports the unverified state.
-                pass
+            # Deliberately NOT awaited. Verification smoke-tests every model on
+            # every usable provider, and each probe is a real completion: with
+            # the shipped catalogue it took ~65 seconds before the socket
+            # accepted anything, and it grows with every credential added.
+            #
+            # Meanwhile `run-evolution.sh` gives up on /health after 5 seconds
+            # and tells the operator the broker is not running — which is both
+            # wrong and the most confusing possible message, since they just
+            # started it.
+            #
+            # Serving immediately with unverified beliefs is what the broker
+            # does without `--verify` anyway, and those beliefs are corrected
+            # the moment the probe finishes. `verified_at` stays null until
+            # then, so nothing claims to be verified before it is.
+            task = asyncio.create_task(_verify_in_background(state))
+        try:
+            yield
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+            if state.client is not None:
+                await state.client.aclose()
 
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        if state.client is not None:
-            await state.client.aclose()
+    app = FastAPI(title="OE-MAX Broker", version=BROKER_VERSION,
+                  lifespan=_lifespan)
+    app.state.oe = state
 
     def _check_local_auth(request: Request) -> None:
         """
@@ -301,6 +315,30 @@ def create_app(registry: Optional[Registry] = None,
         return {"reset": f"{provider}/{model}"}
 
     return app
+
+
+async def _verify_in_background(state: "BrokerState") -> None:
+    """
+    Discover and smoke-test without holding up the socket.
+
+    Failures are swallowed for the same reason they were when this ran inline:
+    a failed startup probe must not stop the broker serving. `/health` reports
+    `verified_at: null`, which is the honest state — we have not verified,
+    rather than we verified and found nothing.
+    """
+    try:
+        await state.registry.discover(state.client)
+        # Discovery can create routes that did not exist when the chains were
+        # built: a catalogue provider has no models until its listing is
+        # fetched, so without this a newly credentialled provider would be
+        # discovered and never routed to.
+        state.router.refresh_chains()
+        await state.registry.verify(state.client)
+        state.verified_at = time.time()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        pass
 
 
 def _resolve_pinned(registry: Registry, model: str) -> Optional[Route]:
