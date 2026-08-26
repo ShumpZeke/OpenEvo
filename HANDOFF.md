@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 223 control plane + 142 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 223 control plane + 172 OE-MAX.
 
 ---
 
@@ -434,7 +434,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 223 control plane + 142 OE-MAX = 802 passing
+tests     437 upstream + 223 control plane + 172 OE-MAX = 832 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

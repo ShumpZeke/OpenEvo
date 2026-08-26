@@ -125,6 +125,7 @@ oe_max/
   evaluation/       G0 validity + G1 four-strength deduplication
   search/           mutation taxonomy + discounted Thompson sampling
   archives.py       hall of fame, Pareto front, novelty, failure memory
+  verification/     V1 property/metamorphic/randomized checks + counterexamples
   dashboard.py      terminal dashboard
 scripts/            operator scripts (.sh and .ps1) + upstream visualizer
 control_plane/
@@ -149,7 +150,7 @@ tests/              upstream suite (untouched) + tests/evolution
 |---|---|
 | Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
 | Control plane | **223 passed** |
-| OE-MAX (broker, limiter, gates, search, archives) | **142 passed** |
+| OE-MAX (broker, limiter, gates, search, archives, verification) | **172 passed** |
 | Web typecheck | clean |
 
 The upstream suite runs first: a change that breaks it is a regression in the

@@ -51,7 +51,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 223 control plane + 142 OE-MAX
+./test.sh     # 437 upstream + 223 control plane + 172 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -81,7 +81,8 @@ Full detail for each: `HANDOFF.md` §3.
 
 ```
 openevolve/     upstream engine — DO NOT EDIT
-oe_max/         provider broker, rate limiter, gates, search, archives
+oe_max/         provider broker, rate limiter, gates, search, archives,
+                verification
 control_plane/  telemetry, storage, APIs, sandbox isolation, runner
 web/            Control Center (React + TS)
 scripts/        operator scripts (.sh and .ps1)
