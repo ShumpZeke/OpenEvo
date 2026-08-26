@@ -273,6 +273,25 @@ def _route_quality_lines(control_url: str, run_id: str) -> List[str]:
             f"{r.get('improvement_per_request', 0):>11.4f}"
         )
 
+    tp = (q or {}).get("throughput") or {}
+    if isinstance(tp.get("candidates_per_request"), (int, float)):
+        dup = tp.get("duplicate_share")
+        dup_txt = f"{dup*100:.0f}%" if isinstance(dup, (int, float)) else "-"
+        distinct = tp.get("useful_candidates_per_request")
+        # Raw and distinct side by side on purpose: at N=3 the local run showed
+        # 2.42 raw against 0.75 distinct, and the raw number alone reads as a
+        # 2.4x win that is mostly the same program again.
+        distinct_txt = (f"{distinct:.2f}/req"
+                        if isinstance(distinct, (int, float)) else "-")
+        dup_colour = YELLOW if isinstance(dup, (int, float)) and dup > 0.5 else GREY
+        extra = tp.get("extra_offspring")
+        line = (f"  {DIM}yield{RESET} {tp['candidates_per_request']:.2f}/req   "
+                f"{DIM}distinct{RESET} {distinct_txt}   "
+                f"{DIM}duplicates{RESET} {dup_colour}{dup_txt}{RESET}")
+        if extra:
+            line += f"   {DIM}extra offspring{RESET} {extra}"
+        out.append(line)
+
     cov = (q or {}).get("coverage") or {}
     if isinstance(cov, dict) and cov.get("note"):
         out.append(f"  {GREY}{cov['note']}{RESET}")

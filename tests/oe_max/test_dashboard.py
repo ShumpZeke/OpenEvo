@@ -91,3 +91,36 @@ def test_a_missing_latency_renders_as_absent(fake_get):
     }
     text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
     assert "-" in text.split("\n")[-1]
+
+
+def test_yield_shows_raw_and_distinct_together(fake_get):
+    """
+    Raw yield alone reads as a win it is not: the local N=3 run showed 2.42 raw
+    against 0.75 distinct, and the difference was the same program again.
+    """
+    fake_get["route-quality"] = {
+        "routes": {"a/b": {"route": "a/b", "attempts": 12, "failures": 0,
+                           "duplicates": 0, "validity_rate": 1.0,
+                           "improvement_rate": 0.5, "mean_latency_s": 84.0,
+                           "improvement_per_request": 0.2}},
+        "throughput": {"candidates_per_request": 2.42,
+                       "useful_candidates_per_request": 0.75,
+                       "duplicate_share": 0.69, "extra_offspring": 17},
+        "coverage": {}, "comparison": {},
+    }
+    text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
+    assert "2.42/req" in text and "0.75/req" in text
+    assert "69%" in text
+    assert "17" in text
+
+
+def test_a_run_without_throughput_data_shows_no_yield_line(fake_get):
+    fake_get["route-quality"] = {
+        "routes": {"a/b": {"route": "a/b", "attempts": 1, "failures": 0,
+                           "duplicates": 0, "validity_rate": 1.0,
+                           "improvement_rate": 0.0, "mean_latency_s": 1.0,
+                           "improvement_per_request": 0.0}},
+        "coverage": {}, "comparison": {},
+    }
+    text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
+    assert "yield" not in text

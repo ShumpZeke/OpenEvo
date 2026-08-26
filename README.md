@@ -149,7 +149,7 @@ tests/              upstream suite (untouched) + tests/evolution
 |---|---|
 | Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
 | Control plane | **223 passed** |
-| OE-MAX (broker, limiter, gates, search, archives) | **140 passed** |
+| OE-MAX (broker, limiter, gates, search, archives) | **142 passed** |
 | Web typecheck | clean |
 
 The upstream suite runs first: a change that breaks it is a regression in the

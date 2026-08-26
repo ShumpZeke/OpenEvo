@@ -214,6 +214,7 @@ const pct = (v: unknown): string =>
 const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, runId }) => {
   const data = state.data;
   const routes: Json[] = Object.values(data?.routes ?? {});
+  const tp: Json = data?.throughput ?? {};
   const comparison: Json = data?.comparison ?? {};
   const coverage: Json = data?.coverage ?? {};
   const excluded: Record<string, string> = comparison.excluded_insufficient_data ?? {};
@@ -272,6 +273,36 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
           ))}
         </tbody>
       </Table>
+
+      {typeof tp.candidates_per_request === "number" && (
+        <div className="px-3 py-2 border-t border-line flex flex-wrap gap-x-6 gap-y-1">
+          <span className="text-2xs text-ink-faint">
+            <span className="uppercase tracking-wide">yield</span>{" "}
+            <span className="text-ink-dim">{tp.candidates_per_request.toFixed(2)} per request</span>
+          </span>
+          <span className="text-2xs text-ink-faint" title="Candidates whose code is distinct from every other candidate in the run. Raw yield that is not distinct is throughput that is not real.">
+            <span className="uppercase tracking-wide">distinct</span>{" "}
+            <span className="text-ink">
+              {typeof tp.useful_candidates_per_request === "number"
+                ? `${tp.useful_candidates_per_request.toFixed(2)} per request`
+                : "—"}
+            </span>
+          </span>
+          <span className="text-2xs text-ink-faint">
+            <span className="uppercase tracking-wide">duplicates</span>{" "}
+            <span className={typeof tp.duplicate_share === "number" && tp.duplicate_share > 0.5
+              ? "text-warn" : "text-ink-dim"}>
+              {typeof tp.duplicate_share === "number" ? pct(tp.duplicate_share) : "—"}
+            </span>
+          </span>
+          {tp.extra_offspring > 0 && (
+            <span className="text-2xs text-ink-faint">
+              <span className="uppercase tracking-wide">extra offspring</span>{" "}
+              <span className="text-ink-dim">{tp.extra_offspring}</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {(comparison.verdict || Object.keys(excluded).length > 0) && (
         <div className="px-3 py-2 border-t border-line space-y-1">
