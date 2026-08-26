@@ -17,6 +17,22 @@ exactly why:
     judged over several probes rather than one.
 
 Discovery therefore has two stages: list what exists, then prove what works.
+
+Re-probed 2026-08-26, and the primary route had **vanished**:
+
+  * `x-preview-f-free` (Ox Alpha) is gone from Zen. It is absent from
+    `/models`, and calling it returns `ModelError: Model x-preview-f-free is
+    not supported` — not an auth failure, which is what a paid model returns
+    (`AuthError: Missing API key`). The stealth preview the spec warned might
+    disappear, disappeared.
+  * Still serving keyless: `nemotron-3-ultra-free`, `laguna-s-2.1-free`,
+    `hy3-free`, `nemotron-3.5-lightning-free`.
+  * `muse-spark-1.2-contributor-free` is newly listed and returns HTTP 500.
+
+That is the argument for stage 0, added here: `reconcile()` crosses the live
+listing against what is configured, so a model that disappears is disabled by
+the next discovery instead of by someone noticing. Ox Alpha's removal cost a
+debugging session that a listing check would have answered immediately.
 """
 
 from __future__ import annotations
@@ -82,25 +98,64 @@ def build_default_registry(
         # deliberately generous; the router's retry path handles genuine hangs.
         timeout_s=600.0,
         models={
-            "ox_alpha": ModelSpec(
-                key="ox_alpha", id="x-preview-f-free", priority=100,
-                ephemeral_preview=True,
-                notes="Ox Alpha Free. Stealth preview, free for a limited time.",
-            ),
             "nemotron_ultra": ModelSpec(
-                key="nemotron_ultra", id="nemotron-3-ultra-free", priority=70,
-                notes="Free, tools verified working 2026-08-26.",
+                key="nemotron_ultra", id="nemotron-3-ultra-free", priority=100,
+                notes="Strongest verified-free Zen route. Re-probed 2026-08-26: "
+                      "HTTP 200 in 3.3s keyless, reasoning tokens reported. "
+                      "Promoted to primary when Ox Alpha was withdrawn.",
+            ),
+            "hy3": ModelSpec(
+                key="hy3", id="hy3-free", priority=70,
+                notes="Re-probed 2026-08-26: HTTP 200 in 2.1s keyless, "
+                      "43 reasoning tokens on a trivial prompt.",
+            ),
+            "laguna": ModelSpec(
+                key="laguna", id="laguna-s-2.1-free", priority=60,
+                notes="Re-probed 2026-08-26: HTTP 200 in 1.6s keyless, and the "
+                      "only free Zen route reporting ZERO reasoning tokens plus "
+                      "a prompt cache hit. Cheapest route per useful token, so "
+                      "it leads the fast/judge chains rather than the reasoners.",
             ),
             "nemotron_lightning": ModelSpec(
                 key="nemotron_lightning", id="nemotron-3.5-lightning-free",
-                priority=60, notes="Fast free route (~750ms observed).",
+                priority=55,
+                notes="Re-probed 2026-08-26: HTTP 200 but finish_reason=length "
+                      "with 64/64 completion tokens spent on hidden reasoning. "
+                      "Usable only with a large max_tokens — see HANDOFF 3.3. "
+                      "Named 'lightning' but measured slowest of the four (7.6s).",
             ),
-            "laguna": ModelSpec(
-                key="laguna", id="laguna-s-2.1-free", priority=55,
-                notes="Fast free route (~675ms observed).",
+            # Kept, disabled, deliberately. Deleting it would erase the record
+            # of what happened and let a future session re-add it from memory;
+            # `available=False` keeps it visible and lets `verify()` flip it
+            # back the moment the model returns.
+            "ox_alpha": ModelSpec(
+                key="ox_alpha", id="x-preview-f-free", priority=0,
+                ephemeral_preview=True, available=False,
+                notes="WITHDRAWN. Probed 2026-08-26: absent from /models, and "
+                      "POST returns `ModelError: Model x-preview-f-free is not "
+                      "supported` (a paid model returns `AuthError: Missing API "
+                      "key`, so this is removal, not gating). Was the configured "
+                      "primary. Re-enabled automatically if a probe finds it.",
             ),
-            "hy3": ModelSpec(
-                key="hy3", id="hy3-free", priority=50, notes="Free route.",
+            "mimo": ModelSpec(
+                key="mimo", id="mimo-v2.5-free", priority=0, available=False,
+                notes="Listed but exhausted: HTTP 429 `FreeUsageLimitError` on "
+                      "every attempt, 2026-08-26. Shared free pool, not a "
+                      "per-account rate limit. See Outcome.FREE_LIMIT_EXHAUSTED.",
+            ),
+            "deepseek_flash_free": ModelSpec(
+                key="deepseek_flash_free", id="deepseek-v4-flash-free",
+                priority=0, available=False,
+                notes="Listed but unserveable: HTTP 400 'Model is unavailable', "
+                      "unchanged between 2026-08-25 and 2026-08-26. The original "
+                      "evidence for two-stage discovery.",
+            ),
+            "muse_spark_contributor": ModelSpec(
+                key="muse_spark_contributor",
+                id="muse-spark-1.2-contributor-free", priority=0, available=False,
+                notes="Newly listed 2026-08-26; returns HTTP 500 'Internal server "
+                      "error'. The 'contributor' suffix suggests it is gated to "
+                      "OpenCode contributors. Not usable.",
             ),
         },
     )
@@ -140,10 +195,75 @@ def build_default_registry(
                 "OE_MAX_NIM_STATE", os.path.join(".evolution", "nim.window")),
         ),
         requires_key=True,
+        # NIM's catalogue endpoint is unauthenticated — verified 2026-08-26.
+        public_listing=True,
         timeout_s=120.0,
-        # Deliberately empty: NIM model IDs must be discovered live, not
-        # remembered. `discover` populates this.
-        models={},
+        # These were empty, on the principle that NIM model IDs must be
+        # discovered live rather than remembered. The principle is right and
+        # the empty table was the wrong way to honour it: it meant no chain
+        # could name a NIM route, so the whole provider was unreachable except
+        # by pinning a string nobody had verified.
+        #
+        # `reconcile()` is the better guarantee. Every id below was read out of
+        # NVIDIA's live catalogue on 2026-08-26 — `GET /v1/models` needs no
+        # credential, which is what makes this checkable — and any that stops
+        # appearing there is disabled by the next discovery. Config names the
+        # preference; the live listing remains the authority.
+        #
+        # NOT verified: inference itself. No NVIDIA_API_KEY exists in this
+        # environment, so every id below is catalogue-verified and
+        # response-unverified. `available` stays None (unprobed), never True.
+        models={
+            "nemotron_ultra_253b": ModelSpec(
+                key="nemotron_ultra_253b", id="nvidia/nemotron-3-ultra-550b-a55b",
+                priority=100,
+                notes="Flagship NIM reasoner. In catalogue 2026-08-26; "
+                      "inference UNVERIFIED (no key available).",
+            ),
+            "gpt_oss_120b": ModelSpec(
+                key="gpt_oss_120b", id="openai/gpt-oss-120b", priority=95,
+                notes="Strong open-weight reasoner. In catalogue 2026-08-26; "
+                      "inference UNVERIFIED.",
+            ),
+            "kimi_k3": ModelSpec(
+                key="kimi_k3", id="moonshotai/kimi-k3", priority=90,
+                notes="Agentic/coding strength. In catalogue 2026-08-26; "
+                      "inference UNVERIFIED.",
+            ),
+            "deepseek_v4_flash": ModelSpec(
+                key="deepseek_v4_flash", id="deepseek-ai/deepseek-v4-flash-0731",
+                priority=85,
+                notes="In catalogue 2026-08-26; inference UNVERIFIED. Note the "
+                      "id is date-suffixed — `deepseek-ai/deepseek-v4-pro`, "
+                      "which this project previously configured, is NOT in the "
+                      "catalogue at all.",
+            ),
+            "nemotron_super_120b": ModelSpec(
+                key="nemotron_super_120b", id="nvidia/nemotron-3-super-120b-a12b",
+                priority=80,
+                notes="In catalogue 2026-08-26; inference UNVERIFIED.",
+            ),
+            "minimax_m3": ModelSpec(
+                key="minimax_m3", id="minimaxai/minimax-m3", priority=75,
+                notes="In catalogue 2026-08-26; inference UNVERIFIED.",
+            ),
+            "codestral": ModelSpec(
+                key="codestral", id="mistralai/codestral-22b-instruct-v0.1",
+                priority=70,
+                notes="Code-specialised. In catalogue 2026-08-26; inference "
+                      "UNVERIFIED.",
+            ),
+            "nemotron_lightning_30b": ModelSpec(
+                key="nemotron_lightning_30b",
+                id="nvidia/nemotron-3.5-lightning-30b-a3b", priority=60,
+                notes="Fast tier. In catalogue 2026-08-26; inference UNVERIFIED.",
+            ),
+            "nemotron_nano_30b": ModelSpec(
+                key="nemotron_nano_30b", id="nvidia/nemotron-nano-3-30b-a3b",
+                priority=55,
+                notes="Fast tier. In catalogue 2026-08-26; inference UNVERIFIED.",
+            ),
+        },
     )
 
     return {p.name: p for p in (zen, openrouter, nim)}
@@ -159,6 +279,7 @@ class Registry:
         self.discovered: Dict[str, List[str]] = {}
         self.probes: List[ProbeResult] = []
         self.discovered_at: Optional[float] = None
+        self.reconciled: Dict[str, str] = {}
 
     def provider(self, name: str) -> Optional[ProviderAdapter]:
         return self.providers.get(name)
@@ -172,9 +293,13 @@ class Registry:
         """Stage 1: what does each provider claim to offer?"""
         out: Dict[str, List[str]] = {}
         for p in self.providers.values():
-            if not p.usable():
+            if not p.usable() and not p.public_listing:
                 out[p.name] = []
                 continue
+            # A provider with a public catalogue is listed even when we have no
+            # credential for it. Inference still needs the key; knowing whether
+            # a configured id exists does not, and that check is most valuable
+            # exactly when the provider is not yet set up.
             try:
                 out[p.name] = await p.list_models(client)
             except Exception as exc:
@@ -185,7 +310,56 @@ class Registry:
                 ))
         self.discovered = out
         self.discovered_at = time.time()
+        # Reconciling here rather than leaving it to callers: a check that must
+        # be remembered is a check that gets forgotten, which is precisely how
+        # the withdrawn primary survived in the chain.
+        self.reconciled = self.reconcile()
         return out
+
+    def reconcile(self) -> Dict[str, str]:
+        """
+        Stage 0: cross the live listing against what is configured.
+
+        Two-stage discovery answered "is a listed model serveable?". It never
+        asked the converse — "is a configured model still listed?" — and that
+        is the question that went unanswered when `x-preview-f-free` was
+        withdrawn. The chain kept leading with it, every request spent its
+        attempts on a model the provider had stopped acknowledging, and the
+        failure surfaced as slow degradation rather than as a missing model.
+
+        A listing is cheap, unauthenticated on both Zen and NIM, and unambiguous:
+        if a model is not in it, do not spend a request finding out.
+
+        Deliberately reversible. A model that reappears is re-enabled, because
+        the listing is evidence in both directions and a permanent disable
+        would need a human to undo a machine's observation.
+        """
+        changes: Dict[str, str] = {}
+        for p in self.providers.values():
+            listed = self.discovered.get(p.name)
+            if not listed:
+                # No listing means we failed to ask, not that the provider
+                # offers nothing. Disabling every model on a transport blip
+                # would be far worse than leaving belief untouched.
+                continue
+            listed_set = set(listed)
+            for spec in p.models.values():
+                label = f"{p.name}/{spec.id}"
+                if spec.id not in listed_set:
+                    if spec.available is not False:
+                        spec.available = False
+                        spec.notes = (spec.notes + " | ").lstrip(" |") + (
+                            "not present in the provider's live listing")
+                        changes[label] = "disabled: absent from listing"
+                elif spec.available is False and "not present in the provider" in spec.notes:
+                    # It came back. Only un-disable what *this* check disabled;
+                    # a model turned off by a failed smoke test must stay off
+                    # until a smoke test says otherwise.
+                    spec.available = None
+                    spec.notes = spec.notes.replace(
+                        " | not present in the provider's live listing", "")
+                    changes[label] = "re-listed: available pending probe"
+        return changes
 
     async def probe_model(
         self, client: httpx.AsyncClient, provider: ProviderAdapter,
@@ -243,5 +417,6 @@ class Registry:
             "providers": {n: p.to_dict() for n, p in self.providers.items()},
             "discovered": self.discovered,
             "discovered_at": self.discovered_at,
+            "reconciled": self.reconciled,
             "probes": [p.to_dict() for p in self.probes],
         }

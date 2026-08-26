@@ -34,12 +34,12 @@ from pydantic import BaseModel, Field
 
 from ..health import RetryPolicy, RouteHealth
 from ..providers.registry import Registry, build_default_registry
+from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
 from ..router import DEFAULT_CHAIN, NoRouteAvailable, Route, Router
 
-# The alias OpenEvolve is configured with. Requests naming it (or anything
-# unrecognised) go through the chain; naming a concrete model pins that route.
-PRIMARY_ALIAS = "oe-max-primary"
-BROKER_VERSION = "1.0.0"
+# Requests naming a role alias select that role's chain; naming a concrete
+# model pins that route; anything unrecognised falls to the default role.
+BROKER_VERSION = "1.1.0"
 
 
 class ChatMessage(BaseModel):
@@ -165,8 +165,16 @@ def create_app(registry: Optional[Registry] = None,
         """
         _check_local_auth(request)
         now = int(time.time())
-        data = [{"id": PRIMARY_ALIAS, "object": "model", "created": now,
-                 "owned_by": "oe-max"}]
+        # Aliases first: they are what a client should normally name, and a
+        # client picking the first entry of /v1/models gets a routed chain with
+        # failover rather than a single pinned provider.
+        data = [
+            {"id": alias, "object": "model", "created": now, "owned_by": "oe-max",
+             "oe_max": {"alias_for_role": role.value,
+                        "chain": [f"{pr}/{mk}" for pr, mk
+                                  in state.router.chains.get(role, [])]}}
+            for alias, role in ALIASES.items()
+        ]
         for pname, p in state.registry.providers.items():
             for spec in p.models.values():
                 data.append({
@@ -213,6 +221,7 @@ def create_app(registry: Optional[Registry] = None,
         params = {k: v for k, v in params.items() if v is not None}
 
         pinned = _resolve_pinned(state.registry, req.model)
+        role = None if pinned is not None else role_for_alias(req.model)
         try:
             if pinned is not None:
                 # Pinned means "this route, no failover" — not "no policy".
@@ -226,7 +235,7 @@ def create_app(registry: Optional[Registry] = None,
                 )
             else:
                 result = await state.router.chat(
-                    state.client, messages,
+                    state.client, messages, role=role,
                     require_tools=bool(req.tools), **params
                 )
         except NoRouteAvailable as e:
@@ -251,7 +260,9 @@ def create_app(registry: Optional[Registry] = None,
         body = dict(result.body or {})
         # Stamp provenance onto every response: the spec requires recording
         # which provider actually served each request.
-        body["oe_max"] = result.to_log()
+        stamped = result.to_log()
+        stamped["role"] = role.value if role is not None else "pinned"
+        body["oe_max"] = stamped
         return body
 
     # ------------------------------------------------------- operations
@@ -289,10 +300,10 @@ def _resolve_pinned(registry: Registry, model: str) -> Optional[Route]:
     """
     If the caller named a concrete configured model, pin that route.
 
-    Anything else — including the alias and unknown names — goes through the
-    chain, so a client that has not been told about the alias still works.
+    Anything else — a role alias, or a name we do not recognise — goes through
+    a chain, so a client that has not been told about the aliases still works.
     """
-    if not model or model == PRIMARY_ALIAS:
+    if not model or model in ALIASES:
         return None
     for p in registry.providers.values():
         if not p.usable():

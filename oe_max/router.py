@@ -1,11 +1,14 @@
 """
 Route selection and failover.
 
-Routing is a chain, not a single choice: Ox Alpha first (the operator's stated
-primary), then the alternate Ox route, then the strongest verified fallback.
+Routing is a chain, not a single choice, and there is one chain per *role*
+rather than one for everything — see `oe_max/roles.py` for why the free routes
+differ in kind and not merely in quality.
+
 The chain is data, so replacing a stealth-preview model is a config edit rather
-than a code change — which the spec requires precisely because Ox Alpha may
-vanish.
+than a code change. That provision was not theoretical: Ox Alpha, the
+operator's stated primary and the head of every chain here, was withdrawn from
+OpenCode Zen and probed gone on 2026-08-26. Replacing it was a table edit.
 
 Selection filters, then orders:
 
@@ -29,6 +32,7 @@ import httpx
 from .health import RetryPolicy, RouteHealth
 from .providers.base import ChatResult, Outcome, RETRYABLE, ProviderAdapter
 from .providers.registry import Registry
+from .roles import Role, build_chains
 
 
 @dataclass
@@ -41,16 +45,30 @@ class Route:
         return f"{self.provider}/{self.model_id}"
 
 
-# Default chain. Ox Alpha through Zen leads; OpenRouter is the alternate Ox
-# route; NIM is the specialist/fallback pool. Free Zen routes sit between so a
-# NIM key is not required for the system to keep working.
+# Default chain — the role-agnostic order, used when no role is named and as
+# the shared tail of every role chain.
+#
+# Ox Alpha led this list until 2026-08-26, when it stopped existing. What
+# replaced it is ordered by measurement: the verified-keyless Zen routes first
+# so the system works with no credentials at all, then the key-gated NIM pool,
+# which is stronger on paper and unverified here. `usable()` drops the NIM
+# entries automatically when NVIDIA_API_KEY is absent, so this one list serves
+# both the credentialled and the keyless install.
 DEFAULT_CHAIN: List[Tuple[str, str]] = [
-    ("opencode_zen", "ox_alpha"),
-    ("openrouter", "ox_alpha"),
     ("opencode_zen", "nemotron_ultra"),
-    ("opencode_zen", "nemotron_lightning"),
-    ("opencode_zen", "laguna"),
     ("opencode_zen", "hy3"),
+    ("opencode_zen", "laguna"),
+    ("opencode_zen", "nemotron_lightning"),
+    ("nvidia_nim", "nemotron_ultra_253b"),
+    ("nvidia_nim", "gpt_oss_120b"),
+    ("nvidia_nim", "kimi_k3"),
+    ("nvidia_nim", "deepseek_v4_flash"),
+    ("nvidia_nim", "nemotron_super_120b"),
+    ("nvidia_nim", "minimax_m3"),
+    ("nvidia_nim", "codestral"),
+    ("nvidia_nim", "nemotron_lightning_30b"),
+    ("nvidia_nim", "nemotron_nano_30b"),
+    ("openrouter", "ox_alpha"),
 ]
 
 
@@ -69,9 +87,16 @@ class Router:
         chain: Optional[List[Tuple[str, str]]] = None,
         retry: Optional[RetryPolicy] = None,
         health: Optional[RouteHealth] = None,
+        chains: Optional[Dict[Role, List[Tuple[str, str]]]] = None,
     ) -> None:
         self.registry = registry
         self.chain = list(chain if chain is not None else DEFAULT_CHAIN)
+        # Role chains are derived from the role-agnostic chain by default, so a
+        # caller that customises `chain` gets consistent role behaviour for
+        # free instead of silently keeping the shipped preferences.
+        self.chains: Dict[Role, List[Tuple[str, str]]] = (
+            chains if chains is not None else build_chains(self.chain)
+        )
         self.retry = retry or RetryPolicy()
         self.health = health or RouteHealth()
         self.request_log: List[Dict[str, Any]] = []
@@ -79,12 +104,15 @@ class Router:
 
     # -- selection -----------------------------------------------------
 
-    def candidates(self, require_tools: bool = False) -> Tuple[List[Route], Dict[str, str]]:
+    def candidates(
+        self, require_tools: bool = False, role: Optional[Role] = None,
+    ) -> Tuple[List[Route], Dict[str, str]]:
         routes: List[Route] = []
         reasons: Dict[str, str] = {}
         degraded: List[Tuple[Route, str, str]] = []
 
-        for provider_name, model_key in self.chain:
+        chain = self.chains.get(role, self.chain) if role is not None else self.chain
+        for provider_name, model_key in chain:
             p = self.registry.provider(provider_name)
             label = f"{provider_name}/{model_key}"
             if p is None:
@@ -107,10 +135,18 @@ class Router:
                 reasons[label] = "probed as not supporting tool calls"
                 continue
             if not self.health.allow(p.name, spec.id):
-                br = self.health.breaker(p.name, spec.id).to_dict()
-                reasons[label] = (
-                    f"circuit {br['state']}, {br['cooldown_remaining_s']}s remaining"
-                )
+                # Parking and the breaker both close a route, and reporting the
+                # wrong one sends an operator to debug the wrong thing: a
+                # parked route's breaker reads "closed, 0s remaining", which
+                # says the route is fine while it is being skipped.
+                parked = self.health.parked(p.name, spec.id)
+                if parked:
+                    reasons[label] = parked
+                else:
+                    br = self.health.breaker(p.name, spec.id).to_dict()
+                    reasons[label] = (
+                        f"circuit {br['state']}, {br['cooldown_remaining_s']}s remaining"
+                    )
                 continue
             route = Route(p.name, model_key, spec.id)
             why = self.health.degraded(p.name, spec.id)
@@ -145,6 +181,7 @@ class Router:
         messages: List[Dict[str, Any]],
         *,
         require_tools: bool = False,
+        role: Optional[Role] = None,
         **params: Any,
     ) -> ChatResult:
         """
@@ -154,7 +191,7 @@ class Router:
         NIM contract holds across the whole failover path rather than only the
         first try.
         """
-        routes, reasons = self.candidates(require_tools=require_tools)
+        routes, reasons = self.candidates(require_tools=require_tools, role=role)
         if not routes:
             raise NoRouteAvailable(reasons)
 

@@ -1,9 +1,22 @@
 """
 Provider and model profiles.
 
-Default policy (SOURCE_OF_TRUTH section 16.1): OpenCode Zen / Ox Alpha Free is
-the PREFERRED primary route while it is healthy and currently free; NVIDIA NIM
-is the strong fallback.
+Default policy (SOURCE_OF_TRUTH section 16.1) named OpenCode Zen / Ox Alpha
+Free the PREFERRED primary route "while it is healthy and currently free", with
+NVIDIA NIM as the strong fallback.
+
+The condition failed. Re-probed 2026-08-26, Ox Alpha is gone from Zen: absent
+from `/models`, and a completion returns `ModelError: Model x-preview-f-free is
+not supported` — distinguishable from gating because a paid Zen model returns
+`AuthError: Missing API key` instead. The policy's own qualifier decides what
+happens next, so the primary is now `nemotron-3-ultra-free`, the strongest
+route measured serving keyless today.
+
+The same re-probe found the NIM fallbacks were never real: neither
+`deepseek-ai/deepseek-v4-pro` nor `qwen/qwen2.5-coder-32b-instruct` appears in
+NVIDIA's live catalogue, which is public and takes one unauthenticated GET to
+check. NIM hosts no Qwen model at all. Both are corrected below to ids read out
+of that catalogue.
 
 Two facts verified against current official sources on 2026-08-25 shape the
 defaults below, and both are recorded rather than assumed:
@@ -197,6 +210,15 @@ OPENCODE_ZEN_BASE = "https://opencode.ai/zen/v1"
 NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
 _ZEN_SOURCE = "opencode.ai/docs/zen, verified 2026-08-25"
+_OX_ALPHA_WITHDRAWN = (
+    "WITHDRAWN from OpenCode Zen. Probed 2026-08-26: absent from the /models "
+    "listing, and POST /chat/completions returns HTTP 401 with body "
+    "`{\"type\":\"ModelError\",\"message\":\"Model x-preview-f-free is not "
+    "supported\"}`. That is removal, not gating: a paid Zen model on the same "
+    "endpoint returns `AuthError: Missing API key`. This was the configured "
+    "primary route; it is disabled rather than deleted so the reason survives."
+)
+
 _TOOLS_ISSUE = (
     "Tool-calling was broken for this model under anomalyco/opencode issue "
     "#44300 (any request carrying a `tools` array returned 'Upstream request "
@@ -232,24 +254,21 @@ def default_profiles() -> List[ModelProfile]:
                 Capability.CHAT, Capability.TOOLS, Capability.JSON_MODE,
                 Capability.STREAMING,
             ],
-            free_status=FreeStatus.FREE_LIMITED_TIME,
+            free_status=FreeStatus.UNKNOWN,
             free_note=(
-                "Documented as free for a limited time; usage limits may change. "
-                f"Source: {_ZEN_SOURCE}. Not guaranteed permanent or unlimited."
+                "Withdrawn. Was documented free for a limited time; the limited "
+                f"time appears to have ended. Source: {_ZEN_SOURCE}."
             ),
-            # Verified 2026-08-26: served without an Authorization header.
             requires_key=False,
-            priority=0,
+            priority=999,
             max_concurrency=4,
-            input_cost_per_mtok=0.0,
-            output_cost_per_mtok=0.0,
-            cost_basis=f"listed $0 in/out/cached — {_ZEN_SOURCE}",
-            roles=[
-                Role.MUTATION, Role.RESEARCH, Role.EVALUATOR, Role.PARALLEL_WORKER,
-                Role.ORCHESTRATOR, Role.DEEP_CODING, Role.PLANNING, Role.REVIEW,
-                Role.ARCHITECTURE, Role.EXPLORE,
-            ],
-            notes=_TOOLS_ISSUE,
+            # Kept in the table rather than deleted, so the UI can say what
+            # happened to a route an operator deliberately chose. A profile
+            # that simply disappears reads as a bug in this project; one that
+            # says "withdrawn, here is the evidence" reads as what it is.
+            enabled=False,
+            roles=[],
+            notes=_OX_ALPHA_WITHDRAWN,
         ),
         # ------- Zen, tools-capable (verified working per issue #44300) -------
         ModelProfile(
@@ -263,21 +282,78 @@ def default_profiles() -> List[ModelProfile]:
                 Capability.CHAT, Capability.TOOLS, Capability.JSON_MODE,
                 Capability.STREAMING,
             ],
-            free_status=FreeStatus.UNKNOWN,
-            free_note=f"Listed on Zen; free status must be probed. {_ZEN_SOURCE}",
-            # Same keyless Zen endpoint as Ox Alpha; verified 2026-08-26.
+            free_status=FreeStatus.FREE_LIMITED_TIME,
+            free_note=(
+                "Free on Zen and serving keyless as of 2026-08-26. Zen's free "
+                f"routes carry no permanence guarantee. {_ZEN_SOURCE}"
+            ),
+            # Verified 2026-08-26: HTTP 200 keyless, 3.3s, reasoning reported.
             requires_key=False,
-            priority=10,
+            priority=0,
             max_concurrency=3,
+            input_cost_per_mtok=0.0,
+            output_cost_per_mtok=0.0,
+            cost_basis=f"listed $0 in/out — {_ZEN_SOURCE}",
             roles=[
+                Role.MUTATION, Role.RESEARCH, Role.EVALUATOR, Role.PARALLEL_WORKER,
                 Role.ORCHESTRATOR, Role.DEEP_CODING, Role.PLANNING, Role.REVIEW,
                 Role.ARCHITECTURE, Role.EXPLORE,
             ],
             notes=(
-                "Reported to handle tools correctly on the same Zen route where "
-                "Ox Alpha fails; primary agent-harness model until Ox Alpha's "
-                "tool support is confirmed working."
+                "Promoted to primary on 2026-08-26 when Ox Alpha was withdrawn. "
+                "Strongest route measured serving without a credential: HTTP 200 "
+                "in 3.3s, hidden-reasoning tokens reported, tools verified."
             ),
+        ),
+        # ---- Verified-keyless free Zen routes, measured 2026-08-26 ----
+        ModelProfile(
+            id="zen-laguna-s21-free",
+            provider="opencode_zen",
+            model="laguna-s-2.1-free",
+            api_base=OPENCODE_ZEN_BASE,
+            secret_ref="OPENCODE_API_KEY",
+            display_name="Laguna S 2.1 Free (OpenCode Zen)",
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.FREE_LIMITED_TIME,
+            free_note=f"Free on Zen, serving keyless 2026-08-26. {_ZEN_SOURCE}",
+            requires_key=False,
+            priority=15,
+            max_concurrency=6,
+            input_cost_per_mtok=0.0,
+            output_cost_per_mtok=0.0,
+            cost_basis=f"listed $0 in/out — {_ZEN_SOURCE}",
+            roles=[Role.EVALUATOR, Role.PARALLEL_WORKER, Role.EXPLORE, Role.RESEARCH],
+            notes=(
+                "The cheapest useful free route, and the reason is measurable "
+                "rather than a guess: 1.6s, ZERO reasoning tokens, and a prompt "
+                "cache hit, where every other free Zen route spends most of a "
+                "small budget thinking before answering. Preferred for judging "
+                "and high-volume clerical work, where hidden reasoning buys "
+                "latency and truncation risk and nothing else."
+            ),
+        ),
+        ModelProfile(
+            id="zen-hy3-free",
+            provider="opencode_zen",
+            model="hy3-free",
+            api_base=OPENCODE_ZEN_BASE,
+            secret_ref="OPENCODE_API_KEY",
+            display_name="HY3 Free (OpenCode Zen)",
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.FREE_LIMITED_TIME,
+            free_note=f"Free on Zen, serving keyless 2026-08-26. {_ZEN_SOURCE}",
+            requires_key=False,
+            priority=20,
+            max_concurrency=4,
+            input_cost_per_mtok=0.0,
+            output_cost_per_mtok=0.0,
+            cost_basis=f"listed $0 in/out — {_ZEN_SOURCE}",
+            roles=[Role.MUTATION, Role.RESEARCH, Role.EVALUATOR, Role.PARALLEL_WORKER],
+            notes="Verified 2026-08-26: HTTP 200 keyless in 2.1s, 43 reasoning tokens.",
         ),
         ModelProfile(
             id="zen-deepseek-v4-flash",
@@ -289,22 +365,36 @@ def default_profiles() -> List[ModelProfile]:
             declared_capabilities=[
                 Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
             ],
-            free_status=FreeStatus.UNKNOWN,
-            # Same keyless Zen endpoint as Ox Alpha; verified 2026-08-26.
-            requires_key=False,
-            priority=20,
+            free_status=FreeStatus.PAID,
+            free_note=(
+                "NOT free and NOT keyless. Re-probed 2026-08-26: returns "
+                "`AuthError: Missing API key` without a credential. The free "
+                "variant is a different id, `deepseek-v4-flash-free`, which is "
+                "listed but returns HTTP 400 'Model is unavailable'."
+            ),
+            # Corrected 2026-08-26. This was `requires_key=False`, inherited
+            # from Ox Alpha's genuinely keyless behaviour; the flag put an
+            # unusable route into chains as though it were free.
+            requires_key=True,
+            priority=40,
             max_concurrency=6,
             roles=[Role.EXPLORE, Role.RESEARCH, Role.PARALLEL_WORKER],
-            notes="Fast route for low-value parallel work; also tools-capable.",
+            notes="Fast route for low-value parallel work; also tools-capable. "
+                  "Needs OPENCODE_API_KEY — paid.",
         ),
         # ---------------- STRONG FALLBACK: NVIDIA NIM ----------------
+        # Every id below was read out of NVIDIA's live catalogue on
+        # 2026-08-26 (`GET /v1/models`, no credential needed). Inference is
+        # UNVERIFIED — no NVIDIA_API_KEY exists in this repo — so capabilities
+        # are declared, never claimed as measured, and the doctor overrules
+        # them the moment a key is present.
         ModelProfile(
-            id="nim-deepseek-v4-pro",
+            id="nim-nemotron-3-ultra",
             provider="nvidia_nim",
-            model="deepseek-ai/deepseek-v4-pro",
+            model="nvidia/nemotron-3-ultra-550b-a55b",
             api_base=NVIDIA_NIM_BASE,
             secret_ref="NVIDIA_API_KEY",
-            display_name="DeepSeek v4 Pro (NVIDIA NIM)",
+            display_name="Nemotron 3 Ultra 550B (NVIDIA NIM)",
             declared_capabilities=[
                 Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
             ],
@@ -316,19 +406,62 @@ def default_profiles() -> List[ModelProfile]:
                 Role.EMERGENCY, Role.MUTATION, Role.DEEP_CODING, Role.ORCHESTRATOR,
                 Role.PLANNING, Role.REVIEW, Role.ARCHITECTURE,
             ],
-            notes="Primary strong fallback pool per SOURCE_OF_TRUTH section 16.1.",
+            notes=(
+                "Replaces `deepseek-ai/deepseek-v4-pro`, which this project "
+                "configured as its strong fallback and which is NOT in NVIDIA's "
+                "catalogue — the fallback could never have served. In catalogue "
+                "2026-08-26; inference UNVERIFIED (no key)."
+            ),
         ),
         ModelProfile(
-            id="nim-qwen25-coder-32b",
+            id="nim-gpt-oss-120b",
             provider="nvidia_nim",
-            model="qwen/qwen2.5-coder-32b-instruct",
+            model="openai/gpt-oss-120b",
             api_base=NVIDIA_NIM_BASE,
             secret_ref="NVIDIA_API_KEY",
-            display_name="Qwen2.5 Coder 32B (NVIDIA NIM)",
-            declared_capabilities=[Capability.CHAT, Capability.STREAMING],
+            display_name="GPT-OSS 120B (NVIDIA NIM)",
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.UNKNOWN,
+            priority=55,
+            max_concurrency=4,
+            roles=[Role.MUTATION, Role.PLANNING, Role.ARCHITECTURE, Role.REVIEW],
+            notes="In catalogue 2026-08-26; inference UNVERIFIED (no key).",
+        ),
+        ModelProfile(
+            id="nim-kimi-k3",
+            provider="nvidia_nim",
+            model="moonshotai/kimi-k3",
+            api_base=NVIDIA_NIM_BASE,
+            secret_ref="NVIDIA_API_KEY",
+            display_name="Kimi K3 (NVIDIA NIM)",
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.UNKNOWN,
             priority=60,
             max_concurrency=4,
+            roles=[Role.DEEP_CODING, Role.ORCHESTRATOR, Role.EXPLORE],
+            notes=(
+                "Replaces `qwen/qwen2.5-coder-32b-instruct`, which is not in "
+                "NVIDIA's catalogue — NIM hosts no Qwen model at all as of "
+                "2026-08-26. In catalogue; inference UNVERIFIED (no key)."
+            ),
+        ),
+        ModelProfile(
+            id="nim-codestral-22b",
+            provider="nvidia_nim",
+            model="mistralai/codestral-22b-instruct-v0.1",
+            api_base=NVIDIA_NIM_BASE,
+            secret_ref="NVIDIA_API_KEY",
+            display_name="Codestral 22B (NVIDIA NIM)",
+            declared_capabilities=[Capability.CHAT, Capability.STREAMING],
+            free_status=FreeStatus.UNKNOWN,
+            priority=65,
+            max_concurrency=4,
             roles=[Role.MUTATION, Role.PARALLEL_WORKER, Role.EVALUATOR],
+            notes="Code-specialised. In catalogue 2026-08-26; inference UNVERIFIED.",
         ),
         # ---------------- LOCAL / OPENAI-COMPATIBLE ----------------
         ModelProfile(
@@ -349,47 +482,62 @@ def default_profiles() -> List[ModelProfile]:
         ),
     ]
 
-
 def default_role_chains() -> Dict[Role, List[str]]:
     """
     Ordered fallback chain per role.
 
-    Ox Alpha leads EVERY chain, including tool-requiring roles — the operator's
-    stated preference, applied uniformly.
+    Ox Alpha led every chain here until it was withdrawn (see the module
+    docstring). `nemotron-3-ultra-free` leads now: it is the strongest route
+    measured serving without a credential, so the shipped configuration works
+    with no keys at all and improves when keys are added.
 
-    It did not always. While anomalyco/opencode#44300 was open, Ox Alpha failed
-    on any request carrying a `tools` array, so tool roles led with a
-    tools-capable model instead. That issue is now resolved (re-probed live
-    2026-08-26: tools requests return 200, and the doctor records
-    `verified_capabilities = [chat, tools]`).
+    Two orderings are deliberate and measured rather than inherited:
 
-    Worth being precise about what is and is not automatic here, because it is
-    easy to overclaim: the *capability filter* self-corrects in both directions
-    without code changes — if #44300 regresses, the next probe records
-    `supports_tools=False`, Ox Alpha is filtered out of tool roles, and the
-    chain falls through to nemotron on its own. The *chain order* is a stated
-    preference and does not self-correct; changing it was a deliberate edit
-    once the evidence changed.
+      * **Evaluator and parallel work lead with laguna**, not with the primary.
+        It answered in 1.6s with zero reasoning tokens where the primary spent
+        39 on the same two-word prompt. Ranking and clerical work do not need
+        hidden reasoning, and paying for it buys latency and truncation risk
+        and nothing else.
+      * **Key-gated NIM routes sit behind keyless Zen routes** in every chain.
+        NIM is plausibly stronger and is entirely unverified here; a route that
+        cannot serve without a credential the operator may not have must not
+        lead a chain.
+
+    Worth being precise about what is and is not automatic, because it is easy
+    to overclaim: the *capability filter* self-corrects in both directions
+    without code changes — a failed tools probe records `supports_tools=False`
+    and the model drops out of tool-requiring roles on its own. The *chain
+    order* is a stated preference and does not self-correct; it took a
+    deliberate edit when Ox Alpha vanished, and will take another when
+    something better appears.
     """
-    zen_first = ["zen-ox-alpha-free", "nim-deepseek-v4-pro", "nim-qwen25-coder-32b"]
-    # Ox Alpha first, with verified tools-capable models behind it. If its tool
-    # support regresses, the capability filter removes it automatically.
+    # Reasoning-led work: the primary first, then the other keyless free
+    # routes, then the key-gated pool.
+    zen_first = [
+        "zen-nemotron-3-ultra-free", "zen-hy3-free", "zen-laguna-s21-free",
+        "nim-nemotron-3-ultra", "nim-gpt-oss-120b",
+    ]
+    # Cheap, high-volume work: the zero-reasoning route first.
+    fast_first = [
+        "zen-laguna-s21-free", "zen-hy3-free", "zen-nemotron-3-ultra-free",
+        "nim-codestral-22b",
+    ]
     tools_first = [
-        "zen-ox-alpha-free", "zen-nemotron-3-ultra-free", "nim-deepseek-v4-pro",
-        "zen-deepseek-v4-flash",
+        "zen-nemotron-3-ultra-free", "zen-laguna-s21-free", "zen-hy3-free",
+        "nim-kimi-k3", "nim-nemotron-3-ultra", "zen-deepseek-v4-flash",
     ]
     return {
         Role.MUTATION: zen_first,
-        Role.EVALUATOR: zen_first,
-        Role.RESEARCH: ["zen-deepseek-v4-flash", "zen-ox-alpha-free", "nim-qwen25-coder-32b"],
-        Role.PARALLEL_WORKER: [
-            "zen-deepseek-v4-flash", "zen-ox-alpha-free", "nim-qwen25-coder-32b",
-        ],
+        Role.EVALUATOR: fast_first,
+        Role.RESEARCH: fast_first,
+        Role.PARALLEL_WORKER: fast_first,
         Role.ORCHESTRATOR: tools_first,
-        Role.DEEP_CODING: tools_first,
+        Role.DEEP_CODING: (["zen-nemotron-3-ultra-free", "nim-kimi-k3",
+                            "nim-codestral-22b"] + tools_first),
         Role.PLANNING: tools_first,
         Role.REVIEW: tools_first,
         Role.ARCHITECTURE: tools_first,
-        Role.EXPLORE: ["zen-deepseek-v4-flash"] + tools_first,
-        Role.EMERGENCY: ["nim-deepseek-v4-pro", "nim-qwen25-coder-32b", "local-openai-compatible"],
+        Role.EXPLORE: ["zen-laguna-s21-free"] + tools_first,
+        Role.EMERGENCY: ["nim-nemotron-3-ultra", "nim-gpt-oss-120b",
+                         "zen-nemotron-3-ultra-free", "local-openai-compatible"],
     }

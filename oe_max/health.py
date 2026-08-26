@@ -18,7 +18,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict, Optional, Tuple
 
 from .providers.base import Outcome
 
@@ -209,19 +209,30 @@ class CircuitBreaker:
 DEGRADED_SUCCESS_RATE = 0.25
 DEGRADED_MIN_ATTEMPTS = 10
 
+# How long a route stays parked after the provider says its free allowance is
+# spent. Free pools are typically restored on an hourly or daily boundary that
+# the API does not disclose, so this is a compromise, not a derivation: long
+# enough that we stop paying a request per call to be told the same thing,
+# short enough that a refill is picked up within the same session. An operator
+# who knows better can reset the route, which un-parks it immediately.
+FREE_LIMIT_PARK_SECONDS = 900.0
+
 
 class RouteHealth:
     """Health + breaker for every provider/model route the broker has used."""
 
     def __init__(self, failure_threshold: int = 5, cooldown_seconds: float = 45.0,
                  degraded_rate: float = DEGRADED_SUCCESS_RATE,
-                 degraded_min_attempts: int = DEGRADED_MIN_ATTEMPTS) -> None:
+                 degraded_min_attempts: int = DEGRADED_MIN_ATTEMPTS,
+                 free_limit_park_seconds: float = FREE_LIMIT_PARK_SECONDS) -> None:
         self._windows: Dict[str, HealthWindow] = {}
         self._breakers: Dict[str, CircuitBreaker] = {}
+        self._parked: Dict[str, Tuple[float, str]] = {}
         self._failure_threshold = failure_threshold
         self._cooldown = cooldown_seconds
         self._degraded_rate = degraded_rate
         self._degraded_min_attempts = degraded_min_attempts
+        self._free_limit_park = free_limit_park_seconds
 
     @staticmethod
     def key(provider: str, model: str) -> str:
@@ -238,7 +249,43 @@ class RouteHealth:
         )
 
     def allow(self, provider: str, model: str) -> bool:
+        if self.parked(provider, model):
+            return False
         return self.breaker(provider, model).allow()
+
+    # -- parking -------------------------------------------------------
+
+    def park(self, provider: str, model: str, seconds: float,
+             reason: str, *, now: Optional[float] = None) -> None:
+        """
+        Take a route out of service for a fixed period.
+
+        Separate from both the breaker and `degraded`, because it answers a
+        different question. The breaker asks "is this provider up?"; `degraded`
+        asks "is this route mostly wasting our requests?". Parking is for a
+        route that has told us *in words* that it will not serve us again for a
+        while — an exhausted free allowance being the case that motivated it.
+        Neither of the others can express that: the breaker would re-probe on a
+        45-second cooldown and get the same refusal, and `degraded` needs ten
+        attempts to notice something the provider stated on the first one.
+        """
+        now = now if now is not None else time.time()
+        self._parked[self.key(provider, model)] = (now + max(0.0, seconds), reason)
+
+    def parked(self, provider: str, model: str,
+               *, now: Optional[float] = None) -> Optional[str]:
+        """Why this route is parked, or None once the period has elapsed."""
+        entry = self._parked.get(self.key(provider, model))
+        if entry is None:
+            return None
+        until, reason = entry
+        now = now if now is not None else time.time()
+        if now >= until:
+            # Expire lazily. A parked route that nothing asks about costs
+            # nothing, and sweeping on a timer would need a timer.
+            self._parked.pop(self.key(provider, model), None)
+            return None
+        return f"{reason} — {round(until - now)}s remaining"
 
     def degraded(self, provider: str, model: str) -> Optional[str]:
         """
@@ -280,20 +327,46 @@ class RouteHealth:
             tokens=int((result.usage or {}).get("total_tokens") or 0),
             error=result.error,
         )
+        if result.outcome is Outcome.FREE_LIMIT_EXHAUSTED:
+            # The provider has stated the allowance is spent. Park the route
+            # rather than letting the breaker treat it as an outage: it is not
+            # down, it is closed to us, and re-probing it on a 45-second
+            # cooldown just collects the same refusal.
+            self.park(result.provider, result.model, self._free_limit_park,
+                      "free allowance exhausted")
+
         if ok:
             b.record_success()
-        elif result.outcome is not Outcome.BAD_REQUEST:
-            # A 400 is a statement about the request or a permanently
-            # unavailable model, not about provider health. Tripping the
-            # breaker on it would blame the provider for our own bad call.
+        elif result.outcome in (Outcome.BAD_REQUEST, Outcome.FREE_LIMIT_EXHAUSTED):
+            # Neither is a statement about provider health. A 400 is about our
+            # request or a permanently unavailable model; an exhausted free
+            # pool is about our account. Tripping the breaker on either would
+            # blame the provider for something it did not do.
+            pass
+        else:
             b.record_failure()
 
     def reset(self, provider: str, model: str) -> None:
         self.breaker(provider, model).reset()
+        # An operator resetting a route means "try it again now", which has to
+        # include un-parking it — otherwise the reset silently does nothing for
+        # the one case an operator is most likely to be reacting to.
+        self._parked.pop(self.key(provider, model), None)
 
     def snapshot(self) -> Dict[str, Any]:
         return {
             k: {"health": w.to_dict(),
-                "circuit": self._breakers[k].to_dict() if k in self._breakers else None}
+                "circuit": self._breakers[k].to_dict() if k in self._breakers else None,
+                "parked": self._parked_detail(k)}
             for k, w in self._windows.items()
         }
+
+    def _parked_detail(self, key: str) -> Optional[Dict[str, Any]]:
+        entry = self._parked.get(key)
+        if entry is None:
+            return None
+        until, reason = entry
+        remaining = until - time.time()
+        if remaining <= 0:
+            return None
+        return {"reason": reason, "remaining_s": round(remaining, 1)}

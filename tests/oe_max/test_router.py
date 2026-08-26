@@ -11,13 +11,15 @@ a circuit trip).
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Dict, List, Optional
 
 import pytest
 
 from oe_max.health import RetryPolicy, RouteHealth
 from oe_max.providers.base import (
-    ChatResult, ModelSpec, Outcome, ProviderAdapter, ProviderRole,
+    RETRYABLE, ChatResult, ModelSpec, Outcome, ProviderAdapter, ProviderRole,
+    looks_like_free_limit,
 )
 from oe_max.providers.registry import Registry
 from oe_max.router import NoRouteAvailable, Router
@@ -46,7 +48,10 @@ class FakeProvider(ProviderAdapter):
             )
         status = {Outcome.RATE_LIMITED: 429, Outcome.UNAVAILABLE: 503,
                   Outcome.AUTH_FAILED: 401, Outcome.BAD_REQUEST: 400,
-                  Outcome.SERVER_ERROR: 500}.get(outcome, 500)
+                  Outcome.SERVER_ERROR: 500,
+                  # A spent free allowance arrives as a 429 like any other rate
+                  # limit — the status alone cannot tell them apart.
+                  Outcome.FREE_LIMIT_EXHAUSTED: 429}.get(outcome, 500)
         return ChatResult(outcome, self.name, model_id, 5.0, status_code=status,
                           error=f"scripted {outcome.value}", attempt=attempt)
 
@@ -513,3 +518,127 @@ async def test_pinning_still_reaches_a_degraded_route():
     r = await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
                                  [{"role": "user", "content": "hi"}])
     assert r.ok and r.provider == "primary"
+
+
+# --------------------------------------------------------------------------
+# An exhausted free allowance is not a rate limit
+#
+# Both arrive as 429. Treating them alike is wrong in both directions, so
+# these tests pin the distinction from the body all the way to the chain.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_free_pool_is_not_retried():
+    """
+    Retrying cannot refill a pool. The old behaviour spent the entire retry
+    budget collecting the identical error before failing over.
+    """
+    router, primary, fallback = build(
+        primary_script=[Outcome.FREE_LIMIT_EXHAUSTED] * 5, max_attempts=4)
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert r.ok and r.provider == "fallback"
+    assert len(primary.calls) == 1, (
+        f"asked an exhausted pool {len(primary.calls)} times; one is enough")
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_route_leaves_the_chain_entirely():
+    """The second request should not rediscover what the first was told."""
+    router, primary, fallback = build(
+        primary_script=[Outcome.FREE_LIMIT_EXHAUSTED], max_attempts=4)
+
+    await router.chat(None, [{"role": "user", "content": "one"}])
+    calls_after_first = len(primary.calls)
+    await router.chat(None, [{"role": "user", "content": "two"}])
+
+    assert len(primary.calls) == calls_after_first, "parked route was tried again"
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_does_not_trip_the_breaker():
+    """
+    The provider is up; our allowance is gone. Recording it as an outage would
+    blame the provider and, worse, free the route again after a 45s cooldown
+    to collect the same refusal.
+    """
+    router, primary, _ = build(
+        primary_script=[Outcome.FREE_LIMIT_EXHAUSTED], max_attempts=4)
+
+    await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert router.health.breaker("primary", "ox-1").state().value == "closed"
+    assert router.health.parked("primary", "ox-1") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_parked_route_reports_parking_not_the_circuit():
+    """
+    A parked route's breaker reads "closed, 0s remaining" — which says the
+    route is healthy while it is being skipped. Reporting that would send an
+    operator to debug the wrong subsystem.
+    """
+    router, _, _ = build(primary_script=[Outcome.FREE_LIMIT_EXHAUSTED], max_attempts=4)
+    await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    _, reasons = router.candidates()
+
+    assert "free allowance exhausted" in reasons["primary/ox_alpha"]
+    assert "circuit" not in reasons["primary/ox_alpha"]
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_rate_limit_is_still_retried():
+    """The guard against over-applying the new behaviour."""
+    router, primary, _ = build(
+        primary_script=[Outcome.RATE_LIMITED, Outcome.RATE_LIMITED, Outcome.OK],
+        max_attempts=4)
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert r.ok and r.provider == "primary"
+    assert len(primary.calls) == 3, "a plain 429 must still be retried in place"
+
+
+def test_resetting_a_route_un_parks_it():
+    """An operator reset means "try it now" — it has to include un-parking."""
+    health = RouteHealth()
+    health.park("p", "m", 900.0, "free allowance exhausted")
+    assert health.allow("p", "m") is False
+
+    health.reset("p", "m")
+
+    assert health.allow("p", "m") is True
+
+
+def test_parking_expires_on_its_own():
+    health = RouteHealth()
+    health.park("p", "m", 900.0, "free allowance exhausted")
+    assert health.parked("p", "m", now=time.time() + 899) is not None
+    assert health.parked("p", "m", now=time.time() + 901) is None
+
+
+def test_the_free_limit_is_recognised_from_the_real_body():
+    """
+    Captured verbatim from OpenCode Zen on 2026-08-26. Note the *message* says
+    "Rate limit exceeded. Please try again later." — advice that is wrong here.
+    Only the error type distinguishes it, which is why the marker matches on
+    the type and not on the prose.
+    """
+    body = ('{"type":"error","error":{"type":"FreeUsageLimitError","message":'
+            '"Error from provider (Console): Rate limit exceeded. '
+            'Please try again later."}}')
+    assert looks_like_free_limit(body) is True
+
+
+def test_a_genuine_rate_limit_body_is_not_mistaken_for_exhaustion():
+    for body in ("Too Many Requests",
+                 '{"error":{"message":"Rate limit reached for gpt-4","type":"requests"}}',
+                 ""):
+        assert looks_like_free_limit(body) is False, body
+
+
+def test_exhaustion_is_not_in_the_retryable_set():
+    assert Outcome.FREE_LIMIT_EXHAUSTED not in RETRYABLE

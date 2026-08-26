@@ -68,8 +68,24 @@ def test_query_endpoints_return_empty_not_fabricated(client):
 def test_providers_endpoint_exposes_routes_and_health(client):
     body = client.get("/api/providers").json()
     assert body["profiles"] and body["routes"]
+    primary = next(p for p in body["profiles"]
+                   if p["id"] == "zen-nemotron-3-ultra-free")
+    assert primary["free_status"] == "free_limited_time"
+
+
+def test_a_withdrawn_route_is_still_explained_rather_than_hidden(client):
+    """
+    Ox Alpha was withdrawn from Zen (probed 2026-08-26). Its profile is kept
+    and disabled instead of deleted, so the operator who chose it can see what
+    happened to it. A route that simply vanishes from the UI reads as a bug in
+    this project rather than as a change at the provider.
+    """
+    body = client.get("/api/providers").json()
     ox = next(p for p in body["profiles"] if p["id"] == "zen-ox-alpha-free")
-    assert ox["free_status"] == "free_limited_time"
+    assert ox["enabled"] is False
+    assert "withdrawn" in ox["notes"].lower()
+    # And it must not still be advertised as a free tier that works.
+    assert ox["free_status"] == "unknown"
 
 
 def test_classic_visualizer_is_reachable(client):
