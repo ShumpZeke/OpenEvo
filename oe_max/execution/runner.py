@@ -262,11 +262,19 @@ class SandboxedRunner:
                     f"{self.limits.memory_mb}MB address-space ceiling")
                 return result
 
-        # MemoryError surfaces as a normal traceback when the allocation is
-        # refused rather than the process being killed.
-        if "MemoryError" in stderr:
-            result.status, result.reason = MEMORY, "MemoryError"
-            return result
+        # An allocation refused by RLIMIT_AS — rather than the process being
+        # killed outright — surfaces as an ordinary traceback. numpy phrases it
+        # differently from CPython, and both are unambiguous.
+        for marker in ("MemoryError", "Unable to allocate", "Cannot allocate memory"):
+            if marker in stderr:
+                result.status, result.reason = MEMORY, marker
+                return result
+
+        # Deliberately not reinterpreted: an allocation refused *inside* a C
+        # extension can surface as "SystemError: error return without exception
+        # set", which is genuinely ambiguous. Guessing "memory" from it would
+        # mislabel unrelated extension bugs, so it stays a crash with the real
+        # message attached.
 
         result.status = CRASHED
         result.reason = _first_exception(stderr) or f"exit code {code}"

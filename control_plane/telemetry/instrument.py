@@ -1320,6 +1320,9 @@ def auto_install_from_env() -> Optional[EngineInstrumentation]:
     try:
         install_worker_attribution_hook()
         install_operator_hook()
+        from . import sandbox_eval
+
+        sandbox_eval.install(_active)
     except Exception as exc:  # pragma: no cover
         logger.debug("attribution hook install failed: %r", exc)
     return _active
@@ -1354,6 +1357,12 @@ def install_worker_hook() -> None:
     process_parallel._worker_init = wrapper
     install_worker_attribution_hook()
     install_operator_hook()
+    try:
+        from . import sandbox_eval
+
+        sandbox_eval.install(None)
+    except Exception as exc:  # pragma: no cover
+        logger.debug("sandbox eval install failed: %r", exc)
 
 
 def _record_worker_island(args: Any, kwargs: Any) -> None:
