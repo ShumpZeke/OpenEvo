@@ -52,6 +52,12 @@ class EventType(str, Enum):
     CANDIDATE_PROMOTED = "candidate.promoted"
     CANDIDATE_BEST_UPDATED = "candidate.best.updated"
 
+    # verification (V1): is the improvement real?
+    CANDIDATE_VERIFICATION_STARTED = "candidate.verification.started"
+    CANDIDATE_VERIFICATION_PASSED = "candidate.verification.passed"
+    CANDIDATE_VERIFICATION_FAILED = "candidate.verification.failed"
+    CANDIDATE_SUSPICIOUS = "candidate.suspicious"
+
     # population / archive
     POPULATION_UPDATED = "population.updated"
     ARCHIVE_UPDATED = "archive.updated"
@@ -143,6 +149,7 @@ class Component(str, Enum):
     ENGINE = "engine"
     DATABASE = "database"
     EVALUATOR = "evaluator"
+    VERIFIER = "verifier"
     LLM = "llm"
     CONTROLLER = "controller"
     SANDBOX = "sandbox"

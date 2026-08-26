@@ -296,6 +296,78 @@ def _hash(text: Optional[str]) -> Optional[str]:
     return hashlib.sha256(text.encode()).hexdigest()[:16] if text else None
 
 
+def _maybe_verify(inst: Any, db: Any, program: Any, before_best: Any,
+                  iteration: Any) -> None:
+    """
+    Run V1 verification on the candidates worth the cost.
+
+    Two triggers, both chosen because getting them wrong is expensive:
+    a new champion, because the run now optimises around it and if it is wrong
+    everything downstream is wrong; and a jump far beyond this run's own
+    history of improvements, which is the exact shape of a candidate that
+    stopped solving the problem and started reporting a number.
+
+    A failure does **not** remove the candidate. This is instrumentation, and
+    instrumentation that silently deletes the engine's work would make the fork
+    behave differently from upstream in a way no test would catch. The event
+    carries the counterexample; enforcement is a separate and explicit choice.
+    """
+    from . import verification_hook
+
+    live = verification_hook.get_verifier()
+    if live is None:
+        return
+    try:
+        after_best = getattr(db, "best_program_id", None)
+        is_new_best = bool(after_best == program.id and after_best != before_best)
+
+        cfg = getattr(db, "config", None)
+        dims = list(getattr(cfg, "feature_dimensions", []) or [])
+        score = _fitness(dict(getattr(program, "metrics", {}) or {}), dims)
+        parent_metrics = (getattr(program, "metadata", None) or {}).get("parent_metrics")
+        parent_score = (_fitness(dict(parent_metrics), dims)
+                        if isinstance(parent_metrics, dict) else None)
+        delta = (score - parent_score
+                 if score is not None and parent_score is not None else None)
+
+        decision = live.should_verify(is_new_best=is_new_best, delta=delta)
+        if decision["trigger"] == "suspicious_jump":
+            emit(inst._ev(
+                EventType.CANDIDATE_SUSPICIOUS, Component.VERIFIER,
+                candidate_id=program.id, iteration=iteration, status=Status.WARNING,
+                summary=decision["reason"], metadata=decision["suspicion"],
+            ))
+        if not decision["verify"]:
+            return
+
+        code = getattr(program, "code", None)
+        if not code:
+            return
+
+        emit(inst._ev(
+            EventType.CANDIDATE_VERIFICATION_STARTED, Component.VERIFIER,
+            candidate_id=program.id, iteration=iteration,
+            summary=f"verifying {program.id}: {decision['trigger']}",
+            metadata={"trigger": decision["trigger"], "reason": decision["reason"]},
+        ))
+        report = live.verify(code, program.id, score)
+        if report is None:
+            return          # already verified; a champion re-confirmed is not re-run
+
+        passed = report.passed
+        emit(inst._ev(
+            EventType.CANDIDATE_VERIFICATION_PASSED if passed
+            else EventType.CANDIDATE_VERIFICATION_FAILED,
+            Component.VERIFIER, candidate_id=program.id, iteration=iteration,
+            duration_ms=report.duration_ms,
+            status=Status.OK if passed else Status.FAILED,
+            summary=report.summary(),
+            metadata={"trigger": decision["trigger"], **report.to_dict()},
+        ))
+    except Exception as exc:   # verification is observability, never control
+        logger.debug("verification hook failed: %r", exc)
+
+
 def _add_siblings(db, program: Any, iteration: Any, target_island: Any) -> None:
     """
     Put the extra offspring into the population, next to the primary child.
@@ -440,6 +512,7 @@ class EngineInstrumentation:
                 except Exception as exc:  # telemetry must never break evolution
                     logger.debug("telemetry add hook failed: %r", exc)
                 _add_siblings(db_self, program, iteration, target_island)
+                _maybe_verify(inst, db_self, program, before_best, iteration)
                 return result
 
             return wrapper
