@@ -42,6 +42,27 @@ llm:
   max_tokens: 16000
   timeout: 900
 
+  # LLM-as-judge goes to a different route than mutation generation.
+  #
+  # Upstream already separates these — `evaluator_models` defaults to a copy of
+  # `models` — so this needs no engine change, only a name. And the name is the
+  # whole point: `oe-max-judge` resolves to a chain led by laguna-s-2.1-free,
+  # measured at 859ms with ZERO reasoning tokens, where the reasoner alias took
+  # 8,158ms and spent 39 thinking about a two-word answer.
+  #
+  # Ranking two candidates does not need hidden reasoning. Paying for it here
+  # buys latency and truncation risk and nothing else, and truncation in the
+  # judge is the expensive kind of failure: it corrupts the *score* rather than
+  # the candidate, which is far harder to notice than a broken diff.
+  #
+  # This is wired but not switched on: `evaluator.use_llm_feedback` is false
+  # below, as upstream ships it. Turning it on changes what evolution optimises
+  # and would confound every measurement already recorded, so it is a
+  # deliberate choice and not a default.
+  evaluator_models:
+    - name: "oe-max-judge"
+      weight: 1.0
+
 prompt:
   system_message: |
     You are an expert algorithm designer improving a function-minimization
@@ -61,6 +82,9 @@ database:
 evaluator:
   timeout: 90
   parallel_evaluations: 2
+  # Off, as upstream ships it. Set true to enable LLM-as-judge scoring, which
+  # then routes through `oe-max-judge` per the evaluator_models block above.
+  use_llm_feedback: false
 
 diff_based_evolution: true
 max_code_length: 24000
