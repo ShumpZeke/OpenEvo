@@ -28,6 +28,26 @@ queue. This file is the short version of the rules that are load-bearing.
 6. **Provider and model IDs are configuration, not constants.** Ox Alpha is a
    stealth preview that may vanish.
 
+## If another agent is working here too
+
+More than one agent (Codex, another Claude session) may be committing to this
+repo concurrently. Cheap discipline that avoids clobbering:
+
+```bash
+git pull --rebase origin main    # ALWAYS, before you push
+./test.sh                        # re-run after the rebase, not just before
+git push origin HEAD:main
+```
+
+Rebase rather than merge, so history stays linear and a conflict shows up as a
+conflict instead of a silent merge that drops someone's change. Keep commits
+small and focused on one subsystem — two agents editing `oe_max/router.py` and
+`web/src/views/` respectively will never conflict; two agents both "improving
+things broadly" will.
+
+If you find commits you did not write, read them before building on top. The
+other agent may already have fixed the thing you were about to fix.
+
 ## Before pushing
 
 ```bash

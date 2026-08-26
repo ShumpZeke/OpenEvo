@@ -18,7 +18,7 @@ Upstream checkpoint data is NOT duplicated here. Candidate code lives in
 OpenEvolve's own checkpoints; we store identity, metrics and pointers.
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -117,6 +117,14 @@ CREATE TABLE IF NOT EXISTS candidates (
     map_elites_cell  TEXT,
     is_best          INTEGER DEFAULT 0,
     eval_status      TEXT,
+    -- Which model request produced this candidate. Upstream does not attach a
+    -- candidate id to the generating call, so this is captured at generation
+    -- time via a ContextVar rather than recovered by a join.
+    gen_request_id   TEXT,
+    gen_provider     TEXT,
+    gen_model        TEXT,
+    gen_latency_ms   REAL,
+    gen_tokens       INTEGER,
     metadata         TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (run_id, candidate_id)
 );
@@ -126,6 +134,7 @@ CREATE INDEX IF NOT EXISTS ix_cand_score      ON candidates(run_id, combined_sco
 CREATE INDEX IF NOT EXISTS ix_cand_island     ON candidates(run_id, island_id);
 CREATE INDEX IF NOT EXISTS ix_cand_cell       ON candidates(run_id, map_elites_cell);
 CREATE INDEX IF NOT EXISTS ix_cand_iteration  ON candidates(run_id, iteration);
+CREATE INDEX IF NOT EXISTS ix_cand_gen_model  ON candidates(run_id, gen_provider, gen_model);
 
 -- Explicit lineage edges: a candidate may have several parents (crossover),
 -- which a single parent_id column cannot express.

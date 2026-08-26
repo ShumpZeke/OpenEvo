@@ -291,8 +291,9 @@ class Store:
                (run_id, candidate_id, parent_id, generation, iteration, island_id,
                 created_at, candidate_type, language, combined_score, metrics,
                 complexity, diversity, code_hash, code_length, changes_summary,
-                map_elites_cell, eval_status, metadata)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                map_elites_cell, eval_status, gen_request_id, gen_provider,
+                gen_model, gen_latency_ms, gen_tokens, metadata)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(run_id, candidate_id) DO UPDATE SET
                  parent_id=COALESCE(excluded.parent_id, candidates.parent_id),
                  generation=COALESCE(excluded.generation, candidates.generation),
@@ -308,7 +309,10 @@ class Store:
                 md.get("complexity"), md.get("diversity"), code_hash,
                 md.get("code_length", len(code) if code else None),
                 _excerpt(md.get("changes_summary"), 2000),
-                md.get("map_elites_cell"), "pending", _j(md),
+                md.get("map_elites_cell"), "pending",
+                md.get("generating_request_id"), md.get("generating_provider"),
+                md.get("generating_model"), md.get("generating_latency_ms"),
+                md.get("generating_tokens"), _j(md),
             ),
         )
         # Evaluation happens BEFORE the candidate is added to the database, so

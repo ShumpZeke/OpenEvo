@@ -23,6 +23,7 @@ predicted.
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import hashlib
 import logging
@@ -35,12 +36,129 @@ from .events import Component, Event, EventType, Status, new_id
 
 logger = logging.getLogger(__name__)
 
+# Links a candidate back to the model request that generated it.
+#
+# Upstream never attaches a candidate id to the generating call — measured: 0 of
+# 22 stored model requests carried one — so no post-hoc join can recover the
+# attribution. It has to be captured at generation time.
+#
+# A ContextVar rather than a global because OpenEvolve runs iterations as
+# concurrent asyncio tasks (`parallel_evaluations`). ContextVars are per-task
+# and are copied into each new task, so two iterations in flight cannot read
+# each other's request. A module-level global would silently mis-attribute
+# under exactly the concurrency the engine uses by default.
+_generating_request: contextvars.ContextVar = contextvars.ContextVar(
+    "evolution_generating_request", default=None
+)
+
+# The key under which a worker process stamps the attribution onto the child
+# program's metadata.
+#
+# A ContextVar alone is not enough, and the reason is structural rather than
+# incidental. In `process_parallel` the LLM call and the `Program` construction
+# happen in a *worker process*; `ProgramDatabase.add` happens in the *main*
+# process, which receives only a pickled `SerializableResult`. No in-memory
+# mechanism — ContextVar, thread-local or global — crosses that boundary, and
+# measuring it is what exposed it: a live run produced 3 candidates and 0
+# attributed ones while the ContextVar was set correctly in every worker.
+#
+# `Program.metadata` is the one channel that does cross: it is a dataclass
+# field, so it survives `to_dict()` → pickle → `Program(**dict)`. Upstream reads
+# metadata by key only (`island`, `migrant`, `changes`, `parent_metrics`) and
+# never renders it wholesale into a prompt, so an extra namespaced key is inert.
+ATTRIBUTION_KEY = "evolution_generation"
+
+# Process-local record of the model request that generated the candidate this
+# worker is currently building. First write wins within an iteration, because
+# the *generating* call is the first LLM call of the iteration and any later
+# call is the evaluator's LLM feedback — crediting a mutation to the request
+# that judged it would be worse than not crediting it at all.
+_worker_generation: Optional[Dict[str, Any]] = None
+_worker_generation_pid: Optional[int] = None
+
+
+def _begin_worker_attribution() -> None:
+    """Start a fresh attribution window. Called once per worker iteration."""
+    global _worker_generation, _worker_generation_pid
+    _worker_generation = None
+    _worker_generation_pid = os.getpid()
+
+
+def _publish_generation(record: Dict[str, Any]) -> None:
+    """
+    Record a completed model request for the candidate it will produce.
+
+    Both channels are written: the ContextVar for the in-process path (where
+    generation and `add` share a task context) and the process-local slot for
+    the worker path (where they do not share a process at all).
+    """
+    global _worker_generation
+    try:
+        _generating_request.set(record)
+    except Exception:  # pragma: no cover - ContextVar.set does not normally fail
+        pass
+    if _worker_generation is None and _worker_generation_pid == os.getpid():
+        _worker_generation = record
+
+
+def _take_worker_attribution() -> Optional[Dict[str, Any]]:
+    """Consume this iteration's attribution, if a request was made."""
+    global _worker_generation
+    rec, _worker_generation = _worker_generation, None
+    return rec
+
+
+def _attribution_of(program: Any) -> Optional[Dict[str, Any]]:
+    """
+    Which model request produced this candidate, or None if it cannot be known.
+
+    Order matters: the metadata stamp is exact (the worker that made the call
+    also built the program), so it wins over the ContextVar, which is only
+    correct when generation and `add` share a task.
+
+    Two cases are deliberately left unattributed rather than guessed at:
+
+    * a **migrant** — a copy of an already-attributed program. Crediting the
+      route a second time would inflate its attempt count and its measured
+      yield, which is precisely the number `route_quality` exists to compare.
+    * a **stale** ContextVar — a candidate added long after the last request in
+      this context is a checkpoint reload or a copy, not that request's output.
+    """
+    md = getattr(program, "metadata", None) or {}
+    if md.get("migrant"):
+        return None
+    rec = md.get(ATTRIBUTION_KEY)
+    if isinstance(rec, dict) and rec.get("request_id"):
+        return rec
+    rec = _generating_request.get()
+    if rec and (time.time() - rec.get("at", 0)) > _ATTRIBUTION_MAX_AGE_S:
+        return None
+    return rec
+
+
+def _attribution_fields(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The provenance block attached to every candidate event."""
+    rec = rec or {}
+    return {
+        "generating_request_id": rec.get("request_id"),
+        "generating_provider": rec.get("provider"),
+        "generating_model": rec.get("model"),
+        "generating_latency_ms": rec.get("latency_ms"),
+        "generating_tokens": rec.get("tokens"),
+    }
+
 # Env keys used to propagate telemetry config into worker processes.
 ENV_RUN_ID = "EVOLUTION_RUN_ID"
 ENV_EXPERIMENT_ID = "EVOLUTION_EXPERIMENT_ID"
 ENV_EVENT_LOG = "EVOLUTION_EVENT_LOG"
 ENV_COLLECTOR_PORT = "EVOLUTION_COLLECTOR_PORT"
 ENV_ENABLED = "EVOLUTION_TELEMETRY"
+
+
+# A candidate added more than this long after the context's last model request
+# is not attributed to it. Generous, because a slow evaluator legitimately sits
+# between the two, but bounded so migrants and reloads are not misattributed.
+_ATTRIBUTION_MAX_AGE_S = 900.0
 
 
 def _fitness(metrics: Dict[str, float], feature_dims: Optional[List[str]] = None) -> Optional[float]:
@@ -289,9 +407,17 @@ class EngineInstrumentation:
                 summary=f"candidate {program.id} rejected (novelty/duplicate gate)",
                 metrics=payload_metrics,
                 metadata={"parent_id": getattr(program, "parent_id", None),
-                          "reason": "novelty_or_duplicate"},
+                          "reason": "novelty_or_duplicate",
+                          # A route whose mutations get rejected must be charged
+                          # for them, or duplicate-heavy routes look free.
+                          **_attribution_fields(_attribution_of(program))},
             ))
             return
+
+        # Attribute this candidate to the model request that generated it, if
+        # one is knowable. See _attribution_of for what is deliberately left
+        # unattributed instead of guessed.
+        gen_req = _attribution_of(program)
 
         emit(self._ev(
             EventType.CANDIDATE_CREATED, Component.DATABASE,
@@ -312,6 +438,8 @@ class EngineInstrumentation:
                 "code_hash": _hash(code),
                 "code_length": len(code) if code else None,
                 "candidate_type": "code",
+                # Generation provenance — the link upstream does not provide.
+                **_attribution_fields(gen_req),
             },
         ))
 
@@ -582,6 +710,22 @@ class EngineInstrumentation:
                     # What the provider says it served can differ from what we
                     # asked for (aliases, silent substitutions); record both.
                     completed_meta["served_model"] = llm_self.last_response_model
+                # Publish this request to the task's context so the candidate
+                # it produces can name it. Set before emitting so an emitter
+                # that inspects context sees a consistent view.
+                try:
+                    _publish_generation({
+                        "request_id": req_id, "provider": provider, "model": model,
+                        "latency_ms": dur,
+                        "tokens": int((usage or {}).get("total_tokens") or 0),
+                        "reasoning_tokens": int(
+                            getattr(llm_self, "last_usage", None) and
+                            ((llm_self.last_usage or {}).get("reasoning_tokens") or 0) or 0
+                        ),
+                        "at": time.time(),
+                    })
+                except Exception:
+                    pass
                 emit(inst._ev(
                     EventType.MODEL_REQUEST_COMPLETED, Component.LLM, span_id=span,
                     duration_ms=dur, summary=f"model request completed ({model})",
@@ -894,6 +1038,12 @@ def auto_install_from_env() -> Optional[EngineInstrumentation]:
         experiment_id=os.environ.get(ENV_EXPERIMENT_ID),
     ).install()
     _active_pid = pid
+    # Idempotent: under fork the child already inherited the parent's wrapper
+    # and the guard flag makes this a no-op. It matters when it did not.
+    try:
+        install_worker_attribution_hook()
+    except Exception as exc:  # pragma: no cover
+        logger.debug("attribution hook install failed: %r", exc)
     return _active
 
 
@@ -924,3 +1074,48 @@ def install_worker_hook() -> None:
 
     wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
     process_parallel._worker_init = wrapper
+    install_worker_attribution_hook()
+
+
+def install_worker_attribution_hook() -> None:
+    """
+    Carry generation provenance across the worker→main process boundary.
+
+    `_run_iteration_worker` is the only frame that spans both halves of the
+    problem: it runs *in the worker*, where the model request is made, and it
+    returns the `SerializableResult` the main process turns back into a
+    `Program` and hands to `database.add`. Stamping the attribution onto
+    `child_program_dict["metadata"]` here is therefore the whole fix — the
+    dict is pickled to the main process, and `Program(**dict)` restores it.
+
+    Wrapping is safe for the process pool: `functools.wraps` preserves
+    `__module__`/`__qualname__`, and the module attribute is rebound to this
+    wrapper, so pickle-by-reference resolves to the same object it pickled.
+    """
+    try:
+        from openevolve import process_parallel
+    except ImportError:
+        return
+    original = getattr(process_parallel, "_run_iteration_worker", None)
+    if original is None or getattr(original, "__evolution_instrumented__", False):
+        return
+
+    @functools.wraps(original)
+    def wrapper(*a, **kw):
+        _begin_worker_attribution()
+        result = original(*a, **kw)
+        try:
+            rec = _take_worker_attribution()
+            child = getattr(result, "child_program_dict", None)
+            if rec and isinstance(child, dict):
+                md = child.get("metadata")
+                if not isinstance(md, dict):
+                    md = {}
+                    child["metadata"] = md
+                md[ATTRIBUTION_KEY] = dict(rec)
+        except Exception as exc:  # attribution is observability, never control
+            logger.debug("worker attribution failed: %r", exc)
+        return result
+
+    wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
+    process_parallel._run_iteration_worker = wrapper
