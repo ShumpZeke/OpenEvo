@@ -388,10 +388,38 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
             " ORDER BY started_at", (run_id, candidate_id))
         for e in row["evaluations"]:
             e["raw_metrics"] = json.loads(e.get("raw_metrics") or "{}")
+        # Joined on `gen_request_id`, not on `model_requests.candidate_id`.
+        # Upstream never sets a candidate id on a request — measured: 0 of 22 —
+        # so the old join returned an empty list for every candidate in every
+        # run. The generating request is knowable now that attribution crosses
+        # the process boundary, and this is where an operator looks for it.
         row["model_requests"] = state.store.query(
-            "SELECT request_id, provider, model, role, latency_ms, total_tokens, status,"
-            " rate_limited, started_at FROM model_requests WHERE run_id=? AND candidate_id=?"
-            " ORDER BY started_at", (run_id, candidate_id))
+            "SELECT request_id, provider, model, role, latency_ms, total_tokens,"
+            "       status, rate_limited, started_at, stop_reason"
+            "  FROM model_requests"
+            " WHERE run_id = ? AND (candidate_id = ? OR request_id = ?)"
+            " ORDER BY started_at",
+            (run_id, candidate_id, row.get("gen_request_id")))
+
+        # Verification is emitted as events, not projected into a table: it is
+        # rare (champions and outliers only) and its payload is a report rather
+        # than a row.
+        row["verification"] = [
+            {"type": r["type"], "status": r["status"], "summary": r["summary"],
+             "timestamp": r["timestamp"],
+             **{k: v for k, v in (json.loads(r["payload"]).get("metadata") or {}).items()
+                if k in ("trigger", "passed", "failures", "errors", "checks_run",
+                         "spec_declared", "reason", "score")}}
+            for r in state.store.query(
+                "SELECT type, status, summary, timestamp, payload FROM events"
+                " WHERE run_id = ? AND candidate_id = ?"
+                "   AND type IN (?, ?, ?)"
+                " ORDER BY seq",
+                (run_id, candidate_id,
+                 EventType.CANDIDATE_VERIFICATION_PASSED.value,
+                 EventType.CANDIDATE_VERIFICATION_FAILED.value,
+                 EventType.CANDIDATE_SUSPICIOUS.value))
+        ]
         # Code lives in the event log, not duplicated into projections.
         code_ev = state.store.query_one(
             "SELECT payload FROM events WHERE run_id=? AND candidate_id=? AND type=?"

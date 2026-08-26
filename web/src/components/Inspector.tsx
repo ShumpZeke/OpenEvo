@@ -22,7 +22,7 @@ import {
 
 type Tab =
   | "overview" | "code" | "diff" | "lineage" | "evaluation" | "model"
-  | "metrics" | "mapelites" | "sandbox" | "raw";
+  | "verification" | "metrics" | "mapelites" | "sandbox" | "raw";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -31,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "lineage", label: "Lineage" },
   { id: "evaluation", label: "Evaluation" },
   { id: "model", label: "Model" },
+  { id: "verification", label: "Verification" },
   { id: "metrics", label: "Metrics" },
   { id: "mapelites", label: "MAP-Elites" },
   { id: "sandbox", label: "Sandbox" },
@@ -258,13 +259,15 @@ const TabBody: React.FC<{
     case "model":
       return (d.model_requests ?? []).length === 0 ? (
         <Empty>
-          No model request is linked to this candidate. Upstream does not always
-          attach a candidate id to the generating call.
+          No model request produced this candidate. The seed program and
+          migrant copies have none by nature; anything else means the run
+          predates generation provenance.
         </Empty>
       ) : (
         <Table>
           <thead>
-            <tr><Th>Provider</Th><Th>Model</Th><Th>Latency</Th><Th>Tokens</Th><Th>Status</Th></tr>
+            <tr><Th>Provider</Th><Th>Model</Th><Th>Latency</Th><Th>Tokens</Th>
+                <Th>Stop</Th><Th>Status</Th></tr>
           </thead>
           <tbody>
             {(d.model_requests ?? []).map((m: Json) => (
@@ -273,12 +276,69 @@ const TabBody: React.FC<{
                 <Td><Mono className="text-ink-dim">{m.model ?? "—"}</Mono></Td>
                 <Td className="tabular">{fmtMs(m.latency_ms)}</Td>
                 <Td className="tabular">{fmtNum(m.total_tokens)}</Td>
+                <Td className="text-ink-faint">{m.stop_reason ?? "—"}</Td>
                 <Td><Badge tone={m.status}>{m.status}</Badge></Td>
               </Row>
             ))}
           </tbody>
         </Table>
       );
+
+    case "verification": {
+      const checks: Json[] = d.verification ?? [];
+      const md: Json = d.metadata ?? {};
+      return (
+        <div className="space-y-3">
+          {/* How this candidate came to exist, before whether it was checked. */}
+          <div>
+            <p className="text-2xs text-ink-faint mb-1 uppercase tracking-wide">
+              Provenance
+            </p>
+            <KV k="operator" v={d.gen_operator ?? md.generating_operator ?? "—"} />
+            <KV k="island policy" v={md.generating_island_policy ?? "—"} />
+            <KV k="extra offspring" v={md.multi_offspring ? "yes" : "no"} />
+            <KV k="from seed forge"
+                v={md.seed_forge ? `yes — ${md.forge_origin ?? "forged"}` : "no"} />
+            <KV k="migrant copy" v={md.migrant ? "yes" : "no"} />
+          </div>
+
+          {checks.length === 0 ? (
+            <Empty>
+              Not verified. Verification runs on new champions and on unusually
+              large jumps only, and needs OE_MAX_VERIFY set — so "not verified"
+              here means "not selected for it", never "checked and fine".
+            </Empty>
+          ) : (
+            <div className="space-y-2">
+              {checks.map((c: Json, i: number) => (
+                <div key={i} className="rounded border border-line p-2">
+                  <div className="flex items-center gap-2">
+                    <Badge tone={c.status === "ok" ? "ok"
+                      : c.status === "warning" ? "warn" : "bad"}>
+                      {c.type?.split(".").pop()}
+                    </Badge>
+                    <span className="text-2xs text-ink-dim">{c.summary}</span>
+                  </div>
+                  <div className="mt-1 text-2xs text-ink-faint">
+                    {c.trigger ? <>triggered by <Mono>{c.trigger}</Mono> · </> : null}
+                    {typeof c.checks_run === "number" ? `${c.checks_run} checks · ` : ""}
+                    {c.spec_declared === false
+                      ? "this task declares no verification of its own"
+                      : null}
+                  </div>
+                  {(c.failures ?? []).map((f: Json, j: number) => (
+                    <div key={j} className="mt-1 text-2xs">
+                      <Mono className="text-bad">{f.kind}:{f.name}</Mono>
+                      <span className="text-ink-faint"> — {f.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
 
     case "metrics": {
       const metrics = d.metrics ?? {};

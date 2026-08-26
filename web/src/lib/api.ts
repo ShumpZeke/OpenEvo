@@ -60,6 +60,7 @@ export const api = {
   candidate: (id: string, cid: string) =>
     req<Json>(`/api/query/runs/${id}/candidates/${cid}`),
 
+
   lineage: (id: string, limit = 3000) =>
     req<{ nodes: Json[]; edges: Json[]; total: number; truncated: boolean }>(
       `/api/query/runs/${id}/lineage${qs({ limit })}`),

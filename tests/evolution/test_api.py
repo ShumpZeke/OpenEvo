@@ -91,3 +91,84 @@ def test_search_rejects_malformed_query_as_client_error(client):
 
 def test_compare_requires_two_runs(client):
     assert client.get("/api/query/compare", params={"run_ids": "only_one"}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Candidate detail
+#
+# Two things an operator opens a candidate to find out — which request produced
+# it, and whether it was verified — and neither was reachable.
+# ---------------------------------------------------------------------------
+
+def _candidate_with_request(state, run_id="r1", cid="c1", req="req_1"):
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    state.store.ingest([
+        Event(type=EventType.EXPERIMENT_CREATED, component=Component.CONTROL_PLANE,
+              run_id=run_id, experiment_id="e1", metadata={"name": "t"}),
+        Event(type=EventType.MODEL_REQUEST_COMPLETED, component=Component.LLM,
+              run_id=run_id, duration_ms=101_000.0, summary="completed",
+              metrics={"total_tokens": 5133},
+              metadata={"request_id": req, "provider": "opencode_zen",
+                        "model": "nemotron-3-ultra-free", "role": "mutation"}),
+        Event(type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+              run_id=run_id, candidate_id=cid, summary="added",
+              metrics={"combined_score": 0.5},
+              metadata={"parent_id": "p0", "generating_request_id": req,
+                        "generating_provider": "opencode_zen",
+                        "generating_model": "nemotron-3-ultra-free"}),
+    ])
+
+
+def test_a_candidate_names_the_request_that_produced_it(client):
+    """
+    The old join was on `model_requests.candidate_id`, which upstream never
+    sets — measured: 0 of 22 — so this list was empty for every candidate in
+    every run.
+    """
+    state = client.app.state.evolution
+    _candidate_with_request(state)
+
+    body = client.get("/api/query/runs/r1/candidates/c1").json()
+    assert [r["request_id"] for r in body["model_requests"]] == ["req_1"]
+    assert body["model_requests"][0]["model"] == "nemotron-3-ultra-free"
+
+
+def test_an_unattributed_candidate_lists_no_request_rather_than_a_wrong_one(client):
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    state = client.app.state.evolution
+    _candidate_with_request(state)
+    state.store.ingest([Event(
+        type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+        run_id="r1", candidate_id="seed", summary="added",
+        metadata={"parent_id": None})])
+
+    body = client.get("/api/query/runs/r1/candidates/seed").json()
+    assert body["model_requests"] == []
+
+
+def test_verification_is_visible_on_the_candidate(client):
+    from control_plane.telemetry.events import Component, Event, EventType, Status
+
+    state = client.app.state.evolution
+    _candidate_with_request(state)
+    state.store.ingest([Event(
+        type=EventType.CANDIDATE_VERIFICATION_FAILED, component=Component.VERIFIER,
+        run_id="r1", candidate_id="c1", status=Status.FAILED,
+        summary="1 of 21 checks failed",
+        metadata={"trigger": "new_champion", "passed": False, "checks_run": 21,
+                  "failures": [{"name": "reported_value_matches_the_point",
+                                "message": "reported -999.0 but f(0,0) = 0.0"}]})])
+
+    body = client.get("/api/query/runs/r1/candidates/c1").json()
+    assert len(body["verification"]) == 1
+    entry = body["verification"][0]
+    assert entry["trigger"] == "new_champion"
+    assert entry["failures"][0]["message"].startswith("reported -999.0")
+
+
+def test_a_candidate_nobody_verified_reports_an_empty_list(client):
+    state = client.app.state.evolution
+    _candidate_with_request(state)
+    assert client.get("/api/query/runs/r1/candidates/c1").json()["verification"] == []
