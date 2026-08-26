@@ -130,3 +130,39 @@ def test_withdrawn_models_are_not_in_the_default_chain():
         assert spec.available is not False, (
             f"{provider_name}/{spec.id} is in the default chain but is "
             f"believed unavailable: {spec.notes}")
+
+
+def test_the_snapshot_reports_what_each_role_would_actually_reach():
+    """
+    The chain is the intent; `serving` is the outcome. They differ exactly when
+    something is unhealthy — which is when an operator looks at this.
+    """
+    from oe_max.providers.registry import Registry, build_default_registry
+
+    snap = Router(Registry(build_default_registry())).snapshot()
+
+    assert set(snap["roles"]) == {r.value for r in Role}
+    for role, info in snap["roles"].items():
+        assert info["chain"], f"{role} has an empty chain"
+        # Every free Zen route serves without a credential, so with no keys at
+        # all every role must still have somewhere to go. A role that cannot
+        # serve while others can is invisible in an aggregate route table.
+        assert info["serving"], f"{role} has nothing serving"
+
+
+def test_a_role_with_nothing_serving_is_reported_rather_than_omitted():
+    """
+    Reporting `serving: None` is the point. Omitting the role would make a
+    completely dead role look identical to a healthy one at a glance.
+    """
+    from oe_max.providers.registry import Registry, build_default_registry
+
+    reg = Registry(build_default_registry())
+    for provider in reg.providers.values():
+        provider.enabled = False
+
+    snap = Router(reg).snapshot()
+
+    for role, info in snap["roles"].items():
+        assert info["serving"] is None, role
+        assert info["excluded"], f"{role} explains nothing about why"

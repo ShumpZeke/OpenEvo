@@ -331,8 +331,22 @@ class Router:
     def snapshot(self) -> Dict[str, Any]:
         routes, reasons = self.candidates()
         tool_routes, tool_reasons = self.candidates(require_tools=True)
+        # Per-role: which route each role would actually reach right now.
+        # The chain is the intent; this is the outcome, and they differ exactly
+        # when something is unhealthy — which is when an operator looks.
+        by_role: Dict[str, Any] = {}
+        for role in Role:
+            role_routes, role_reasons = self.candidates(role=role)
+            by_role[role.value] = {
+                "chain": [f"{p}/{m}" for p, m in self.chains.get(role, [])],
+                "serving": str(role_routes[0]) if role_routes else None,
+                "eligible": [str(r) for r in role_routes],
+                "excluded": role_reasons,
+            }
+
         return {
             "chain": [f"{p}/{m}" for p, m in self.chain],
+            "roles": by_role,
             "eligible": [str(r) for r in routes],
             "eligible_with_tools": [str(r) for r in tool_routes],
             "excluded": reasons,
