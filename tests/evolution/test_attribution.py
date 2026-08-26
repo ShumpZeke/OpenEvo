@@ -350,3 +350,39 @@ def test_attribution_survives_the_real_serialization_path(monkeypatch, clean_wor
     assert rec["request_id"] == "req_round_trip"
     assert rec["provider"] == "opencode_zen"
     assert program.metadata["island"] == 1        # upstream's fields intact
+
+
+# ---------------------------------------------------------------------------
+# Reading the broker's provenance stamp off a response
+# ---------------------------------------------------------------------------
+
+def test_broker_route_is_read_from_a_pydantic_extra_field():
+    """
+    How it actually arrives: the OpenAI client parses the response into a model
+    and keeps unrecognised fields in `model_extra`.
+    """
+    resp = types.SimpleNamespace(
+        model="x-preview-f-free",
+        model_extra={"oe_max": {"provider": "opencode_zen", "model": "x-preview-f-free",
+                                "attempt": 1, "reasoning_tokens": 7990}})
+    route = inst._broker_route(resp)
+    assert route["provider"] == "opencode_zen"
+    assert route["reasoning_tokens"] == 7990
+
+
+def test_broker_route_is_read_from_a_plain_dict():
+    route = inst._broker_route({"oe_max": {"provider": "opencode_zen", "model": "hy3-free"}})
+    assert route["model"] == "hy3-free"
+
+
+def test_a_direct_provider_response_has_no_route_stamp():
+    """Calling a provider directly must not be given a route it never had."""
+    assert inst._broker_route(types.SimpleNamespace(model="nemotron-super-49b")) is None
+    assert inst._broker_route({"id": "chatcmpl-1", "model": "gpt-4"}) is None
+    assert inst._broker_route(None) is None
+
+
+def test_a_malformed_stamp_is_ignored_rather_than_half_used():
+    """A stamp with no model would produce a route key like 'zen/None'."""
+    assert inst._broker_route({"oe_max": {"provider": "opencode_zen"}}) is None
+    assert inst._broker_route({"oe_max": "not-a-dict"}) is None

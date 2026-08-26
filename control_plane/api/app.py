@@ -498,6 +498,29 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
             r["params"] = json.loads(r.get("params") or "{}")
         return {"model_requests": rows, "total": total}
 
+    @app.get("/api/query/runs/{run_id}/route-quality")
+    def route_quality(run_id: str, min_attempts: Optional[int] = None,
+                      pool: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Which route produced the better mutations, and at what cost.
+
+        Distinct from `/model-requests`, which answers "did the route respond?"
+        A route can be perfectly reliable and return nothing but duplicates.
+
+        `pool` accepts a comma-separated list of additional run ids. A single
+        short run rarely clears the minimum attempt count on any route, and
+        pooling comparable runs is the honest way to reach it — the response
+        names every run that went in, and its attribution coverage, so a reader
+        can check they were comparable rather than take it on trust.
+        """
+        from control_plane.analysis.route_quality import analyse, analyse_runs
+
+        conn = state.store.reader()
+        if pool:
+            ids = [run_id] + [r.strip() for r in pool.split(",") if r.strip()]
+            return analyse_runs(conn, ids, min_attempts=min_attempts)
+        return analyse(conn, run_id, min_attempts=min_attempts)
+
     @app.get("/api/query/runs/{run_id}/evaluations")
     def evaluations(run_id: str, limit: int = Query(200, le=2000),
                     status: Optional[str] = None) -> Dict[str, Any]:

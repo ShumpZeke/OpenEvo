@@ -41,6 +41,7 @@ class Attempt:
     route: str                       # "provider/model"
     operator: Optional[str] = None   # OperatorClass, when known
     # Outcome of the cheap gates, before anything expensive ran.
+    failed: bool = False             # the request itself never returned usable text
     parsed: bool = True              # produced an applicable diff at all
     passed_g0: bool = True           # valid program
     passed_g1: bool = True           # not a duplicate
@@ -72,6 +73,7 @@ class Attempt:
 class RouteStats:
     route: str
     attempts: int = 0
+    failures: int = 0
     unparseable: int = 0
     g0_failures: int = 0
     duplicates: int = 0
@@ -88,6 +90,20 @@ class RouteStats:
     @property
     def parse_rate(self) -> float:
         return 1.0 - (self.unparseable / self.attempts) if self.attempts else 0.0
+
+    @property
+    def failure_rate(self) -> float:
+        """
+        Requests that never returned usable text — timeouts, 5xx, truncation
+        the broker could not rescue.
+
+        Kept separate from `unparseable` on purpose: a 200 response whose diff
+        does not apply is a *model* problem, while a timeout is a *route*
+        problem, and the fix for each is different. They are both charged as
+        attempts, though, because both consumed the wall-clock and the rate
+        budget that the efficiency measures divide by.
+        """
+        return self.failures / self.attempts if self.attempts else 0.0
 
     @property
     def validity_rate(self) -> float:
@@ -134,6 +150,9 @@ class RouteStats:
         self.total_latency_ms += a.latency_ms
         self.total_tokens += a.tokens
         self.total_reasoning_tokens += a.reasoning_tokens
+        if a.failed:
+            self.failures += 1
+            return
         if not a.parsed:
             self.unparseable += 1
             return
@@ -159,10 +178,12 @@ class RouteStats:
             "attempts": self.attempts,
             "accepted": self.accepted,
             "improvements": self.improvements,
+            "failures": self.failures,
             "unparseable": self.unparseable,
             "g0_failures": self.g0_failures,
             "duplicates": self.duplicates,
             "parse_rate": r(self.parse_rate),
+            "failure_rate": r(self.failure_rate),
             "validity_rate": r(self.validity_rate),
             "duplicate_rate": r(self.duplicate_rate),
             "improvement_rate": r(self.improvement_rate),

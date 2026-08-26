@@ -101,6 +101,54 @@ def _publish_generation(record: Dict[str, Any]) -> None:
         _worker_generation = record
 
 
+def _broker_route(response: Any) -> Optional[Dict[str, Any]]:
+    """
+    Which provider and model actually served a request that went through the
+    OE-MAX broker.
+
+    The engine only ever names the broker alias (`oe-max-primary`), so without
+    this every route collapses into one row called "local/oe-max-primary" and
+    a route comparison becomes impossible in exactly the configuration the
+    project ships. The broker already stamps `body["oe_max"]` on every
+    response — this reads it back off the parsed object, where the OpenAI
+    client keeps unknown fields in `model_extra`.
+
+    Returns None for any endpoint that is not the broker, which is why this is
+    additive: a direct provider call is unaffected.
+    """
+    for get in (lambda: getattr(response, "oe_max", None),
+                lambda: (getattr(response, "model_extra", None) or {}).get("oe_max"),
+                lambda: response["oe_max"] if isinstance(response, dict) else None):
+        try:
+            value = get()
+        except Exception:
+            continue
+        if isinstance(value, dict) and value.get("model"):
+            return value
+    return None
+
+
+def _generation_role() -> str:
+    """
+    Whether this request is the one *generating* a mutation.
+
+    Upstream builds a second LLM ensemble for evaluator feedback
+    (`use_llm_feedback`, off by default). Both ensembles go through the same
+    `OpenAILLM.generate_with_context`, so without this they would be
+    indistinguishable in the event log — and the analysis would charge a route
+    for an "attempt" that was really the evaluator grading someone else's work.
+
+    The generating call is the first of a worker iteration, by construction:
+    evaluation cannot run before there is something to evaluate.
+    """
+    env = os.environ.get("EVOLUTION_LLM_ROLE")
+    if env:
+        return env
+    if _worker_generation_pid == os.getpid() and _worker_generation is not None:
+        return "evaluation"
+    return "mutation"
+
+
 def _take_worker_attribution() -> Optional[Dict[str, Any]]:
     """Consume this iteration's attribution, if a request was made."""
     global _worker_generation
@@ -674,7 +722,7 @@ class EngineInstrumentation:
                 base_meta = {
                     "request_id": req_id, "model": model, "api_base": api_base,
                     "provider": provider, "started_at": started_at,
-                    "role": os.environ.get("EVOLUTION_LLM_ROLE", "mutation"),
+                    "role": _generation_role(),
                     "params": {
                         "temperature": getattr(llm_self, "temperature", None),
                         "top_p": getattr(llm_self, "top_p", None),
@@ -710,6 +758,23 @@ class EngineInstrumentation:
                     # What the provider says it served can differ from what we
                     # asked for (aliases, silent substitutions); record both.
                     completed_meta["served_model"] = llm_self.last_response_model
+                # A request through the OE-MAX broker was asked for by alias.
+                # The provider and model recorded here are the ones that did
+                # the work — otherwise every route through the broker is
+                # indistinguishable, and the alias survives as requested_model.
+                route = getattr(llm_self, "last_route", None)
+                if route:
+                    completed_meta["requested_model"] = model
+                    completed_meta["requested_provider"] = provider
+                    provider = route.get("provider") or provider
+                    model = route.get("model") or model
+                    completed_meta["provider"] = provider
+                    completed_meta["model"] = model
+                    completed_meta["route_attempt"] = route.get("attempt")
+                    completed_meta["finish_reason"] = route.get("finish_reason")
+                    if route.get("reasoning_tokens") is not None:
+                        completed_meta["reasoning_tokens"] = route["reasoning_tokens"]
+                llm_self.last_route = None
                 # Publish this request to the task's context so the candidate
                 # it produces can name it. Set before emitting so an emitter
                 # that inspects context sees a consistent view.
@@ -719,8 +784,9 @@ class EngineInstrumentation:
                         "latency_ms": dur,
                         "tokens": int((usage or {}).get("total_tokens") or 0),
                         "reasoning_tokens": int(
-                            getattr(llm_self, "last_usage", None) and
-                            ((llm_self.last_usage or {}).get("reasoning_tokens") or 0) or 0
+                            completed_meta.get("reasoning_tokens")
+                            or ((getattr(llm_self, "last_usage", None) or {})
+                                .get("reasoning_tokens") or 0)
                         ),
                         "at": time.time(),
                     })
@@ -781,6 +847,7 @@ class EngineInstrumentation:
                     if choices:
                         llm_self.last_stop_reason = getattr(choices[0], "finish_reason", None)
                     llm_self.last_response_model = getattr(resp, "model", None)
+                    llm_self.last_route = _broker_route(resp)
                 return result
 
             return wrapper

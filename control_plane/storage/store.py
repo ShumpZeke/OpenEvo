@@ -449,7 +449,19 @@ class Store:
                ON CONFLICT(request_id) DO UPDATE SET
                  status=excluded.status, latency_ms=excluded.latency_ms,
                  total_tokens=excluded.total_tokens, rate_limited=excluded.rate_limited,
-                 retries=excluded.retries, error=excluded.error""",
+                 retries=excluded.retries, error=excluded.error,
+                 -- The started event can only name what was *asked for*; a
+                 -- request through the broker is asked for by alias and the
+                 -- serving route is known only once it completes. Letting the
+                 -- later event win is what keeps provider/model the route that
+                 -- did the work rather than the alias that stood in for it.
+                 provider=excluded.provider, model=excluded.model,
+                 stop_reason=excluded.stop_reason,
+                 prompt_tokens=excluded.prompt_tokens,
+                 completion_tokens=excluded.completion_tokens,
+                 tokens_per_sec=excluded.tokens_per_sec,
+                 response_excerpt=excluded.response_excerpt,
+                 metadata=excluded.metadata""",
             (
                 req_id, ev.run_id, ev.candidate_id, ev.generation, ev.iteration,
                 md.get("role"), md.get("provider"), md.get("model"), md.get("api_base"),
