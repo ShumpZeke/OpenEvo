@@ -642,3 +642,104 @@ def test_a_genuine_rate_limit_body_is_not_mistaken_for_exhaustion():
 
 def test_exhaustion_is_not_in_the_retryable_set():
     assert Outcome.FREE_LIMIT_EXHAUSTED not in RETRYABLE
+
+
+# --------------------------------------------------------------------------
+# Retrying one route is bounded by wall-clock, not only by attempt count
+#
+# `max_attempts` is a poor bound when attempts differ in cost by two orders of
+# magnitude, and on these providers they do: the primary averaged 90s per
+# request on 2026-08-26 while a fallback answered a probe in 2.1s.
+# --------------------------------------------------------------------------
+
+
+class _Clock:
+    """A monotonic clock that advances by a fixed step on every reading."""
+
+    def __init__(self, step: float) -> None:
+        self.step = step
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        v = self.now
+        self.now += self.step
+        return v
+
+
+@pytest.mark.asyncio
+async def test_a_slow_route_stops_being_retried_before_max_attempts(monkeypatch):
+    """Four attempts at 90s is six minutes spent on a route that keeps failing."""
+    router, primary, fallback = build(
+        primary_script=[Outcome.SERVER_ERROR] * 8, max_attempts=4)
+    router.retry.max_route_seconds = 240.0
+    monkeypatch.setattr("oe_max.router.time.monotonic", _Clock(150.0))
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert len(primary.calls) < 4, (
+        f"spent all {len(primary.calls)} attempts on a slow failing route")
+    assert r.ok and r.provider == "fallback", "the chain did not fail over"
+
+
+@pytest.mark.asyncio
+async def test_a_fast_route_is_unaffected_by_the_time_budget(monkeypatch):
+    """
+    The guard that makes the budget safe to apply everywhere: when attempts are
+    cheap the bound never binds, and behaviour is exactly what it was.
+    """
+    router, primary, _ = build(
+        primary_script=[Outcome.SERVER_ERROR] * 3 + [Outcome.OK], max_attempts=4)
+    router.retry.max_route_seconds = 240.0
+    monkeypatch.setattr("oe_max.router.time.monotonic", _Clock(0.5))
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert r.ok and r.provider == "primary"
+    assert len(primary.calls) == 4, "a cheap retry was cut short"
+
+
+@pytest.mark.asyncio
+async def test_the_recorded_reason_says_which_bound_was_hit(monkeypatch):
+    """
+    "gave up after 4 attempts" and "gave up after 4 minutes" point at different
+    fixes. A bare failure cannot tell them apart.
+    """
+    router, _, _ = build(primary_script=[Outcome.SERVER_ERROR] * 8, max_attempts=4)
+    router.retry.max_route_seconds = 240.0
+    monkeypatch.setattr("oe_max.router.time.monotonic", _Clock(150.0))
+
+    await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    logged = [e for e in router.request_log if e["provider"] == "primary"]
+    assert any("budget" in (e.get("error") or "") for e in logged), logged
+
+
+@pytest.mark.asyncio
+async def test_attempt_count_still_bounds_a_fast_failing_route(monkeypatch):
+    """Whichever limit binds first wins; the count has not been replaced."""
+    router, primary, fallback = build(
+        primary_script=[Outcome.SERVER_ERROR] * 8, max_attempts=3)
+    router.retry.max_route_seconds = 10_000.0
+    monkeypatch.setattr("oe_max.router.time.monotonic", _Clock(0.1))
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+
+    assert len(primary.calls) == 3
+    assert r.ok and r.provider == "fallback"
+
+
+def test_the_policy_reports_no_reason_while_retrying_is_still_worthwhile():
+    from oe_max.health import RetryPolicy
+
+    policy = RetryPolicy(max_attempts=4, max_route_seconds=240.0)
+    assert policy.exhausted(attempt=1, elapsed_s=5.0) is None
+    assert "max_attempts" in (policy.exhausted(attempt=4, elapsed_s=5.0) or "")
+    assert "budget" in (policy.exhausted(attempt=1, elapsed_s=300.0) or "")
+
+
+def test_the_time_budget_can_be_switched_off():
+    """Zero disables it, leaving the original attempt-count-only behaviour."""
+    from oe_max.health import RetryPolicy
+
+    policy = RetryPolicy(max_attempts=4, max_route_seconds=0.0)
+    assert policy.exhausted(attempt=1, elapsed_s=99_999.0) is None

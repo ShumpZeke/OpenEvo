@@ -283,36 +283,64 @@ class Router:
             )
         attempt_params = dict(params)
         result: Optional[ChatResult] = None
+        started = time.monotonic()
 
         for attempt in range(1, self.retry.max_attempts + 1):
             result = await provider.chat(
                 client, route.model_id, messages, attempt=attempt, **attempt_params
             )
             self.health.record(result)
-            self._log(result, route)
 
             if result.ok:
+                self._log(result, route)
                 return result
 
-            if result.outcome not in RETRYABLE:
-                break   # 400/401 will not improve by retrying this route
+            # Decided before logging, because the log entry is a snapshot: a
+            # reason attached afterwards never reaches it, and the reason is
+            # the whole value here. "Gave up after 4 attempts" and "gave up
+            # after 4 minutes" point at different fixes.
+            retryable = result.outcome in RETRYABLE
+            give_up: Optional[str] = None
+            grown: Optional[Dict[str, Any]] = None
+
+            if retryable:
+                if result.outcome is Outcome.TRUNCATED:
+                    # Retrying a truncation with the same budget reproduces it
+                    # exactly. Reasoning models spend part of the completion
+                    # budget invisibly — Ox Alpha was measured burning 961 of
+                    # 1598 completion tokens on reasoning — so the fix is a
+                    # bigger budget, not another identical call.
+                    grown = _grow_token_budget(attempt_params)
+                    if grown is None:
+                        give_up = "token budget already at the ceiling"
+                if give_up is None:
+                    # A doubled budget on a slow route is the most expensive
+                    # retry there is, so escalation is bounded by the same
+                    # wall-clock budget as everything else.
+                    give_up = self.retry.exhausted(
+                        attempt, time.monotonic() - started)
+            else:
+                # 400/401 and an exhausted free allowance. Deliberately NOT
+                # annotated: these errors already say why they will not
+                # improve, and "Model is unavailable [not retryable]" is noise
+                # on a message that was already clear.
+                give_up = ""
+
+            if give_up:
+                result.error = f"{result.error or ''} [{give_up}]".strip()
+
+            self._log(result, route)
+
+            if give_up or not retryable:
+                break
 
             if result.outcome is Outcome.TRUNCATED:
-                # Retrying a truncation with the same budget reproduces it
-                # exactly. Reasoning models spend part of the completion
-                # budget invisibly — Ox Alpha was measured burning 961 of
-                # 1598 completion tokens on reasoning — so the fix is a
-                # bigger budget, not another identical call.
-                grown = _grow_token_budget(attempt_params)
-                if grown is None:
-                    break   # already at the ceiling; give up on this route
-                attempt_params = grown
+                attempt_params = grown or attempt_params
                 continue    # escalate immediately, no backoff needed
 
-            if attempt < self.retry.max_attempts:
-                await asyncio.sleep(
-                    self.retry.delay_for(attempt, result.retry_after)
-                )
+            await asyncio.sleep(
+                self.retry.delay_for(attempt, result.retry_after)
+            )
 
         return result or ChatResult(
             Outcome.SERVER_ERROR, route.provider, route.model_id, 0.0,

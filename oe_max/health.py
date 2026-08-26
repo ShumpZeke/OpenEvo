@@ -37,6 +37,35 @@ class RetryPolicy:
     jitter: bool = True
     honor_retry_after: bool = True
 
+    # A ceiling on wall-clock spent retrying ONE route before the chain moves
+    # on. `max_attempts` alone is a poor bound when attempts differ in cost by
+    # two orders of magnitude, and on these providers they do: measured
+    # 2026-08-26, the primary averaged 90s per request while `hy3-free`
+    # answered a probe in 2.1s. Four attempts at 90s is six minutes of a run
+    # spent on a route that has failed three times, with a working fallback
+    # idle throughout.
+    #
+    # This does not replace `max_attempts`; whichever binds first wins. For
+    # fast routes the budget never binds and behaviour is unchanged, which is
+    # what makes it safe to apply everywhere.
+    max_route_seconds: float = 240.0
+
+    def exhausted(self, attempt: int, elapsed_s: float) -> Optional[str]:
+        """
+        Why this route should stop being retried, or None to continue.
+
+        Returns the reason rather than a bool so the caller can record which
+        bound was hit — "gave up after 4 attempts" and "gave up after 5
+        minutes" call for different fixes, and a bare False cannot tell them
+        apart.
+        """
+        if attempt >= self.max_attempts:
+            return f"reached max_attempts={self.max_attempts}"
+        if self.max_route_seconds and elapsed_s >= self.max_route_seconds:
+            return (f"spent {elapsed_s:.0f}s on this route "
+                    f"(budget {self.max_route_seconds:.0f}s)")
+        return None
+
     def delay_for(self, attempt: int, retry_after: Optional[float] = None) -> float:
         """Exponential backoff with jitter; provider guidance wins when given."""
         if self.honor_retry_after and retry_after is not None:
