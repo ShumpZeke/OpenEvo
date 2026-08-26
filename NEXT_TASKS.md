@@ -203,10 +203,13 @@ One repeat per arm, so none of it is settled.
 ### Interleave the repeats
 
 The provider drifts *during* the experiment — nemotron went 77% → 48% success
-with its latency doubling, in one afternoon. Running baseline, arm, baseline,
-arm spreads that across both sides instead of concentrating it in whichever ran
-second. The harness caveats the comparison when it detects drift, but a caveat
-is not a substitute for a design that avoids it.
+with its latency doubling, in one afternoon.
+
+**This needs no flag: pass `--repeats 3`.** The harness already runs a fresh
+baseline before each round of arms rather than all baselines first, so repeats
+are interleaved by construction and drift lands on both sides. With
+`--repeats 1` there is nothing to interleave, which is exactly why the first
+recorded ablation's latency figure carries an ambiguity it cannot resolve.
 
 Watch latency, not success rate, when judging conditions: the broker retries,
 so a run's recorded success rate reads 100% while the provider is at 48%. The

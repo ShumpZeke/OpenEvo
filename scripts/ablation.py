@@ -35,10 +35,20 @@ the bad half looks worse for reasons that have nothing to do with the feature.
 
 Each arm's provider success rate and mean latency are therefore printed
 alongside its result, and a comparison across materially different conditions
-is caveated rather than reported clean. **Interleaving repeats** — baseline,
-arm, baseline, arm — spreads the drift across both sides instead of
-concentrating it in whichever ran second, and is worth the extra runs when the
-provider is unstable.
+is caveated rather than reported clean.
+
+The structural answer is **`--repeats 3`**, and it needs no flag: repeats are
+already interleaved, because the loop runs a fresh baseline before each round
+of arms rather than all baselines first. So three repeats samples every arm
+three times across the session, and drift lands on both sides instead of
+concentrating in whichever ran second. With `--repeats 1` there is nothing to
+interleave and the arms are simply sequential — which is how the first recorded
+ablation was run, and why its multi-offspring latency figure carries an
+ambiguity it cannot resolve.
+
+Judge conditions by **latency, not success rate**. The broker retries, so a
+run's recorded success rate reads 100% while the provider is at 48%; the cost
+of those retries lands entirely in latency.
 
     scripts/ablation.py --arms operators,island_policies --repeats 2
 
