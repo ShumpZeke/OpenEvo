@@ -26,6 +26,19 @@ A per-arm baseline would double the cost and add a second source of variance
 between the things being compared.
 
     scripts/ablation.py --arms operators,island_policies --repeats 2
+
+Run it against a real provider
+------------------------------
+
+The local test provider (`./run.sh provider`) replays a fixed pool of five
+diffs and does not read the prompt, so the `operators` and `island_policies`
+arms **cannot** show an effect against it — whatever the prompt asks for, the
+same five mutations come back. A difference there is variance, and a smoke test
+of this harness produced exactly that: the `operators` arm looked 1.75x better
+on distinct yield purely by luck over eight requests.
+
+The one arm the stub can answer is `multi_offspring`, because the provider does
+honour a request for N alternatives. Everything else needs the broker.
 """
 
 from __future__ import annotations

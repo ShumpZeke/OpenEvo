@@ -150,6 +150,49 @@ HANDOFF §3.3 — that is one coupled setting, not three).
 
 ---
 
+## T2b — Run the ablations against a real provider
+
+**Priority:** high. **Effort:** small to run, hours to wait.
+**Blocked by:** nothing. **Status:** harness built and smoke-tested; no result.
+
+### Why
+
+Four features are marked PARTIAL in `REQUIREMENTS_PROGRESS.md` for the same
+reason — they are built, gated and unmeasured. `scripts/ablation.sh` settles
+each one against a shared baseline.
+
+```bash
+./scripts/start-broker.sh
+./run.sh
+./scripts/ablation.sh --config configs/oe_max/evolution.yaml \
+    --arms operators,island_policies,multi_offspring --repeats 3 --iterations 12
+```
+
+### The trap
+
+**Do not run this against the local test provider and believe the result.** It
+replays a fixed pool of five diffs and never reads the prompt, so the
+`operators` and `island_policies` arms cannot show an effect no matter how well
+they work. A smoke test produced a 1.75x "improvement" from the `operators` arm
+that way — pure variance over eight requests. Only `multi_offspring` is
+answerable against the stub, because the provider does honour a request for N
+alternatives.
+
+### Done when
+
+Each arm has ≥3 repeats against the broker and a verdict that is not
+"insufficient evidence" — which needs at least 10 mutation requests per arm.
+Then move the matrix rows from PARTIAL to DONE *with the numbers*, or to a
+stated negative result, which is equally worth having.
+
+### Careful
+
+`island_policies` turns operator steering on too, because policies act through
+it. Compare that arm against the `operators` arm, not only against the
+baseline, or you will attribute the whole difference to the policy layer.
+
+---
+
 ## T3 — Stock vs MAX benchmark (spec §16)
 
 **Priority:** high. **Effort:** low to run, slow in wall-clock.
