@@ -59,7 +59,7 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 | Honour Retry-After; global slow-down; backoff + jitter | DONE | `penalise`, `RetryPolicy` | `test_penalty_slows_dispatch_globally` |
 | Circuit breaker, cooldown, half-open probe | DONE | `health.CircuitBreaker` | `test_circuit_opens_and_removes_route_from_candidates` |
 | Per-provider scheduler/health, not shared with Ox | DONE | `NullLimiter` for Zen | Zen has no stated contract |
-| Restart/recovery behaviour | PARTIAL | in-process only | Limiter state is not persisted across a broker restart; a restart briefly forgets the window |
+| Restart/recovery behaviour | DONE | `limiter.RateLimiter(state_path=…)` | Attempt starts persist to `.evolution/nim.window`; those still inside the window are restored on start. Corrupt/aged state discarded, restore capped. 6 tests |
 
 ## §6 Model discovery / specialist routing
 

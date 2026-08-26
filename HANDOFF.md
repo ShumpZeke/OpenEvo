@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 81 control plane + 104 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 84 control plane + 110 OE-MAX.
 
 ---
 
@@ -177,8 +177,14 @@ next steps.
 | `mimo-v2.5-free` | **no** | — | 429 `FreeUsageLimitError` |
 
 `anomalyco/opencode#44300` (Ox Alpha failing on `tools`) **is resolved** — tools
-requests now return 200. Because capability is probed rather than hardcoded,
-re-admitting it needed no code change.
+requests now return 200.
+
+Be precise about what that did and did not require, because it is easy to
+overclaim: the **capability filter** self-corrects in both directions with no
+code change — if the bug returns, the next probe records `supports_tools=False`
+and Ox Alpha drops out of tool roles automatically. The **chain order** is a
+stated preference and does *not* self-correct; leading tool roles with Ox Alpha
+again was a deliberate edit once the evidence changed.
 
 ---
 
@@ -311,18 +317,22 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 84 control plane + 104 OE-MAX = 625 passing
+tests     437 upstream + 84 control plane + 110 OE-MAX = 631 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials
 ```
 
-One known defect, recorded in `REQUIREMENTS_PROGRESS.md`:
+No known open defects. Both previously recorded ones are fixed:
 
-1. The rate limiter's window is in-process, so a broker restart briefly forgets
-   it. A burst immediately after a restart could exceed the contract. (T7.)
+Both defects previously listed here are now **fixed**:
 
-The urllib doctor defect listed here previously is **fixed**; see §3.1.
+- the urllib doctor (§3.1)
+- the rate limiter's in-process window — it now persists attempt starts to
+  `.evolution/nim.window` and restores those still inside the window on start,
+  so a restart cannot forget the contract. Corrupt or aged-out state is
+  discarded rather than trusted, and the restore is capped so a bad file cannot
+  wedge the limiter shut.
 
 Good luck. The measurements in §4 are the most valuable thing here — they point
 at where the real wins are, and they were expensive to obtain.

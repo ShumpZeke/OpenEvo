@@ -30,6 +30,7 @@ deterministic virtual clock rather than by sleeping through real minutes.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ class RateLimiter:
         burst_capacity: float = 2.0,
         clock: Optional[Clock] = None,
         sleep: Optional[Sleeper] = None,
+        state_path: Optional[str] = None,
     ) -> None:
         if hard_cap_per_window <= 0:
             raise ValueError("hard_cap_per_window must be positive")
@@ -106,6 +108,15 @@ class RateLimiter:
 
         self._lock = asyncio.Lock()
         self.stats = LimiterStats()
+
+        # Optional durability. Without it a process restart forgets the rolling
+        # window, and a burst immediately afterwards can exceed the contract —
+        # precisely when a restart is most likely (a crash loop under load).
+        # Timestamps are stored as wall-clock so they survive the monotonic
+        # clock resetting; see _load_state for the conversion back.
+        self._state_path = state_path
+        if state_path:
+            self._load_state()
 
     # -- internals -----------------------------------------------------
 
@@ -171,6 +182,7 @@ class RateLimiter:
                     # Commit the attempt while still holding the lock, so two
                     # coroutines cannot both observe the same free slot.
                     self._starts.append(now)
+                    self._persist(time.time())
                     self._tokens -= 1.0
                     self.stats.granted += 1
                     self.stats.current_window_count = len(self._starts)
@@ -186,6 +198,78 @@ class RateLimiter:
             # Sleep outside the lock so other coroutines can make progress.
             await self._sleep(wait)
             total_wait += wait
+
+    # -- durability ----------------------------------------------------
+
+    def _load_state(self) -> None:
+        """
+        Restore attempt starts still inside the window from a previous process.
+
+        Conservative by construction: anything unreadable, malformed or of
+        uncertain age is discarded rather than assumed safe, because the failure
+        mode of guessing wrong is exceeding a hard contract.
+        """
+        path = self._state_path
+        if not path or not os.path.exists(path):
+            return
+        try:
+            now_wall = time.time()
+            now_mono = self._clock()
+            restored = []
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        wall = float(line)
+                    except ValueError:
+                        continue      # torn line from a killed process
+                    age = now_wall - wall
+                    if 0.0 <= age < self.window:
+                        # Re-express on this process's monotonic timeline.
+                        restored.append(now_mono - age)
+            restored.sort()
+            # Never restore more than the cap: a corrupted file must not be
+            # able to wedge the limiter shut forever.
+            self._starts.extend(restored[-self.hard_cap:])
+        except OSError:
+            return
+
+    def _persist(self, start_wall: float) -> None:
+        if not self._state_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(self._state_path)) or ".",
+                        exist_ok=True)
+            with open(self._state_path, "a", encoding="utf-8") as fh:
+                fh.write(f"{start_wall}\n")
+        except OSError:
+            # Durability is best-effort: failing to record must never block a
+            # request that the in-memory window has already allowed.
+            pass
+
+    def compact_state(self) -> None:
+        """Drop persisted starts that have aged out. Cheap; call periodically."""
+        if not self._state_path or not os.path.exists(self._state_path):
+            return
+        try:
+            cutoff = time.time() - self.window
+            keep = []
+            with open(self._state_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        w = float(line.strip())
+                    except ValueError:
+                        continue
+                    if w > cutoff:
+                        keep.append(w)
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.writelines(f"{w}\n" for w in keep[-self.hard_cap:])
+            os.replace(tmp, self._state_path)
+        except OSError:
+            pass
 
     def penalise(self, retry_after: Optional[float] = None, factor: float = 2.0,
                  duration: float = 30.0) -> None:
@@ -226,6 +310,7 @@ class RateLimiter:
             "tokens": round(self._tokens, 3),
             "penalty_factor": round(self._current_penalty(now), 3),
             "penalty_remaining_s": round(max(0.0, self._penalty_until - now), 2),
+            "persistent": bool(self._state_path),
             "stats": self.stats.to_dict(),
         }
 
@@ -247,6 +332,78 @@ class NullLimiter:
         self.stats.attempts += 1
         self.stats.granted += 1
         return 0.0
+
+    # -- durability ----------------------------------------------------
+
+    def _load_state(self) -> None:
+        """
+        Restore attempt starts still inside the window from a previous process.
+
+        Conservative by construction: anything unreadable, malformed or of
+        uncertain age is discarded rather than assumed safe, because the failure
+        mode of guessing wrong is exceeding a hard contract.
+        """
+        path = self._state_path
+        if not path or not os.path.exists(path):
+            return
+        try:
+            now_wall = time.time()
+            now_mono = self._clock()
+            restored = []
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        wall = float(line)
+                    except ValueError:
+                        continue      # torn line from a killed process
+                    age = now_wall - wall
+                    if 0.0 <= age < self.window:
+                        # Re-express on this process's monotonic timeline.
+                        restored.append(now_mono - age)
+            restored.sort()
+            # Never restore more than the cap: a corrupted file must not be
+            # able to wedge the limiter shut forever.
+            self._starts.extend(restored[-self.hard_cap:])
+        except OSError:
+            return
+
+    def _persist(self, start_wall: float) -> None:
+        if not self._state_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(self._state_path)) or ".",
+                        exist_ok=True)
+            with open(self._state_path, "a", encoding="utf-8") as fh:
+                fh.write(f"{start_wall}\n")
+        except OSError:
+            # Durability is best-effort: failing to record must never block a
+            # request that the in-memory window has already allowed.
+            pass
+
+    def compact_state(self) -> None:
+        """Drop persisted starts that have aged out. Cheap; call periodically."""
+        if not self._state_path or not os.path.exists(self._state_path):
+            return
+        try:
+            cutoff = time.time() - self.window
+            keep = []
+            with open(self._state_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        w = float(line.strip())
+                    except ValueError:
+                        continue
+                    if w > cutoff:
+                        keep.append(w)
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.writelines(f"{w}\n" for w in keep[-self.hard_cap:])
+            os.replace(tmp, self._state_path)
+        except OSError:
+            pass
 
     def penalise(self, retry_after: Optional[float] = None, factor: float = 2.0,
                  duration: float = 30.0) -> None:

@@ -22,6 +22,7 @@ Discovery therefore has two stages: list what exists, then prove what works.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -56,6 +57,7 @@ def build_default_registry(
     nim_hard_cap: int = 44,
     nim_target_rpm: float = 42.0,
     nim_burst: float = 2.0,
+    nim_state_path: Optional[str] = None,
 ) -> Dict[str, ProviderAdapter]:
     """
     The shipped provider set.
@@ -131,6 +133,11 @@ def build_default_registry(
             "nvidia_nim", hard_cap_per_window=nim_hard_cap,
             window_seconds=60.0, target_rpm=nim_target_rpm,
             burst_capacity=nim_burst,
+            # Persist the rolling window so a broker restart cannot forget it
+            # and immediately burst past the contract — the moment a restart is
+            # most likely is a crash loop under load.
+            state_path=nim_state_path or os.environ.get(
+                "OE_MAX_NIM_STATE", os.path.join(".evolution", "nim.window")),
         ),
         requires_key=True,
         timeout_s=120.0,

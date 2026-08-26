@@ -31,7 +31,7 @@ queue. This file is the short version of the rules that are load-bearing.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 84 control plane + 104 OE-MAX
+./test.sh     # 437 upstream + 84 control plane + 110 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the

@@ -16,6 +16,8 @@ minutes, deterministically, in milliseconds.
 from __future__ import annotations
 
 import asyncio
+import time
+
 import pytest
 
 from oe_max.limiter import NullLimiter, RateLimiter, VirtualClock
@@ -264,3 +266,81 @@ async def test_invariant_holds_across_configurations(cap, rpm):
         await lim.acquire()
         starts.append(clock.now)
     assert_window_invariant(starts, cap=cap)
+
+
+# ---------------------------------------------------------------- durability
+@pytest.mark.asyncio
+async def test_window_survives_a_process_restart(tmp_path):
+    """
+    The gap this closes: without persistence a restart forgets the rolling
+    window, and a burst immediately afterwards exceeds the contract — exactly
+    when a restart is most likely (a crash loop under load).
+    """
+    state = str(tmp_path / "nim.window")
+
+    first = RateLimiter("nim", hard_cap_per_window=44, target_rpm=42.0,
+                        burst_capacity=44, state_path=state)
+    for _ in range(20):
+        await first.acquire()
+    assert first.window_count() == 20
+
+    # A fresh process, same state file.
+    second = RateLimiter("nim", hard_cap_per_window=44, target_rpm=42.0,
+                         burst_capacity=44, state_path=state)
+    assert second.window_count() == 20, "restart forgot the window"
+    assert second.snapshot()["headroom"] == 24
+
+
+@pytest.mark.asyncio
+async def test_expired_starts_are_not_restored(tmp_path):
+    state = tmp_path / "old.window"
+    stale = time.time() - 3600          # an hour old, far outside the window
+    state.write_text(f"{stale}\n" * 40)
+    lim = RateLimiter("nim", hard_cap_per_window=44, state_path=str(state))
+    assert lim.window_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_corrupt_state_cannot_wedge_the_limiter(tmp_path):
+    """
+    A malformed or hostile file must not be able to jam the limiter shut, and
+    must not crash it. Unreadable lines are discarded, and the restore is
+    capped so a file claiming thousands of starts cannot block all traffic.
+    """
+    state = tmp_path / "corrupt.window"
+    now = time.time()
+    state.write_text("not-a-number\n\n" + f"{now}\n" * 500 + "\x00garbage\n")
+    lim = RateLimiter("nim", hard_cap_per_window=44, state_path=str(state))
+    assert lim.window_count() <= 44
+    assert lim.snapshot()["persistent"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_state_file_is_not_an_error(tmp_path):
+    lim = RateLimiter("nim", state_path=str(tmp_path / "does" / "not" / "exist"))
+    assert lim.window_count() == 0
+    await lim.acquire()          # must still work, and create the file
+    assert lim.stats.granted == 1
+
+
+@pytest.mark.asyncio
+async def test_compaction_drops_aged_out_entries(tmp_path):
+    state = tmp_path / "compact.window"
+    lim = RateLimiter("nim", hard_cap_per_window=44, burst_capacity=44,
+                      state_path=str(state))
+    for _ in range(10):
+        await lim.acquire()
+    lines_before = len(state.read_text().splitlines())
+    assert lines_before == 10
+
+    # Rewrite them as old, then compact.
+    old = time.time() - 3600
+    state.write_text(f"{old}\n" * 10)
+    lim.compact_state()
+    assert state.read_text().strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_persistence_is_optional_and_off_by_default():
+    lim = RateLimiter("zen")
+    assert lim.snapshot()["persistent"] is False

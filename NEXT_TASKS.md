@@ -178,19 +178,20 @@ should trigger fresh seeds and a larger hidden set before promotion.
 
 ---
 
-## T7 — Persist the rate-limiter window
+## T7 — ~~Persist the rate-limiter window~~ (DONE)
 
-**Priority:** low. **Effort:** small. **Blocked by:** nothing.
+Completed. `RateLimiter(state_path=…)` appends attempt starts and restores those
+still inside the window on start; the NIM limiter uses
+`.evolution/nim.window` by default (override with `OE_MAX_NIM_STATE`).
 
-The NIM limiter's rolling window is in-process, so a broker restart forgets it
-and a burst immediately afterwards could exceed the 48 RPM contract. Persist
-attempt-start timestamps (a small append-only file is enough) and reload on
-start.
+Deliberately conservative: aged-out entries are dropped, unparseable lines are
+skipped, and the restore is capped at the window size so a corrupt or hostile
+file cannot wedge the limiter shut. Persistence failures never block a request
+the in-memory window already allowed — durability is best-effort, the bound is
+not.
 
-Only matters once a real `NVIDIA_API_KEY` is in use — but it is a correctness
-gap in the one invariant the spec calls absolute, so it should not be forgotten.
-
----
+Still worth checking on the first real NIM run: watch the dashboard's
+rolling-window gauge across a broker restart.
 
 ## T8 — Seed Forge and heterogeneous island policies (spec §7A, §7C)
 
