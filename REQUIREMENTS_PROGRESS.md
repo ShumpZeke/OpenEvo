@@ -168,7 +168,7 @@ See `BENCHMARKS.md` for what *was* measured.
 
 | Defect | Impact | Location |
 |---|---|---|
-| `control_plane/providers/doctor.py` probes with `urllib` | Cloudflare returns `403 error code: 1010` to urllib, so the old doctor reports Ox Alpha unavailable when it is healthy. The OE-MAX broker uses `httpx` and is unaffected. | `control_plane/providers/doctor.py` |
+| ~~`doctor.py` probes with `urllib`~~ | **FIXED.** Now probes with `httpx` (urllib kept as a last-resort fallback, and a 1010 from it is reported as an inconclusive transport block rather than a provider fault). Verified live: `zen-ox-alpha-free` reports `available=True, caps=[chat, tools]` with no key set. | `control_plane/providers/doctor.py` |
 | Limiter state is in-process | A broker restart forgets the rolling window; a burst immediately after a restart could exceed the contract | `oe_max/limiter.py` |
 
 ## Blocked on credentials

@@ -31,7 +31,7 @@ queue. This file is the short version of the rules that are load-bearing.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 81 control plane + 104 OE-MAX
+./test.sh     # 437 upstream + 84 control plane + 104 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -40,7 +40,7 @@ fork is broken, not merely the control plane.
 ## Traps that will cost you an hour
 
 - `urllib` gets Cloudflare `403 error code: 1010` from OpenCode Zen; `httpx`
-  works. (`control_plane/providers/doctor.py` still has this bug.)
+  works. (Fixed in the doctor — do not reintroduce it in new probing code.)
 - Ox Alpha spends ~8,000 tokens on *hidden reasoning*; `max_tokens`, the
   provider timeout and the client timeout must be changed together.
 - A model in Zen's `/models` listing may still return "Model is unavailable".

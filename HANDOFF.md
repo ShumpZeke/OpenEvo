@@ -79,10 +79,15 @@ Probing Zen with Python's `urllib` returns **HTTP 403 `error code: 1010`** for
 every model. `curl` and `httpx` return 200 against the same endpoint in the same
 minute. It is a client-fingerprint block, not a provider outage.
 
-**Consequence:** `control_plane/providers/doctor.py` still uses `urllib`, so it
-reports a healthy Ox Alpha as unavailable. This is a **known open defect** —
-fixing it is item 4 in the next-steps list. The OE-MAX broker uses `httpx` and
-is unaffected.
+**Consequence, now fixed:** `control_plane/providers/doctor.py` used to probe
+with `urllib` and so reported a healthy Ox Alpha as unavailable. It now uses
+`httpx`, keeps urllib only as a last resort, and reports a 1010 as an
+*inconclusive transport block* rather than a provider fault — blaming the
+provider for our own client's fingerprint would be worse than admitting we
+could not tell.
+
+Keep the trap in mind anyway: any new probing code you add must not reach for
+`urllib`.
 
 ### 3.2 Ox Alpha spends its entire token budget on hidden reasoning
 
@@ -214,12 +219,7 @@ Expect the baseline to be unusually penalised on this route because it lacks
 truncation escalation. That is a real difference but it is provider handling,
 not search quality — separate the two when you write it up.
 
-### 4. Fix the `urllib` doctor (§3.1)
-
-Small, self-contained, and it currently makes the control plane lie about
-provider health. Port `control_plane/providers/doctor.py` to `httpx`.
-
-### 5. Sandbox executors
+### 4. Sandbox executors
 
 `control_plane/sandbox/opencode.py` enforces the isolation boundary and is
 tested (9 tests, including that writes into operator-owned paths are refused).
@@ -229,7 +229,7 @@ worktree backends with CPU/RAM/pids limits and a wall timeout.
 Docker is available on this machine. This is the largest remaining subsystem and
 the one that unlocks the anti-reward-hacking work (spec §9).
 
-### 6. Verification stages V1/V2 (spec §8)
+### 5. Verification stages V1/V2 (spec §8)
 
 Property, metamorphic, differential and hidden tests, then symbolic/SMT and the
 independent critic. Depends on the sandbox for anything untrusted.
@@ -311,18 +311,18 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 81 control plane + 104 OE-MAX = 622 passing
+tests     437 upstream + 84 control plane + 104 OE-MAX = 625 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials
 ```
 
-Two known defects, both recorded in `REQUIREMENTS_PROGRESS.md`:
+One known defect, recorded in `REQUIREMENTS_PROGRESS.md`:
 
-1. `control_plane/providers/doctor.py` probes with `urllib` and so misreports
-   Zen health (§3.1).
-2. The rate limiter's window is in-process, so a broker restart briefly forgets
-   it. A burst immediately after a restart could exceed the contract.
+1. The rate limiter's window is in-process, so a broker restart briefly forgets
+   it. A burst immediately after a restart could exceed the contract. (T7.)
+
+The urllib doctor defect listed here previously is **fixed**; see §3.1.
 
 Good luck. The measurements in §4 are the most valuable thing here — they point
 at where the real wins are, and they were expensive to obtain.

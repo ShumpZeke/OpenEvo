@@ -115,28 +115,21 @@ quality — conflating them would overstate the result.
 
 ---
 
-## T4 — Fix the urllib doctor
+## T4 — ~~Fix the urllib doctor~~ (DONE)
 
-**Priority:** medium. **Effort:** small. **Blocked by:** nothing.
+Completed. `control_plane/providers/doctor.py` now probes with `httpx`, keeps
+urllib as a last-resort fallback, and classifies a Cloudflare 1010 as an
+inconclusive transport block rather than a provider failure.
 
-### Why
+Two further corrections came out of it:
 
-`control_plane/providers/doctor.py` probes with `urllib`, which Cloudflare
-answers with `403 error code: 1010`. It therefore reports a healthy Ox Alpha as
-unavailable — the control plane currently lies about provider health.
-
-### Where to start
-
-`control_plane/providers/doctor.py::_post`. Replace `urllib` with `httpx`
-(already a dependency). Keep the existing `SKIPPED`/`PASS`/`FAIL` semantics —
-a probe that cannot run must not report as a failure.
-
-### Done when
-
-`POST /api/providers/doctor` reports `zen-ox-alpha-free` as available, matching
-what `./scripts/verify-providers.sh` already reports through the broker.
-
----
+- `ModelProfile.requires_key` was added, because Zen serves Ox Alpha with no
+  Authorization header and treating a missing key as disqualifying switched off
+  a working primary route.
+- The role chains now lead with Ox Alpha for tool-requiring roles too, since
+  #44300 is resolved and tools are verified. Note the honest distinction: the
+  *capability filter* self-corrects in both directions automatically, but the
+  *chain order* is a stated preference and needed a deliberate edit.
 
 ## T5 — Sandbox executors (spec §9)
 

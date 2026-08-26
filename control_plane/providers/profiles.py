@@ -129,6 +129,11 @@ class ModelProfile:
 
     roles: List[Role] = field(default_factory=list)
     enabled: bool = True
+    # Whether the route is unusable without its credential. OpenCode Zen was
+    # observed serving `x-preview-f-free` with no Authorization header at all,
+    # so treating a missing key as disqualifying would switch off a working
+    # primary route.
+    requires_key: bool = True
     notes: str = ""
 
     def capabilities(self) -> List[Capability]:
@@ -145,6 +150,12 @@ class ModelProfile:
     def has_secret(self) -> bool:
         return bool(self.secret_ref and os.environ.get(self.secret_ref))
 
+    def usable(self) -> bool:
+        """Attemptable at all: enabled, and credentialled if it needs to be."""
+        if not self.enabled:
+            return False
+        return self.has_secret() or not self.requires_key
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -154,6 +165,8 @@ class ModelProfile:
             "display_name": self.display_name or self.model,
             "secret_ref": self.secret_ref,
             "secret_present": self.has_secret(),
+            "requires_key": self.requires_key,
+            "usable": self.usable(),
             "context_limit": self.context_limit,
             "max_output_tokens": self.max_output_tokens,
             "declared_capabilities": [c.value for c in self.declared_capabilities],
@@ -185,11 +198,12 @@ NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
 _ZEN_SOURCE = "opencode.ai/docs/zen, verified 2026-08-25"
 _TOOLS_ISSUE = (
-    "Tool-calling reported broken for this model: any request containing a "
-    "`tools` array returns 'Upstream request failed: Endpoint is unavailable' "
-    "(anomalyco/opencode issue #44300, open 2026-08-25). Plain chat completions "
-    "are unaffected. The doctor probes this at runtime; tool-requiring roles "
-    "fall back automatically."
+    "Tool-calling was broken for this model under anomalyco/opencode issue "
+    "#44300 (any request carrying a `tools` array returned 'Upstream request "
+    "failed: Endpoint is unavailable'). Re-probed live 2026-08-26: RESOLVED — "
+    "tools requests return 200. Capability is measured by the doctor rather "
+    "than assumed, so if this regresses the model is filtered out of "
+    "tool-requiring roles automatically."
 )
 
 
@@ -212,15 +226,19 @@ def default_profiles() -> List[ModelProfile]:
             display_name="Ox Alpha Free (OpenCode Zen)",
             context_limit=1_048_576,
             max_output_tokens=131_072,
-            # TOOLS deliberately NOT declared: see _TOOLS_ISSUE.
+            # TOOLS declared as of 2026-08-26; see _TOOLS_ISSUE. The doctor
+            # still probes and can overrule this.
             declared_capabilities=[
-                Capability.CHAT, Capability.JSON_MODE, Capability.STREAMING,
+                Capability.CHAT, Capability.TOOLS, Capability.JSON_MODE,
+                Capability.STREAMING,
             ],
             free_status=FreeStatus.FREE_LIMITED_TIME,
             free_note=(
                 "Documented as free for a limited time; usage limits may change. "
                 f"Source: {_ZEN_SOURCE}. Not guaranteed permanent or unlimited."
             ),
+            # Verified 2026-08-26: served without an Authorization header.
+            requires_key=False,
             priority=0,
             max_concurrency=4,
             input_cost_per_mtok=0.0,
@@ -228,6 +246,8 @@ def default_profiles() -> List[ModelProfile]:
             cost_basis=f"listed $0 in/out/cached — {_ZEN_SOURCE}",
             roles=[
                 Role.MUTATION, Role.RESEARCH, Role.EVALUATOR, Role.PARALLEL_WORKER,
+                Role.ORCHESTRATOR, Role.DEEP_CODING, Role.PLANNING, Role.REVIEW,
+                Role.ARCHITECTURE, Role.EXPLORE,
             ],
             notes=_TOOLS_ISSUE,
         ),
@@ -245,6 +265,8 @@ def default_profiles() -> List[ModelProfile]:
             ],
             free_status=FreeStatus.UNKNOWN,
             free_note=f"Listed on Zen; free status must be probed. {_ZEN_SOURCE}",
+            # Same keyless Zen endpoint as Ox Alpha; verified 2026-08-26.
+            requires_key=False,
             priority=10,
             max_concurrency=3,
             roles=[
@@ -268,6 +290,8 @@ def default_profiles() -> List[ModelProfile]:
                 Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
             ],
             free_status=FreeStatus.UNKNOWN,
+            # Same keyless Zen endpoint as Ox Alpha; verified 2026-08-26.
+            requires_key=False,
             priority=20,
             max_concurrency=6,
             roles=[Role.EXPLORE, Role.RESEARCH, Role.PARALLEL_WORKER],
@@ -330,15 +354,29 @@ def default_role_chains() -> Dict[Role, List[str]]:
     """
     Ordered fallback chain per role.
 
-    Ox Alpha leads every completion-only chain (the operator's stated
-    preference). Tool-requiring roles lead with a tools-capable model instead —
-    not a downgrade of that preference but the only way the role can function
-    while issue #44300 is open. The doctor can promote Ox Alpha into these
-    chains automatically the moment a live tools probe succeeds.
+    Ox Alpha leads EVERY chain, including tool-requiring roles — the operator's
+    stated preference, applied uniformly.
+
+    It did not always. While anomalyco/opencode#44300 was open, Ox Alpha failed
+    on any request carrying a `tools` array, so tool roles led with a
+    tools-capable model instead. That issue is now resolved (re-probed live
+    2026-08-26: tools requests return 200, and the doctor records
+    `verified_capabilities = [chat, tools]`).
+
+    Worth being precise about what is and is not automatic here, because it is
+    easy to overclaim: the *capability filter* self-corrects in both directions
+    without code changes — if #44300 regresses, the next probe records
+    `supports_tools=False`, Ox Alpha is filtered out of tool roles, and the
+    chain falls through to nemotron on its own. The *chain order* is a stated
+    preference and does not self-correct; changing it was a deliberate edit
+    once the evidence changed.
     """
     zen_first = ["zen-ox-alpha-free", "nim-deepseek-v4-pro", "nim-qwen25-coder-32b"]
+    # Ox Alpha first, with verified tools-capable models behind it. If its tool
+    # support regresses, the capability filter removes it automatically.
     tools_first = [
-        "zen-nemotron-3-ultra-free", "nim-deepseek-v4-pro", "zen-deepseek-v4-flash",
+        "zen-ox-alpha-free", "zen-nemotron-3-ultra-free", "nim-deepseek-v4-pro",
+        "zen-deepseek-v4-flash",
     ]
     return {
         Role.MUTATION: zen_first,

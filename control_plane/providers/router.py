@@ -185,12 +185,20 @@ class ModelRouter:
             if not prof.enabled:
                 excluded[pid] = "disabled"
                 continue
-            if prof.secret_ref and not prof.has_secret():
+            if not prof.usable():
                 excluded[pid] = f"missing credential {prof.secret_ref}"
                 continue
             missing = [c.value for c in required if not prof.supports(c)]
             if missing:
-                excluded[pid] = f"lacks capability: {', '.join(missing)}"
+                # Say whether this is measured or merely assumed. "Ox Alpha
+                # lacks tools" means something very different depending on
+                # whether a probe established it or a default declared it.
+                verified = prof.verified_capabilities is not None
+                excluded[pid] = (
+                    f"lacks capability: {', '.join(missing)}"
+                    + (" (verified by provider doctor)" if verified
+                       else " (declared default; not yet probed)")
+                )
                 continue
             h = self.health[pid]
             if h.is_open():

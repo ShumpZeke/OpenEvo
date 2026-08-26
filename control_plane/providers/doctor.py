@@ -120,20 +120,28 @@ class ProviderDoctor:
         )
 
         # 1. Credential presence — a local endpoint legitimately needs none.
-        if profile.secret_ref:
-            if profile.has_secret():
-                rep.probes.append(Probe("credential", ProbeResult.PASS,
-                                        f"{profile.secret_ref} present"))
-            else:
-                rep.probes.append(Probe(
-                    "credential", ProbeResult.SKIPPED,
-                    f"{profile.secret_ref} not set — live probes cannot run. "
-                    f"This is reported as unverified, not as failure.",
-                ))
-                rep.summary = "credential missing; not verified"
-                rep.available = False
-                self._emit(rep)
-                return rep
+        if profile.secret_ref and profile.has_secret():
+            rep.probes.append(Probe("credential", ProbeResult.PASS,
+                                    f"{profile.secret_ref} present"))
+        elif profile.secret_ref and not getattr(profile, "requires_key", True):
+            # Keyless-capable route: probe it anyway. Zen serves Ox Alpha with
+            # no Authorization header, and skipping here would report a working
+            # primary route as unverified.
+            rep.probes.append(Probe(
+                "credential", ProbeResult.SKIPPED,
+                f"{profile.secret_ref} not set; this route is documented as "
+                f"usable without one, so probing anyway",
+            ))
+        elif profile.secret_ref:
+            rep.probes.append(Probe(
+                "credential", ProbeResult.SKIPPED,
+                f"{profile.secret_ref} not set — live probes cannot run. "
+                f"This is reported as unverified, not as failure.",
+            ))
+            rep.summary = "credential missing; not verified"
+            rep.available = False
+            self._emit(rep)
+            return rep
         else:
             rep.probes.append(Probe("credential", ProbeResult.SKIPPED, "no credential required"))
 
@@ -218,6 +226,14 @@ class ProviderDoctor:
             )
         if status == 429:
             return Probe(name, ProbeResult.FAIL, "rate limited (429)", latency, status)
+        if status == 403 and "1010" in (text or ""):
+            # Cloudflare client-fingerprint block, not an auth or provider
+            # failure. Reported as inconclusive: blaming the provider for our
+            # own client's TLS/UA signature would be actively misleading.
+            return Probe(name, ProbeResult.SKIPPED,
+                         "blocked by the provider's bot protection "
+                         "(Cloudflare 1010) — inconclusive, not a provider fault",
+                         latency, status)
         if status in (401, 403):
             return Probe(name, ProbeResult.FAIL,
                          f"auth rejected ({status})", latency, status)
@@ -229,11 +245,30 @@ class ProviderDoctor:
     async def _post(url: str, headers: Dict[str, str], body: Dict[str, Any],
                     timeout: float) -> tuple:
         """
-        POST without adding a hard dependency on an async HTTP client.
+        POST via httpx, falling back to urllib only if httpx is unavailable.
 
-        urllib in a thread keeps the doctor usable in a bare environment; the
-        engine's own OpenAI client is unaffected by this choice.
+        This ordering is not a style preference. Probing OpenCode Zen with
+        `urllib` returns **HTTP 403 `error code: 1010`** for every model — a
+        Cloudflare client-fingerprint block — while `httpx` and `curl` return
+        200 against the same endpoint in the same minute. With urllib first,
+        this doctor reported a perfectly healthy Ox Alpha as unavailable.
+
+        The urllib path is kept as a last resort so the doctor still runs in a
+        bare environment, but a 1010 from it is reported as an inconclusive
+        transport block rather than as a provider failure — blaming the provider
+        for our own client's fingerprint would be worse than admitting we could
+        not tell.
         """
+        try:
+            import httpx
+        except ImportError:
+            httpx = None  # type: ignore[assignment]
+
+        if httpx is not None:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(url, json=body, headers=headers, timeout=timeout)
+                return r.status_code, r.text
+
         import urllib.error
         import urllib.request
 
