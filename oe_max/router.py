@@ -138,45 +138,93 @@ class Router:
 
         last: Optional[ChatResult] = None
         for route in routes:
-            provider = self.registry.provider(route.provider)
-            assert provider is not None
-            attempt_params = dict(params)
-
-            for attempt in range(1, self.retry.max_attempts + 1):
-                result = await provider.chat(
-                    client, route.model_id, messages, attempt=attempt, **attempt_params
-                )
-                self.health.record(result)
-                self._log(result, route)
-
-                if result.ok:
-                    return result
-                last = result
-
-                if result.outcome not in RETRYABLE:
-                    break   # 400/401 will not improve by retrying this route
-
-                if result.outcome is Outcome.TRUNCATED:
-                    # Retrying a truncation with the same budget reproduces it
-                    # exactly. Reasoning models spend part of the completion
-                    # budget invisibly — Ox Alpha was measured burning 961 of
-                    # 1598 completion tokens on reasoning — so the fix is a
-                    # bigger budget, not another identical call.
-                    grown = _grow_token_budget(attempt_params)
-                    if grown is None:
-                        break   # already at the ceiling; try the next route
-                    attempt_params = grown
-                    continue    # escalate immediately, no backoff needed
-
-                if attempt < self.retry.max_attempts:
-                    await asyncio.sleep(
-                        self.retry.delay_for(attempt, result.retry_after)
-                    )
+            result = await self._try_route(client, route, messages, params)
+            if result.ok:
+                return result
+            last = result
             # exhausted this route; fall through to the next in the chain
 
         return last or ChatResult(
             Outcome.SERVER_ERROR, "router", "none", 0.0,
             error="all routes exhausted with no result",
+        )
+
+    async def chat_pinned(
+        self,
+        client: httpx.AsyncClient,
+        route: Route,
+        messages: List[Dict[str, Any]],
+        **params: Any,
+    ) -> ChatResult:
+        """
+        Send to one named route, with the same retry and truncation policy the
+        chain applies — but no failover.
+
+        Pinning exists so a caller can measure or require a specific model. If
+        it also silently dropped budget escalation, a pinned reasoning model
+        would truncate where the same model on the chain succeeds, and an A/B
+        experiment between routes would be measuring the policy rather than the
+        models. Measured: a 16-token budget made nemotron-3-ultra-free return
+        `finish_reason=length` after spending 17 tokens on hidden reasoning —
+        on the chain that same call escalates and returns an answer.
+        """
+        return await self._try_route(client, route, messages, params)
+
+    async def _try_route(
+        self,
+        client: httpx.AsyncClient,
+        route: Route,
+        messages: List[Dict[str, Any]],
+        params: Dict[str, Any],
+    ) -> ChatResult:
+        """
+        One route, up to `retry.max_attempts` tries.
+
+        Each attempt acquires its own rate-limit slot, including retries, so the
+        NIM contract holds across the whole path rather than only the first try.
+        """
+        provider = self.registry.provider(route.provider)
+        if provider is None:
+            return ChatResult(
+                Outcome.SERVER_ERROR, route.provider, route.model_id, 0.0,
+                error=f"provider {route.provider!r} is not registered",
+            )
+        attempt_params = dict(params)
+        result: Optional[ChatResult] = None
+
+        for attempt in range(1, self.retry.max_attempts + 1):
+            result = await provider.chat(
+                client, route.model_id, messages, attempt=attempt, **attempt_params
+            )
+            self.health.record(result)
+            self._log(result, route)
+
+            if result.ok:
+                return result
+
+            if result.outcome not in RETRYABLE:
+                break   # 400/401 will not improve by retrying this route
+
+            if result.outcome is Outcome.TRUNCATED:
+                # Retrying a truncation with the same budget reproduces it
+                # exactly. Reasoning models spend part of the completion
+                # budget invisibly — Ox Alpha was measured burning 961 of
+                # 1598 completion tokens on reasoning — so the fix is a
+                # bigger budget, not another identical call.
+                grown = _grow_token_budget(attempt_params)
+                if grown is None:
+                    break   # already at the ceiling; give up on this route
+                attempt_params = grown
+                continue    # escalate immediately, no backoff needed
+
+            if attempt < self.retry.max_attempts:
+                await asyncio.sleep(
+                    self.retry.delay_for(attempt, result.retry_after)
+                )
+
+        return result or ChatResult(
+            Outcome.SERVER_ERROR, route.provider, route.model_id, 0.0,
+            error="route produced no result",
         )
 
     def _log(self, result: ChatResult, route: Route) -> None:

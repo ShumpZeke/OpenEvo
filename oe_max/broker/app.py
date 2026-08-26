@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from ..health import RetryPolicy, RouteHealth
 from ..providers.registry import Registry, build_default_registry
-from ..router import DEFAULT_CHAIN, NoRouteAvailable, Router
+from ..router import DEFAULT_CHAIN, NoRouteAvailable, Route, Router
 
 # The alias OpenEvolve is configured with. Requests naming it (or anything
 # unrecognised) go through the chain; naming a concrete model pins that route.
@@ -215,11 +215,15 @@ def create_app(registry: Optional[Registry] = None,
         pinned = _resolve_pinned(state.registry, req.model)
         try:
             if pinned is not None:
-                provider, model_id = pinned
-                result = await provider.chat(
-                    state.client, model_id, messages, **params
+                # Pinned means "this route, no failover" — not "no policy".
+                # Going straight to provider.chat would drop retry and
+                # truncation escalation, so a pinned reasoning model would
+                # truncate where the same model on the chain succeeds, and any
+                # A/B between routes would measure the policy difference
+                # instead of the models.
+                result = await state.router.chat_pinned(
+                    state.client, pinned, messages, **params
                 )
-                state.router.health.record(result)
             else:
                 result = await state.router.chat(
                     state.client, messages,
@@ -281,7 +285,7 @@ def create_app(registry: Optional[Registry] = None,
     return app
 
 
-def _resolve_pinned(registry: Registry, model: str):
+def _resolve_pinned(registry: Registry, model: str) -> Optional[Route]:
     """
     If the caller named a concrete configured model, pin that route.
 
@@ -295,7 +299,7 @@ def _resolve_pinned(registry: Registry, model: str):
             continue
         for spec in p.models.values():
             if spec.id == model or spec.key == model:
-                return p, spec.id
+                return Route(provider=p.name, model_key=spec.key, model_id=spec.id)
     return None
 
 

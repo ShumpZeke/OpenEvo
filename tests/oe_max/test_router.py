@@ -274,3 +274,82 @@ async def test_truncation_detected_from_finish_reason():
     assert res.finish_reason == "length"
     assert res.reasoning_tokens == 90
     assert res.to_log()["reasoning_tokens"] == 90
+
+
+# ---------------------------------------------------------------------------
+# Pinning
+#
+# Pinning means "this route, no failover". It must not also mean "no policy":
+# a pinned reasoning model that lost budget escalation would truncate where the
+# same model on the chain succeeds, and an A/B experiment between two pinned
+# routes would be measuring that policy difference instead of the models.
+# ---------------------------------------------------------------------------
+
+from oe_max.router import Route
+
+
+def _route(provider, model_key, model_id):
+    return Route(provider=provider, model_key=model_key, model_id=model_id)
+
+
+@pytest.mark.asyncio
+async def test_pinned_route_never_fails_over():
+    router, primary, fallback = build(primary_script=[Outcome.UNAVAILABLE] * 3)
+    r = await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
+                                 [{"role": "user", "content": "hi"}])
+    assert not r.ok and r.provider == "primary"
+    assert len(fallback.calls) == 0, "pinning must not fall through to another route"
+
+
+@pytest.mark.asyncio
+async def test_pinned_route_still_retries():
+    router, primary, fallback = build(
+        primary_script=[Outcome.UNAVAILABLE, Outcome.UNAVAILABLE, Outcome.OK])
+    r = await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
+                                 [{"role": "user", "content": "hi"}])
+    assert r.ok and r.attempt == 3
+    assert len(fallback.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_pinned_route_escalates_a_truncated_budget():
+    """
+    The measured case: nemotron-3-ultra-free spent 17 tokens on hidden
+    reasoning against a 16-token budget and returned finish_reason=length.
+    """
+    router, primary, _ = build(primary_script=[Outcome.TRUNCATED, Outcome.OK])
+    r = await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
+                                 [{"role": "user", "content": "hi"}], max_tokens=4000)
+    assert r.ok
+    assert [c["params"]["max_tokens"] for c in primary.calls] == [4000, 8000]
+
+
+@pytest.mark.asyncio
+async def test_pinned_route_records_health_like_any_other():
+    """
+    Otherwise a pinned experiment would leave the route's health untouched and
+    the dashboard would show a model nobody had apparently called.
+    """
+    router, primary, _ = build(primary_script=[Outcome.OK])
+    await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
+                             [{"role": "user", "content": "hi"}])
+    assert router.health.snapshot()["primary/ox-1"]["health"]["total_attempts"] == 1
+    assert router.request_log[-1]["model"] == "ox-1"
+
+
+@pytest.mark.asyncio
+async def test_pinning_an_unregistered_provider_is_an_error_not_a_crash():
+    router, _, _ = build()
+    r = await router.chat_pinned(None, _route("nope", "k", "m-1"),
+                                 [{"role": "user", "content": "hi"}])
+    assert not r.ok and "not registered" in (r.error or "")
+
+
+@pytest.mark.asyncio
+async def test_chain_behaviour_is_unchanged_by_the_refactor():
+    """The chain path is the shipped default; pinning must not have moved it."""
+    router, primary, fallback = build(
+        primary_script=[Outcome.UNAVAILABLE] * 3, fallback_script=[Outcome.OK])
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+    assert r.ok and r.provider == "fallback"
+    assert len(primary.calls) == 3 and len(fallback.calls) == 1
