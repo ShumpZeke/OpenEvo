@@ -13,7 +13,7 @@ if (-not (Test-Path $py)) { Write-Error "Run .\bootstrap.ps1 first."; exit 1 }
 
 $cfg = switch ($Profile) {
   "max"   { "configs\oe_max\evolution.yaml" }
-  "stock" { "examples\$Task\config.yaml" }
+  "stock" { "configs\oe_max\stock_baseline.yaml" }
   default { $Profile }
 }
 $prog = "examples\$Task\initial_program.py"

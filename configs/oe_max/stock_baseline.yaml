@@ -1,0 +1,60 @@
+# Stock baseline for the stock-vs-MAX comparison (spec §16).
+#
+# Identical to configs/oe_max/evolution.yaml in every evolutionary setting —
+# same task, seed, population, islands, MAP-Elites dimensions and iteration
+# budget — and identical in MODEL. The single difference is the path:
+#
+#   stock : OpenEvolve  ─────────────────────────────────►  OpenCode Zen
+#   max   : OpenEvolve  ──►  OE-MAX broker  ──────────────►  OpenCode Zen
+#
+# Holding the model fixed is what makes the comparison mean anything. If the
+# baseline used a different model, the result would measure the models rather
+# than the system, and the spec asks for identical provider/model budget.
+#
+# What the MAX arm therefore adds, and what the comparison measures:
+#   - truncation detection with token-budget escalation
+#   - retry, backoff and circuit breaking
+#   - route failover when the primary is unavailable
+#   - per-request provider provenance
+#
+# Note this arm talks to the provider directly and so has no rate limiter. That
+# is faithful to "stock": upstream has no global scheduler. It is also why the
+# baseline should not be pointed at a rate-contracted provider such as NIM.
+
+max_iterations: 10
+checkpoint_interval: 6
+random_seed: 42
+
+llm:
+  primary_model: "x-preview-f-free"
+  primary_model_weight: 1.0
+  api_base: "https://opencode.ai/zen/v1"
+  # Zen was observed serving this model without an Authorization header. A real
+  # key goes in .env as OPENCODE_ZEN_API_KEY; it is never committed.
+  api_key: "not-required-for-this-route"
+  temperature: 0.8
+  max_tokens: 16000
+  timeout: 900
+
+prompt:
+  system_message: |
+    You are an expert algorithm designer improving a function-minimization
+    routine. Find the global minimum of
+    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20
+    Escape local minima. Return a SEARCH/REPLACE diff.
+
+database:
+  population_size: 60
+  archive_size: 25
+  num_islands: 4
+  migration_interval: 6
+  migration_rate: 0.1
+  feature_dimensions: ["complexity", "diversity"]
+  feature_bins: 8
+
+evaluator:
+  timeout: 90
+  parallel_evaluations: 2
+
+diff_based_evolution: true
+max_code_length: 24000

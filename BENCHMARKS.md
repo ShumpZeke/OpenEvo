@@ -130,15 +130,37 @@ that grants nothing trivially satisfies the bound.
 
 ## Stock vs MAX
 
-**Not yet run as a controlled comparison.** The harness exists —
-`./scripts/run-evolution.sh --profile stock|max` selects upstream's own config
-or the broker config against an identical task, evaluator and seed — but a
-multi-seed comparison has not been executed.
+**Harness ready; a multi-seed comparison has not been executed.**
+
+`./scripts/run-evolution.sh --profile stock|max` runs two arms that differ in
+exactly one thing — the path to the provider:
+
+```
+stock : OpenEvolve  ────────────────────────────────►  Zen  (x-preview-f-free)
+max   : OpenEvolve  ──►  OE-MAX broker  ────────────►  Zen  (x-preview-f-free)
+```
+
+Same task, evaluator, seed, population, islands, MAP-Elites dimensions,
+iteration budget **and model**. Holding the model fixed is what makes the result
+attributable to the system rather than to the model — a baseline on a different
+model would measure the models. `configs/oe_max/stock_baseline.yaml` is the
+baseline arm, and it is runnable with no key because Zen serves this route
+without one.
+
+What the MAX arm adds, and therefore what the comparison measures: truncation
+detection with budget escalation, retry/backoff, circuit breaking, route
+failover, and per-request provenance.
 
 Honest reason: at ~130 s per generation on the primary route, a single 10-
 iteration arm takes 20–30 minutes, and the spec requires multiple seeds and ten
 ablations. Reporting a one-seed, eight-iteration difference as a benchmark
 result would be noise presented as evidence.
+
+The baseline arm is also expected to be *unusually* penalised on this route,
+which is worth stating in advance rather than discovering afterwards: without
+truncation escalation it inherits the 5-of-8 failure mode measured above. That
+is a real difference, but it is a difference in provider handling, not in
+search quality, and the comparison writeup should separate the two.
 
 What *can* be said from the runs performed:
 

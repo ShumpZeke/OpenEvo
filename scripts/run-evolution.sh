@@ -19,7 +19,10 @@ done
 
 case "$PROFILE" in
   max)   CFG="configs/oe_max/evolution.yaml" ;;
-  stock) CFG="examples/$TASK/config.yaml" ;;   # baseline comparison
+  # Baseline arm: same model, same settings, but talking to the provider
+  # directly instead of through the broker. That isolates the system from the
+  # model, which is what makes the comparison meaningful.
+  stock) CFG="configs/oe_max/stock_baseline.yaml" ;;
   *)     CFG="$PROFILE" ;;                      # explicit path
 esac
 
