@@ -76,6 +76,16 @@ ARMS: Dict[str, Dict[str, Any]] = {
         "asks": "do three alternatives per request beat one, after "
                 "deduplication?",
     },
+    "seed_forge": {
+        "env": {"OE_MAX_SEED_FORGE": "3",
+                "EVOLUTION_EVALUATOR_PATH": "examples/function_minimization/evaluator.py"},
+        "asks": "does starting from a forged population beat starting from one "
+                "program?",
+        "note": "the variants cost evaluation time but no model requests, so "
+                "read this arm on area-under-curve per *request* — measured "
+                "against wall-clock it is paying for an advantage it did not "
+                "earn. EVOLUTION_EVALUATOR_PATH must match --task.",
+    },
     "verify": {
         "env": {"OE_MAX_VERIFY": "1"},
         "asks": "what does verification cost, and does it change the outcome?",

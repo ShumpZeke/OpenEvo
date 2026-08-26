@@ -327,6 +327,33 @@ def _hash(text: Optional[str]) -> Optional[str]:
     return hashlib.sha256(text.encode()).hexdigest()[:16] if text else None
 
 
+def _maybe_seed(inst: Any, db: Any, program: Any) -> None:
+    """
+    Turn the first program into a starting population, if asked.
+
+    Runs after the seed's own `add` so upstream's bookkeeping — island
+    assignment, best-program tracking, the feature map — is already settled and
+    the variants land in a consistent database rather than a half-built one.
+    """
+    from . import seed_hook
+
+    hook = seed_hook.get_hook()
+    if hook is None:
+        return
+    try:
+        added = hook.maybe_seed(db, program)
+        if not added:
+            return
+        emit(inst._ev(
+            EventType.POPULATION_UPDATED, Component.DATABASE, iteration=0,
+            summary=f"seed forge added {len(added)} variants",
+            metrics={"variants": float(len(added))},
+            metadata={"seed_forge": hook.report},
+        ))
+    except Exception as exc:   # a forge failure must not cost the run its seed
+        logger.debug("seed forge hook failed: %r", exc)
+
+
 def _maybe_verify(inst: Any, db: Any, program: Any, before_best: Any,
                   iteration: Any) -> None:
     """
@@ -543,6 +570,7 @@ class EngineInstrumentation:
                 except Exception as exc:  # telemetry must never break evolution
                     logger.debug("telemetry add hook failed: %r", exc)
                 _add_siblings(db_self, program, iteration, target_island)
+                _maybe_seed(inst, db_self, program)
                 _maybe_verify(inst, db_self, program, before_best, iteration)
                 return result
 

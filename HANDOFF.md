@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 267 control plane + 227 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 276 control plane + 227 OE-MAX.
 
 ---
 
@@ -363,7 +363,19 @@ variants, scores 0.769–1.478 against the seed's 1.423, two of them better.
 
 Read that result carefully. The variants that won did so by running the search
 *harder* — trading local compute for score, not finding a better algorithm.
-Nothing seeds a run from the forge yet.
+
+**`OE_MAX_SEED_FORGE=3`** starts a run from that population, spread across
+islands round-robin. That placement is the point: upstream seeds island 0 and
+lets migration spread it, so for the first several generations the island
+structure is separating populations that are identical.
+
+It needs `EVOLUTION_EVALUATOR_PATH` set, because every variant is scored before
+it is added — an unscored program cannot be compared and would occupy a
+MAP-Elites cell it did not earn. Without it the hook skips and says so rather
+than adding zeros.
+
+Whether starting from a population actually beats starting from one program is
+**unmeasured**. It is an ablation arm waiting to be run.
 
 ---
 
@@ -388,7 +400,8 @@ new:
 
 - **the operator bandit.** `search/bandit.py` is tested and is not what picks
   operators; selection is uniform random until per-operator reward exists.
-- **Seed Forge.** It produces a population and nothing starts a run from it.
+- **nothing measures whether the forged population helps.** The seeding path
+  exists (§4e); the ablation arm for it does not.
 
 ## 6. Blocked, and exactly how to unblock
 
@@ -474,7 +487,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 267 control plane + 227 OE-MAX = 931 passing
+tests     437 upstream + 276 control plane + 227 OE-MAX = 940 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials
