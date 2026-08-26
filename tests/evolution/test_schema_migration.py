@@ -170,3 +170,46 @@ def test_a_migrated_database_can_still_ingest(tmp_path):
         assert row["gen_provider"] == "opencode_zen"
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# Replayability
+#
+# The event log is the source of truth and the projections are a cache. That is
+# only true if any log replays — including one from a run started by the
+# entrypoint directly, which never emits experiment.created because no control
+# API was involved.
+# ---------------------------------------------------------------------------
+
+def test_a_run_replays_without_an_experiment_event(tmp_path):
+    """
+    The runs→experiments foreign key used to fail here, and one unreplayable
+    log makes the projection a second source of truth rather than a cache.
+    """
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        store.ingest([Event(
+            type=EventType.EXPERIMENT_STARTED, component=Component.CONTROLLER,
+            run_id="run_direct", summary="evolution run started")])
+        row = store.query_one(
+            "SELECT status, experiment_id FROM runs WHERE run_id='run_direct'")
+        assert row["status"] == "running"
+        assert row["experiment_id"]        # synthesised, never empty
+    finally:
+        store.close()
+
+
+def test_a_real_experiment_id_is_not_replaced_by_a_synthesised_one(tmp_path):
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        store.ingest([Event(
+            type=EventType.EXPERIMENT_CREATED, component=Component.CONTROL_PLANE,
+            run_id="run_1", experiment_id="exp_real", metadata={"name": "t"})])
+        store.ingest([Event(
+            type=EventType.EXPERIMENT_STARTED, component=Component.CONTROLLER,
+            run_id="run_1", experiment_id="exp_real", summary="started")])
+        assert store.query_one(
+            "SELECT experiment_id FROM runs WHERE run_id='run_1'"
+        )["experiment_id"] == "exp_real"
+    finally:
+        store.close()

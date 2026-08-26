@@ -315,6 +315,20 @@ class Store:
         status = status_map.get(ev.type, "unknown")
         if not ev.run_id:
             return
+        # The event log is the source of truth and must replay whatever it
+        # happens to contain. A run started by the entrypoint directly — no
+        # control API, so no experiment.created event — would otherwise fail the
+        # runs→experiments foreign key on replay, and one unreplayable log makes
+        # the whole projection a second source of truth rather than a cache.
+        experiment_id = ev.experiment_id or f"exp_for_{ev.run_id}"
+        cur.execute(
+            "INSERT OR IGNORE INTO experiments"
+            " (experiment_id, name, created_at, status, metadata)"
+            " VALUES (?,?,?,?,?)",
+            (experiment_id, ev.metadata.get("name") or experiment_id,
+             ev.timestamp, status, "{}"),
+        )
+
         started = ev.timestamp if ev.type == EventType.EXPERIMENT_STARTED else None
         ended = (
             ev.timestamp
@@ -335,14 +349,14 @@ class Store:
                                  THEN excluded.provenance ELSE runs.provenance END,
                  error=COALESCE(excluded.error, runs.error)""",
             (
-                ev.run_id, ev.experiment_id or "", status, started, ended, ev.pid,
+                ev.run_id, experiment_id, status, started, ended, ev.pid,
                 _j(ev.metadata.get("provenance", {})),
                 _j(ev.error) if ev.error else None, _j(ev.metadata),
             ),
         )
         cur.execute(
             "UPDATE experiments SET status=? WHERE experiment_id=?",
-            (status, ev.experiment_id),
+            (status, experiment_id),
         )
 
     def _project_candidate(self, cur: sqlite3.Cursor, ev: Event) -> None:
