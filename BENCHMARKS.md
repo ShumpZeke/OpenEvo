@@ -249,27 +249,41 @@ quick probes: a route that answers a one-line prompt in 2 seconds took ~4
 minutes on a real evolution prompt. Capability probes measure reachability,
 not throughput.
 
-## Multi-offspring, measured locally
+## Multi-offspring, measured locally — and why the raw number lies
 
 `OE_MAX_MULTI_OFFSPRING=3`, 12 iterations, local provider:
 
 | | N=1 | N=3 |
 |---|---|---|
 | mutation requests | 12 | 12 |
-| candidates | 13 | 30 |
-| **candidates per request** | **1.08** | **2.50** |
-| extra offspring | 0 | 17 |
+| generated candidates | 12 | 29 |
+| raw candidates per request | 1.00 | **2.42** |
+| distinct code hashes | 7 | 9 |
+| **distinct candidates per request** | **0.58** | **0.75** |
+| duplicate share | 42% | **69%** |
 | best score, primaries | 1.4045 | 1.4045 |
 | best score, siblings | — | **1.4953** |
 
-The siblings out-scored the primary children, so they compete on merit rather
-than padding the archive.
+Read the raw row and the feature is a 2.4x win. Read the distinct row and it is
+1.29x, because most of the extra output is the same program again. The second
+number is the true one, and the gap between them is the entire risk this
+feature carries.
+
+Two things worth keeping from this:
+
+- **The engine's own novelty gate rejected nothing.** Zero
+  `candidate.rejected` events across 29 candidates of which only 9 were
+  distinct. Any "useful yield" derived from that gate would have reported the
+  2.4x. `analysis/throughput.py` therefore measures distinctness from the code
+  hashes directly rather than inferring it from whether something else noticed.
+- **The siblings out-scored the primary children** (1.4953 against 1.4045), so
+  the ones that *are* distinct compete on merit rather than padding the archive.
 
 **What this does not show.** The local provider draws from a fixed pool of five
-mutations, so its duplicate rate says nothing about a real model — and the
-duplicate rate is the number that decides this feature. Three near-identical
-alternatives collapsing to one AST hash is throughput that is not real. That
-measurement needs a real provider and has not been run.
+mutations, so a 69% duplicate share is what it would produce whatever the
+prompt said. It says nothing about a real model, and the duplicate rate is the
+number that decides this feature. That measurement needs a real provider and
+has not been run.
 
 ## What to measure next
 

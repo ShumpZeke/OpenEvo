@@ -82,7 +82,7 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 | Seed Forge | DEFERRED | — | Not built |
 | Heterogeneous island policies | DEFERRED | — | Upstream islands used as-is; policy layer not built |
 | Adaptive model routing by operator/task-class | PARTIAL | `instrument.install_operator_hook`, `route_quality.operator_breakdown` | Mutations are labelled with an operator class and per-operator, per-route quality is measured (verified live: 10 distinct operators over 12 iterations). Selection is uniform random, not yet the bandit — there is no per-operator reward to learn from until this has run |
-| Multi-offspring experiment | PARTIAL | `control_plane/telemetry/multi_offspring.py` | Built and opt-in (`OE_MAX_MULTI_OFFSPRING`). Local run: 2.50 candidates/request against 1.08, siblings competing on merit. Marked PARTIAL because the number that decides the feature — whether a *real* model's alternatives are distinct — needs a real provider; the local stub draws from a fixed pool of five mutations |
+| Multi-offspring experiment | PARTIAL | `control_plane/telemetry/multi_offspring.py` | Built and opt-in (`OE_MAX_MULTI_OFFSPRING`). Local run: raw yield 1.00 → 2.42 candidates/request but distinct yield only 0.58 → 0.75. Marked PARTIAL because the number that decides the feature — whether a *real* model's alternatives are distinct — needs a real provider; the local stub draws from a fixed pool of five mutations |
 
 ## §8 Candidate evaluation cascade
 

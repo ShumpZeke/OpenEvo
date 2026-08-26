@@ -92,9 +92,10 @@ measured yet.
 extras into ordinary candidates — same MAP-Elites placement, same novelty gate,
 same telemetry. `control_plane/telemetry/multi_offspring.py`.
 
-Measured on a local run: **2.50 candidates per request against 1.08**, 17 of 30
-candidates arriving as extra offspring, and the siblings' best score beating the
-primaries'. So the mechanism works and the extras compete.
+Measured on a local run: raw yield **1.00 → 2.42 candidates per request**, but
+**distinct** yield only 0.58 → 0.75, because 69% of the extra output was the
+same program again. The mechanism works; whether it *pays* is the open
+question, and the raw number is the one that will mislead you.
 
 ### What is not measured
 

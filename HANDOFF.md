@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 214 control plane + 140 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 223 control plane + 140 OE-MAX.
 
 ---
 
@@ -273,8 +273,9 @@ Three things to know before changing it:
 ## 4c. Multi-offspring per request (opt-in)
 
 `OE_MAX_MULTI_OFFSPRING=3` asks each request for N alternatives and turns the
-extras into ordinary candidates. Local run: **2.50 candidates per request
-against 1.08**.
+extras into ordinary candidates. Local run: raw yield 1.00 → 2.42 per request,
+but **distinct** yield only 0.58 → 0.75 — read the distinct row, not the raw
+one.
 
 ```bash
 OE_MAX_MULTI_OFFSPRING=3 ./scripts/run-evolution.sh --iterations 12
@@ -433,7 +434,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 214 control plane + 140 OE-MAX = 791 passing
+tests     437 upstream + 223 control plane + 140 OE-MAX = 800 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

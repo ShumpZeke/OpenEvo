@@ -199,10 +199,16 @@ def attribution_coverage(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any
 def analyse(conn: sqlite3.Connection, run_id: str,
             min_attempts: Optional[int] = None) -> Dict[str, Any]:
     """The full answer for one run: coverage first, then the comparison."""
+    from .throughput import measure
+
     tracker = build_tracker(conn, run_id, min_attempts=min_attempts)
     return {
         "run_id": run_id,
         "coverage": attribution_coverage(conn, run_id),
+        # Yield per request, reported alongside per-route quality because the
+        # two are usually read together: a route that answers twice as fast is
+        # worth nothing if its extra output is duplicate code.
+        "throughput": measure(conn, run_id),
         **tracker.to_dict(),
     }
 
