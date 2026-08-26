@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 127 control plane + 135 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 165 control plane + 140 OE-MAX.
 
 ---
 
@@ -242,6 +242,36 @@ again was a deliberate edit once the evidence changed.
 
 ---
 
+## 4b. Operator-labelled mutations (opt-in)
+
+Upstream issues one undifferentiated "improve this program" request. With
+`OE_MAX_OPERATORS=1` set for the run, each mutation is asked for as a named
+class from the OE-MAX taxonomy, and the label rides through to
+`candidates.gen_operator` and the per-operator breakdown.
+
+```bash
+OE_MAX_OPERATORS=1 ./scripts/run-evolution.sh --iterations 12
+```
+
+Verified on a 12-iteration run: 12 of 13 candidates labelled (the 13th is the
+seed), 10 distinct operators asked for, per-operator quality populated.
+
+Three things to know before changing it:
+
+- **It is off by default on purpose.** It changes what the model is asked, so
+  turning it on globally would confound the stock-vs-MAX comparison and every
+  measurement already recorded.
+- **The bandit is not driving it.** Selection is uniform random, seeded from
+  `(run_id, iteration)` so a rerun is comparable. The bandit exists and is
+  tested, but it learns from per-operator reward and there was none until this
+  existed. Measure first; then close the loop.
+- **The evaluator's prompt is never steered.** Upstream builds a second
+  `PromptSampler` for LLM feedback and marks it with `set_templates()`.
+  Steering that one corrupts the *score* rather than the candidate, which is
+  much harder to notice than a broken diff.
+
+---
+
 ## 5. What to do next, in priority order
 
 Ordered by expected value, with the reasoning attached so you can disagree with
@@ -371,15 +401,26 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 84 control plane + 110 OE-MAX = 631 passing
+tests     437 upstream + 165 control plane + 140 OE-MAX = 742 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials
 ```
 
-No known open defects. Both previously recorded ones are fixed:
+Since the last handoff, four things that were structurally impossible are now
+measurable, each verified on a live run rather than only in tests:
 
-Both defects previously listed here are now **fixed**:
+- **candidate → model request attribution**, across the worker process boundary
+  (§3.7). 12 of 15 candidates attributed; the other 3 unattributable by design.
+- **quality per route**, not just health per route — `route_quality.py` plus
+  the analysis bridge, the `/route-quality` endpoint, a Control Center panel
+  and a dashboard section.
+- **a repeatable route A/B**, `scripts/route-experiment.sh`, which pools runs
+  per route and refuses to name a winner on thin evidence.
+- **operator-labelled mutations** (§4b), which is what makes per-operator
+  quality possible at all.
+
+Defects previously listed here are **fixed**:
 
 - the urllib doctor (§3.1)
 - the rate limiter's in-process window — it now persists attempt starts to

@@ -68,7 +68,7 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 | Do not rely on stale NIM IDs | DONE | NIM `models` starts **empty** | Discovery-only by construction |
 | Query current availability; smoke-test; record actual IDs | DONE | `registry.discover` + `verify` | Caught `deepseek-v4-flash-free` listed-but-dead |
 | Capability registry | DONE | `ModelSpec.supports_tools/available` | Probed, not declared |
-| Benchmark probes (validity, latency, request efficiency…) | PARTIAL | latency + tools + availability | Mutation-validity and fitness-delta probes not built |
+| Benchmark probes (validity, latency, request efficiency…) | DONE | `oe_max/route_quality.py`, `control_plane/analysis/route_quality.py` | Mutation validity, duplicate rate and fitness delta measured per route from a run's own telemetry, in three efficiency views (per request, per second, per 1k tokens). Live: nemotron-3-ultra-free over 12 attempts — 100% valid, 0 duplicates, 58% improved, 83.6 s mean |
 | Different families for independent critique | DEFERRED | — | Needs the critic path (§8 V2) |
 
 ## §7 Search architecture
@@ -77,11 +77,11 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 |---|---|---|---|
 | Keep OpenEvolve's proven core | DONE | untouched | 437 tests |
 | Mutation taxonomy (15 operator classes) | DONE | `search/operators.py` | All 15, with applicability rules |
-| Adaptive operator selection, non-stationary bandit | DONE | `search/bandit.py` | Discounted Thompson; `test_discounting_lets_the_selector_change_its_mind` |
+| Adaptive operator selection, non-stationary bandit | PARTIAL | `search/bandit.py` | The selector is built and tested (discounted Thompson; `test_discounting_lets_the_selector_change_its_mind`) but is **not** what picks operators in a live run — selection is uniform random until per-operator reward exists to learn from. Marked PARTIAL rather than DONE because the algorithm working is not the same as it being in the loop |
 | Algorithm replaceable | DONE | `Selector` ABC + `SELECTORS` | 3 implementations |
 | Seed Forge | DEFERRED | — | Not built |
 | Heterogeneous island policies | DEFERRED | — | Upstream islands used as-is; policy layer not built |
-| Adaptive model routing by operator/task-class | PARTIAL | route stats collected | Selection not yet conditioned on operator |
+| Adaptive model routing by operator/task-class | PARTIAL | `instrument.install_operator_hook`, `route_quality.operator_breakdown` | Mutations are labelled with an operator class and per-operator, per-route quality is measured (verified live: 10 distinct operators over 12 iterations). Selection is uniform random, not yet the bandit — there is no per-operator reward to learn from until this has run |
 | Multi-offspring experiment | DEFERRED | — | See BENCHMARKS.md: high expected value given 130 s/request |
 
 ## §8 Candidate evaluation cascade
