@@ -187,6 +187,104 @@ the reasoning-token budget warning, and live evolution state.
 `start-broker` · `run-evolution` · `resume-evolution` · `dashboard` ·
 `verify-providers`, in both `.sh` and `.ps1`.
 
+## Task 31 — Attribution across the worker process boundary
+
+The prerequisite for everything below it. Upstream attaches no candidate id to
+the generating call — 0 of 22 stored requests carried one — so no post-hoc join
+could recover which route produced which candidate.
+
+A ContextVar captured it correctly and was still not enough: the model request
+happens in a worker process and `database.add` in the main one, and a live run
+produced **3 candidates and 0 attributed**. `Program.metadata` is the only
+channel that crosses, so `_run_iteration_worker` is wrapped and stamps it there.
+
+Migrants and stale contexts are left unattributed rather than guessed at —
+`_migrate_programs` copies metadata wholesale, and one generation copied to two
+islands would otherwise be charged to its route three times.
+
+## Task 32 — Route quality, and the alias problem
+
+`route_quality` measures mutation quality per route in three scarcity views;
+`analysis/route_quality` builds it from stored telemetry. Two decisions carried
+the value:
+
+**The attempt set is model requests, not candidates.** A route that burns 292
+seconds and returns an unusable diff produces no candidate at all; counting
+candidates would erase its worst outcome.
+
+**The recorded route is the one that served.** Through the broker the engine
+only ever names `oe-max-primary`, so every route collapsed into one row. The
+broker's `oe_max` response stamp is now read back and the alias survives as
+`requested_model`.
+
+## Task 33 — Multi-offspring, and two silent bugs
+
+Prompting alone cannot do it: upstream applies *every* diff block it finds, so
+three alternatives in one response produce one incoherent merge. The parser is
+wrapped so the primary child is byte-for-byte what it would be at N=1.
+
+Both bugs failed silently. The preamble was being treated as alternative 1 — and
+applying a diff-free string returns the parent unchanged, so the run looks
+healthy and evolves nothing. And `apply_diff` calls `extract_diffs` internally,
+so the wrapper re-entered and wiped the stash: the first live run produced zero
+siblings and no error.
+
+Raw yield 1.00 → 2.42 per request; **distinct** yield 0.58 → 0.75. The gap is
+the whole risk, and reporting the raw number alone would have been a 2.4x
+overclaim.
+
+## Task 34 — Operators, island policies, Seed Forge
+
+The taxonomy and the bandit had existed since the OE-MAX build with no way to
+reach a live run. `PromptSampler.build_prompt` is wrapped to ask for a named
+mutation class, and the label rides the attribution channel through to
+`candidates.gen_operator`.
+
+Island policies gave `Operator.disruption` — declared on all 15 operators and
+read by nothing — a consumer. Sharpness was measured rather than picked: at 2.0,
+exploit lands at 0.314 and explore at 0.712 against an unweighted 0.571.
+
+Seed Forge builds a starting population from one seed with no model requests: 7
+valid distinct variants, two of them beating the seed. With the caveat attached
+— they won by running the search *harder*, which is local compute traded for
+score.
+
+## Task 35 — Verification, and sandboxed execution
+
+V1 property/metamorphic/randomized checks, proven by feeding it four programs
+that cheat rather than four that work. Hard-coding the answer passes every
+single-run property and only a metamorphic relation catches it; a score that is
+a lucky draw is caught by determinism alone.
+
+Candidates now run in a separate process under real ceilings
+(`OE_MAX_SANDBOX_EVAL`), and `describe_backends()` states what each backend does
+**not** stop. The container backend reported itself available on the strength of
+the docker binary; it now probes the daemon, which is unreachable here.
+
+## Task 36 — Running everything at once
+
+Six opt-in features had each been tested alone. Doing it together found three
+bugs no unit test could: `migrant` was never written to the projection, so two
+analysis modules were measuring the wrong population while their tests passed;
+`island_policy` never reached an event, making the policy layer unmeasurable;
+and a null token count rendered as «redacted».
+
+The general rule, now in the handoff: a flag that lives only on the in-memory
+`Program` is a filter that silently never matches.
+
+## Task 37 — Route demotion
+
+Ox Alpha degraded 40% → 26% → 11% success across one session while the circuit
+breaker sat closed. The reason is exact: the breaker trips on N failures inside
+a rolling 60-second window, and Ox Alpha's requests take ~300 seconds, so each
+failure ages out before the next arrives.
+
+A breaker whose window is shorter than the request latency is inert — and inert
+for the slowest routes, where a wasted request costs most. `RouteHealth.degraded`
+counts attempts instead of seconds. If every route is degraded the least bad
+still serves, because a run that dies with "no usable route" is worse than one
+served slowly.
+
 ---
 
 ## Blocked
@@ -199,3 +297,12 @@ against a scripted provider; the HTTP round-trip to those two endpoints is
 from remembered IDs.
 
 To verify: put the keys in `.env`, then `./scripts/verify-providers.sh`.
+
+**The container execution backend.** `docker` is on PATH here and its daemon is
+not reachable, so the `--network none` / read-only-root / dropped-capabilities
+path has never run. The probe reports it unavailable with the daemon's own
+error rather than assuming.
+
+**Ox Alpha.** Not blocked by a credential — it serves keylessly — but at 11%
+success and ~300 s per request it cannot currently be benchmarked. That is a
+measurement, not an outage: see BENCHMARKS.
