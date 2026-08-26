@@ -148,3 +148,109 @@ def test_installing_twice_does_not_double_append(steering):
     inst.install_operator_hook()
     prompt = FakeSampler().build_prompt(evolution_round=2)
     assert prompt["system"].count("MUTATION TYPE:") == 1
+
+
+# ---------------------------------------------------------------------------
+# Island policies
+#
+# The island a candidate's parent came from is in the snapshot the worker is
+# handed and never reaches `build_prompt` — so without capturing it in the
+# worker wrapper, an island policy could not influence the one thing it exists
+# to influence.
+# ---------------------------------------------------------------------------
+
+def _snapshot(islands=4, parent_island=1, parent_id="p1"):
+    return {
+        "islands": [set() for _ in range(islands)],
+        "current_island": 0,
+        "programs": {parent_id: {"id": parent_id, "code": "x = 1",
+                                 "metadata": {"island": parent_island}}},
+        "artifacts": {},
+    }
+
+
+@pytest.fixture
+def worker_island(monkeypatch):
+    monkeypatch.setattr(inst, "_worker_island", None, raising=False)
+    monkeypatch.setattr(inst, "_worker_island_count", 0, raising=False)
+    yield
+    inst._worker_island = None
+    inst._worker_island_count = 0
+
+
+def test_the_island_is_captured_from_the_snapshot(worker_island):
+    inst._record_worker_island((_snapshot(islands=4, parent_island=2), "p1", []), {})
+    assert inst._worker_island == 2
+    assert inst._worker_island_count == 4
+
+
+def test_a_parent_with_no_island_falls_back_to_the_sampling_island(worker_island):
+    snap = _snapshot()
+    snap["programs"]["p1"]["metadata"] = {}
+    snap["current_island"] = 3
+    inst._record_worker_island((snap, "p1", []), {})
+    assert inst._worker_island == 3
+
+
+def test_a_malformed_snapshot_disables_policies_rather_than_raising(worker_island):
+    inst._record_worker_island(("not a snapshot",), {})
+    assert inst._worker_island_count == 0
+
+
+def test_policies_are_off_unless_asked_for(monkeypatch):
+    monkeypatch.delenv(inst.ENV_ISLAND_POLICIES, raising=False)
+    assert inst.island_policies_enabled() is False
+
+
+def test_selection_follows_the_island_policy(monkeypatch, worker_island):
+    """
+    Island 0 is `exploit` and island 1 is `explore`, so over many iterations
+    the same code path must produce measurably different mutation classes.
+    """
+    import statistics
+
+    from oe_max.search.operators import OPERATORS, OperatorClass
+
+    monkeypatch.setenv(inst.ENV_ISLAND_POLICIES, "1")
+    inst._worker_island_count = 4
+
+    def mean_disruption(island):
+        inst._worker_island = island
+        picks = [inst._select_operator("run_1", i, has_failure=False,
+                                       has_second_parent=False)
+                 for i in range(400)]
+        return statistics.mean(
+            OPERATORS[OperatorClass(p)].disruption for p in picks if p)
+
+    assert mean_disruption(0) < mean_disruption(1), \
+        "exploit island should ask for smaller changes than the explore island"
+
+
+def test_selection_is_unbiased_when_policies_are_off(monkeypatch, worker_island):
+    import statistics
+
+    from oe_max.search.operators import OPERATORS, OperatorClass, applicable
+
+    monkeypatch.delenv(inst.ENV_ISLAND_POLICIES, raising=False)
+    inst._worker_island_count, inst._worker_island = 4, 0
+    picks = [inst._select_operator("run_1", i, has_failure=False,
+                                   has_second_parent=False) for i in range(600)]
+    observed = statistics.mean(
+        OPERATORS[OperatorClass(p)].disruption for p in picks if p)
+    unweighted = statistics.mean(
+        OPERATORS[c].disruption for c in applicable())
+    assert abs(observed - unweighted) < 0.06
+
+
+def test_the_policy_is_recorded_with_the_request(monkeypatch, worker_island):
+    """Steering an island without labelling it would buy the search and lose
+    the ability to tell whether it helped."""
+    monkeypatch.setenv(inst.ENV_ISLAND_POLICIES, "1")
+    inst._worker_island_count, inst._worker_island = 4, 1
+
+    inst._begin_worker_attribution()
+    inst._worker_island_count, inst._worker_island = 4, 1
+    inst._publish_generation({"request_id": "req_1", "provider": "p",
+                              "model": "m", "at": 0.0})
+
+    assert inst._take_worker_attribution()["island_policy"] == "explore"

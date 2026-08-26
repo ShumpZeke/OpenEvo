@@ -80,8 +80,11 @@ _worker_generation_pid: Optional[int] = None
 def _begin_worker_attribution() -> None:
     """Start a fresh attribution window. Called once per worker iteration."""
     global _worker_generation, _worker_generation_pid, _worker_operator
+    global _worker_island, _worker_island_count
     _worker_generation = None
     _worker_operator = None
+    _worker_island = None
+    _worker_island_count = 0
     _worker_generation_pid = os.getpid()
     try:
         from . import multi_offspring
@@ -102,6 +105,13 @@ def _publish_generation(record: Dict[str, Any]) -> None:
     global _worker_generation
     if _worker_operator and not record.get("operator"):
         record = {**record, "operator": _worker_operator}
+    if island_policies_enabled() and _worker_island_count > 0 \
+            and not record.get("island_policy"):
+        from oe_max.search.policies import policy_for
+
+        record = {**record,
+                  "island_policy": policy_for(_worker_island,
+                                              _worker_island_count).name}
     try:
         _generating_request.set(record)
     except Exception:  # pragma: no cover - ContextVar.set does not normally fail
@@ -147,6 +157,21 @@ ENV_OPERATORS = "OE_MAX_OPERATORS"
 # it makes can be labelled with it.
 _worker_operator: Optional[str] = None
 
+# Which island this iteration's parent came from, and how many islands exist.
+# Set by the worker wrapper *before* the original runs, because the prompt is
+# built inside it and upstream's `build_prompt` is never told the island.
+_worker_island: Optional[int] = None
+_worker_island_count: int = 0
+
+# Give each island a different search posture rather than the same one. Separate
+# from operator steering because it is a further claim: steering says "name the
+# mutation", policies say "this island is for a different kind of mutation".
+ENV_ISLAND_POLICIES = "OE_MAX_ISLAND_POLICIES"
+
+
+def island_policies_enabled() -> bool:
+    return os.environ.get(ENV_ISLAND_POLICIES, "").lower() in ("1", "true", "yes", "on")
+
 
 def operators_enabled() -> bool:
     return os.environ.get(ENV_OPERATORS, "").lower() in ("1", "true", "yes", "on")
@@ -182,6 +207,12 @@ def _select_operator(run_id: Optional[str], iteration: Any,
         if not choices:
             return None
         rng = random.Random(f"{run_id}:{iteration}")
+        if island_policies_enabled() and _worker_island_count > 0:
+            from oe_max.search.policies import choose, policy_for
+
+            policy = policy_for(_worker_island, _worker_island_count)
+            picked = choose(policy, choices, rng)
+            return picked.value if picked else None
         return rng.choice(choices).value
     except Exception as exc:  # steering is an enhancement, never a requirement
         logger.debug("operator selection failed: %r", exc)
@@ -1325,6 +1356,35 @@ def install_worker_hook() -> None:
     install_operator_hook()
 
 
+def _record_worker_island(args: Any, kwargs: Any) -> None:
+    """
+    Note which island this iteration is working in.
+
+    The island is in the snapshot the worker is handed, but never reaches
+    `build_prompt` — so without capturing it here an island policy could not
+    influence the one thing it exists to influence.
+    """
+    global _worker_island, _worker_island_count
+    try:
+        db_snapshot = kwargs.get("db_snapshot") if kwargs else None
+        parent_id = kwargs.get("parent_id") if kwargs else None
+        if db_snapshot is None and len(args) >= 1:
+            db_snapshot = args[0]
+        if parent_id is None and len(args) >= 2:
+            parent_id = args[1]
+        snapshot = db_snapshot or {}
+        islands = snapshot.get("islands") or []
+        _worker_island_count = len(islands)
+
+        parent = (snapshot.get("programs") or {}).get(parent_id) or {}
+        island = (parent.get("metadata") or {}).get("island")
+        _worker_island = (int(island) if isinstance(island, int)
+                          else snapshot.get("current_island"))
+    except Exception as exc:  # pragma: no cover - policy is an enhancement
+        logger.debug("island capture failed: %r", exc)
+        _worker_island, _worker_island_count = None, 0
+
+
 def _attach_siblings(result: Any, iteration: Any, args: Any, kwargs: Any) -> None:
     """
     Carry the extra offspring home from the worker.
@@ -1505,6 +1565,9 @@ def install_worker_attribution_hook() -> None:
     @functools.wraps(original)
     def wrapper(iteration=None, *a, **kw):
         _begin_worker_attribution()
+        # Before the original, not after: it builds the prompt, and upstream's
+        # build_prompt is never told which island the parent came from.
+        _record_worker_island(a, kw)
         t0 = time.perf_counter()
         result = original(iteration, *a, **kw)
         try:
