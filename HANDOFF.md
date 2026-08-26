@@ -1,0 +1,328 @@
+# Handoff — read this first
+
+You are picking up **Evolution / OpenEvolve MAX**. This document is written for
+whoever continues the work, human or model. It says what is true right now, what
+is verified versus merely written, where the traps are, and what to do next in
+priority order.
+
+Everything below was measured on this machine unless marked otherwise. Where a
+thing is unverified, it says so — do not upgrade a "probably" into a "works".
+
+---
+
+## 1. What this repository is
+
+A production fork of OpenEvolve with two layers built *around* the engine, not
+into it:
+
+```
+                    ┌──────────────────────────────────┐
+                    │  Browser Control Center (19 views)│
+                    └────────────────┬─────────────────┘
+                                     │  REST + SSE
+                    ┌────────────────┴─────────────────┐
+                    │  control_plane/  telemetry,      │
+                    │  storage, query/control API      │
+                    └────────────────┬─────────────────┘
+                                     │  spawns + observes
+                    ┌────────────────┴─────────────────┐
+                    │  openevolve/  (BYTE-IDENTICAL)   │
+                    └────────────────┬─────────────────┘
+                                     │  OpenAI protocol
+                    ┌────────────────┴─────────────────┐
+                    │  oe_max/  broker on :8787        │
+                    │  routing · rate contract · retry │
+                    │  failover · owns all credentials │
+                    └────────────────┬─────────────────┘
+                                     ▼
+                    OpenCode Zen · OpenRouter · NVIDIA NIM
+```
+
+**The engine is byte-identical to upstream.** `diff -rq` proves it, and 437
+upstream tests pass. Telemetry is installed by wrapping public methods at
+runtime, so the patch surface is empty and upstream merges fast-forward. Keep
+it that way — see `PATCH_SURFACE.md` before you consider editing anything under
+`openevolve/`.
+
+---
+
+## 2. Run it in three commands
+
+```bash
+./bootstrap.sh                     # env, deps, storage, UI build, checks
+./scripts/start-broker.sh          # terminal 1 → :8787
+./scripts/run-evolution.sh --task function_minimization --iterations 10
+```
+
+Watch it:
+
+```bash
+./scripts/dashboard.sh             # terminal 3: providers, rate window, routes
+./run.sh                           # browser Control Center → :8000
+./scripts/verify-providers.sh      # what is actually reachable right now
+```
+
+**No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
+one. That was verified live, repeatedly.
+
+Tests: `./test.sh` → 437 upstream + 81 control plane + 104 OE-MAX.
+
+---
+
+## 3. Traps — read before debugging anything
+
+These cost real time to find. Each is a trap you would otherwise fall into.
+
+### 3.1 `urllib` is Cloudflare-blocked; `httpx` is not
+
+Probing Zen with Python's `urllib` returns **HTTP 403 `error code: 1010`** for
+every model. `curl` and `httpx` return 200 against the same endpoint in the same
+minute. It is a client-fingerprint block, not a provider outage.
+
+**Consequence:** `control_plane/providers/doctor.py` still uses `urllib`, so it
+reports a healthy Ox Alpha as unavailable. This is a **known open defect** —
+fixing it is item 4 in the next-steps list. The OE-MAX broker uses `httpx` and
+is unaffected.
+
+### 3.2 Ox Alpha spends its entire token budget on hidden reasoning
+
+Measured: **7,986–7,997 reasoning tokens out of an 8,000 budget.** The visible
+diff gets truncated and OpenEvolve logs `No valid diffs found` — five of eight
+iterations produced nothing from ~130-second requests.
+
+Handled: the broker classifies `finish_reason=length` as `TRUNCATED` and retries
+with a **doubled** budget (an identical retry reproduces an identical
+truncation). Config `max_tokens` is 16,000.
+
+**If you change `max_tokens`, you must change two other things with it** — see
+3.3.
+
+### 3.3 Token budget, provider timeout and client timeout are ONE setting
+
+Raising `max_tokens` to 16,000 pushed requests past the broker's then-180s
+provider timeout: **12 requests, 0 ok, 6 timeouts.** An earlier try at 32,000
+ran past OpenEvolve's own client timeout instead.
+
+Current coupled values:
+
+| Setting | Value | Where |
+|---|---|---|
+| `max_tokens` | 16,000 | `configs/oe_max/evolution.yaml` |
+| provider timeout | 600 s | `oe_max/providers/registry.py` (Zen) |
+| client timeout | 900 s | `configs/oe_max/evolution.yaml` |
+
+Change one alone and a truncation failure becomes a timeout failure that looks
+like a regression.
+
+### 3.4 A listed model is not a working model
+
+Zen's `/models` lists `deepseek-v4-flash-free`; calling it returns HTTP 400
+"Model is unavailable". `mimo-v2.5-free` returns 429 `FreeUsageLimitError`.
+Discovery is therefore two-stage — list, then smoke-test — in
+`oe_max/providers/registry.py`. Do not "simplify" it back to one stage.
+
+### 3.5 The event bus must be rebuilt after `fork()`
+
+OpenEvolve evaluates in a `ProcessPoolExecutor`. A forked child inherits the
+`EventBus` object but **not** its worker thread, so it would queue events into a
+buffer nothing drains. Both the bus and the instrumentation are keyed by owning
+PID. Symptom if broken: `model_requests: 0` despite a run clearly making model
+calls. Pinned by `test_bus_is_rebuilt_after_fork`.
+
+### 3.6 The limiter needs its epsilon
+
+Refilling the token bucket by exactly the required amount lands on
+`0.9999999999`; a strict `>= 1.0` computes a ~1e-12 wait and `acquire()` spins
+forever. The tests **hang** rather than fail. `_EPS` and `_MIN_WAIT` in
+`oe_max/limiter.py` exist for this. Do not remove them.
+
+---
+
+## 4. Live measurements — what the providers actually do
+
+From a real 10-iteration run through the broker, 2026-08-26:
+
+| Route | Requests | Success | Avg latency | Errors |
+|---|---|---|---|---|
+| `x-preview-f-free` (Ox Alpha) | 15 | **40%** | 220 s | 6 transport, 1 unavailable, 1 server, 1 truncated |
+| `nemotron-3-ultra-free` | 1 | **100%** | 112 s | none |
+
+Two things to take from this:
+
+1. **Ox Alpha is slow and unreliable under sustained load.** 40% success, 220s
+   average. It is still the operator's chosen primary and the spec's requirement,
+   and the retry/failover path is what makes it usable.
+2. **The failover chain works in production, not just in tests.** When Ox Alpha
+   degraded, the router moved to `nemotron-3-ultra-free`, which returned 100%
+   success at half the latency.
+
+That second point is the most interesting open question in the project — see
+next steps.
+
+### Free Zen models, probed live
+
+| model | serves | tools | latency |
+|---|---|---|---|
+| `x-preview-f-free` (Ox Alpha) | yes | yes | 1,969 ms |
+| `nemotron-3-ultra-free` | yes | yes | 829 ms |
+| `nemotron-3.5-lightning-free` | yes | yes | 1,271 ms |
+| `laguna-s-2.1-free` | yes | yes | 1,855 ms |
+| `hy3-free` | yes | yes | 2,444 ms |
+| `deepseek-v4-flash-free` | **no** | — | 400 "Model is unavailable" |
+| `mimo-v2.5-free` | **no** | — | 429 `FreeUsageLimitError` |
+
+`anomalyco/opencode#44300` (Ox Alpha failing on `tools`) **is resolved** — tools
+requests now return 200. Because capability is probed rather than hardcoded,
+re-admitting it needed no code change.
+
+---
+
+## 5. What to do next, in priority order
+
+Ordered by expected value, with the reasoning attached so you can disagree with
+the ordering rather than guess at it.
+
+### 1. Fast-model routing experiment — highest value
+
+The measurement in §4 makes this urgent: Ox Alpha is 40% reliable at 220 s;
+`nemotron-3-ultra-free` was 100% at 112 s. If a cheaper route produces
+comparable mutation quality, throughput roughly doubles for free.
+
+**Do not just switch the default.** The operator explicitly wants Ox Alpha
+primary. Measure per-operator-class quality first, using the statistics
+`router.stats_by_route()` already collects, then propose the change with
+evidence.
+
+### 2. Multi-offspring (spec §7F)
+
+At ~220 s and ~8,000 tokens per request, getting 2–3 diverse candidates from one
+request is close to a linear throughput win. The latency measurement is what
+makes this the second-highest-value item.
+
+Start in `oe_max/search/`, ask for N labelled alternatives in one prompt, split
+them, and feed each through the existing G0/G1 gates. Benchmark before enabling
+by default — the spec is explicit about that.
+
+### 3. Stock vs MAX benchmark (spec §16)
+
+The harness is ready: `./scripts/run-evolution.sh --profile stock|max`. Both
+arms use the **same model** and differ only in whether they go through the
+broker. Needs ≥5 seeds. Measure area under the best-so-far curve against
+*requests*, not wall-clock.
+
+Expect the baseline to be unusually penalised on this route because it lacks
+truncation escalation. That is a real difference but it is provider handling,
+not search quality — separate the two when you write it up.
+
+### 4. Fix the `urllib` doctor (§3.1)
+
+Small, self-contained, and it currently makes the control plane lie about
+provider health. Port `control_plane/providers/doctor.py` to `httpx`.
+
+### 5. Sandbox executors
+
+`control_plane/sandbox/opencode.py` enforces the isolation boundary and is
+tested (9 tests, including that writes into operator-owned paths are refused).
+What is missing is the thing that *runs candidates inside it* — container and
+worktree backends with CPU/RAM/pids limits and a wall timeout.
+
+Docker is available on this machine. This is the largest remaining subsystem and
+the one that unlocks the anti-reward-hacking work (spec §9).
+
+### 6. Verification stages V1/V2 (spec §8)
+
+Property, metamorphic, differential and hidden tests, then symbolic/SMT and the
+independent critic. Depends on the sandbox for anything untrusted.
+
+---
+
+## 6. Blocked, and exactly how to unblock
+
+**NVIDIA NIM and OpenRouter are UNVERIFIED.** No `NVIDIA_API_KEY` or
+`OPENROUTER_API_KEY` was available. The adapters, the global rate limiter, the
+retry/circuit-breaker path and the routing logic are all implemented and tested
+offline against a scripted provider — but the HTTP round-trip to those two
+endpoints has never run.
+
+To unblock:
+
+```bash
+cp .env.example .env      # add OPENROUTER_API_KEY and/or NVIDIA_API_KEY
+./scripts/start-broker.sh
+./scripts/verify-providers.sh
+```
+
+NIM's model list is deliberately **empty** in `registry.py` — it must be
+discovered live, never populated from remembered IDs. The spec is explicit and
+the `deepseek-v4-flash-free` finding shows why.
+
+The NIM limiter enforces ≤44 attempt-starts per rolling 60 s. That invariant is
+proven by 17 property tests on a virtual clock, but it has never run against the
+real NIM endpoint. Watch the dashboard's rolling-window gauge on the first real
+NIM run.
+
+---
+
+## 7. Ground rules to preserve
+
+These are not style preferences; each is load-bearing.
+
+1. **Never edit `openevolve/`.** The empty patch surface is what makes upstream
+   merges free. Wrap at runtime instead — `control_plane/telemetry/instrument.py`
+   shows how.
+2. **No fake data in the UI, ever.** If the backend has no value, render "no
+   data". There are no fixtures anywhere in `web/` and it must stay that way.
+3. **Unsupported controls are disabled with the backend's reason**, never shown
+   as buttons that do nothing. `RunManager.CAPABILITIES` is the mechanism.
+4. **Never claim a live test passed if it did not run.** Everything unverified in
+   this repo is labelled unverified. Keep that discipline — it is the difference
+   between documentation and marketing.
+5. **Credentials stay in the broker process.** Candidates and evaluators get no
+   keys. Redaction runs before persistence, not at render time.
+6. **Model and provider IDs are configuration.** Ox Alpha is a stealth preview
+   and may vanish; nothing should need a rewrite when it does.
+
+---
+
+## 8. Where everything lives
+
+| Document | What it answers |
+|---|---|
+| `README.md` | What this is, how to run it |
+| `ARCHITECTURE.md` | How the pieces fit and why |
+| `DECISIONS.md` | 24 decisions with evidence and what would change them |
+| `BUILD_LOG.md` | What was built, in order, and what measurements changed |
+| `BENCHMARKS.md` | Live numbers from the real primary route |
+| `REQUIREMENTS_PROGRESS.md` | Every spec requirement → status, gaps, blockers |
+| `FEATURE_COVERAGE_MATRIX.md` | Acceptance criteria scored honestly |
+| `PATCH_SURFACE.md` | Every upstream file touched (none) |
+| `UPSTREAM_SYNC_STRATEGY.md` | How to merge a future OpenEvolve release |
+| `TELEMETRY.md` · `PROVIDERS.md` · `SANDBOX.md` · `SECURITY.md` | Subsystem detail |
+| `TEST_STRATEGY.md` | What is tested and, importantly, what is not |
+| `.handoff/` | The original source specs (inputs, not project source) |
+
+The original build specs are preserved under `.handoff/` — read
+`.handoff/MAX/OpenEvolve_MAX_OX_Alpha_Build_Pack/` for the full requirements if
+you need the authoritative wording.
+
+---
+
+## 9. Current state, precisely
+
+```
+branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
+tests     437 upstream + 81 control plane + 104 OE-MAX = 622 passing
+engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
+verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
+unverified NVIDIA NIM, OpenRouter — no credentials
+```
+
+Two known defects, both recorded in `REQUIREMENTS_PROGRESS.md`:
+
+1. `control_plane/providers/doctor.py` probes with `urllib` and so misreports
+   Zen health (§3.1).
+2. The rate limiter's window is in-process, so a broker restart briefly forgets
+   it. A burst immediately after a restart could exceed the contract.
+
+Good luck. The measurements in §4 are the most valuable thing here — they point
+at where the real wins are, and they were expensive to obtain.

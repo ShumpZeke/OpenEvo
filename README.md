@@ -9,6 +9,10 @@ sandbox.
 Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
 **byte-identical to upstream** — see [PATCH_SURFACE.md](PATCH_SURFACE.md).
 
+> **Continuing this work?** Start with **[HANDOFF.md](HANDOFF.md)** — current
+> state, the traps that cost real time to find, and live provider measurements.
+> Then **[NEXT_TASKS.md](NEXT_TASKS.md)** for a prioritised queue.
+
 ---
 
 ## Two layers
@@ -148,6 +152,8 @@ fork, not merely a control-plane bug.
 
 | | |
 |---|---|
+| **[HANDOFF.md](HANDOFF.md)** | **start here if you are continuing this work** |
+| **[NEXT_TASKS.md](NEXT_TASKS.md)** | **prioritised work queue with rationale** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |
 | [DECISIONS.md](DECISIONS.md) | engineering decisions and their evidence |
 | [TELEMETRY.md](TELEMETRY.md) | event model, transport, no-fake-data rule |
