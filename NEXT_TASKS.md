@@ -71,6 +71,18 @@ It is not enough evidence: the arms were 4, 8 and 12 attempts against a
 minimum of 20, and two of them were cut off by a timeout and a container
 restart rather than by the design.
 
+A second attempt pooled `nemotron-3-ultra-free` to **24 attempts** — the first
+route ever to clear the minimum — and was called off part way through the Ox
+Alpha arms, which had produced 2 requests in 32 minutes at 11% success. See
+BENCHMARKS.
+
+**So the blocker on T1 is not the harness, it is the route.** Before spending
+hours on this again, check Ox Alpha's live success rate
+(`./scripts/verify-providers.sh`, or the ROUTE QUALITY section of
+`./scripts/dashboard.sh`). Below ~25% it will now be demoted out of the chain
+automatically, and an arm pinned to it is a waiting game with no result at the
+end.
+
 ### Done when
 
 You can answer "does Ox Alpha produce better mutations than

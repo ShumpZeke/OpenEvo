@@ -324,6 +324,51 @@ reliability, and a verdict that names what it is not entitled to conclude.
 Re-run it with `--repeats 3` and no `--min-attempts` override before anyone
 proposes a routing change.
 
+## Ox Alpha degraded further, and the run was called off
+
+A second, longer T1 attempt (2 routes x 2 repeats, 12 iterations, 1-hour
+per-arm cap) completed both `nemotron-3-ultra-free` arms and was **stopped part
+way through the Ox Alpha arms**. The reason is the result:
+
+| | first run | later that day | during this attempt |
+|---|---|---|---|
+| `x-preview-f-free` success | 40% | 26% | **11%** (17 failures / 19 attempts) |
+| p50 latency | 220 s | 284 s | ~300 s |
+
+The Ox Alpha arm produced **2 requests in 32 minutes**. Two further hours would
+have bought perhaps four more data points on a route that is presently
+returning `RemoteProtocolError: Server disconnected` to nine of every ten
+requests. Stopping was the better use of the budget, and "the operator's chosen
+primary is currently too unreliable to benchmark" is itself the answer to
+"should mutations be routed to it right now?".
+
+What did complete:
+
+| route | attempts | valid | improved | mean latency | improv/request | improv/second |
+|---|---|---|---|---|---|---|
+| `nemotron-3-ultra-free` (2 runs pooled) | **24** | 100% | 50% | 101.1 s | 0.175 | 1.73e-03 |
+
+24 attempts is the first time any route has cleared
+`MIN_ATTEMPTS_FOR_COMPARISON`. One route is still not a comparison, and the
+verdict says so.
+
+### What the degradation exposed
+
+The circuit breaker never fired through any of this — it sat closed on one
+recent failure while 17 of 19 attempts failed. Not a bug: it trips on N
+failures inside a rolling **60-second** window, and Ox Alpha's requests take
+~300 seconds, so each failure ages out before the next arrives.
+
+A breaker whose window is shorter than the request latency is inert, and it is
+inert for exactly the slowest routes, where a wasted request costs the most.
+`RouteHealth.degraded()` now covers that with an *attempt*-counted window.
+Checked against the numbers above rather than invented:
+
+```
+ox alpha   → degraded: succeeding 11% of the last 19 attempts (needs 25%)
+nemotron   → healthy
+```
+
 ## What to measure next
 
 Ordered by expected value given the measurements above:
