@@ -124,3 +124,41 @@ def test_a_run_without_throughput_data_shows_no_yield_line(fake_get):
     }
     text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
     assert "yield" not in text
+
+
+def test_the_operator_breakdown_appears_when_a_run_had_one(fake_get):
+    """
+    Where the nuanced answer lives: the same route can earn its latency on one
+    mutation class and waste it on another.
+    """
+    fake_get["route-quality"] = {
+        "routes": {"a/slow": {"route": "a/slow", "attempts": 20, "failures": 0,
+                              "duplicates": 0, "validity_rate": 1.0,
+                              "improvement_rate": 0.5, "mean_latency_s": 300.0,
+                              "improvement_per_request": 0.3}},
+        "by_operator": {
+            "RADICAL_RETHINK": [{"route": "a/slow", "attempts": 8,
+                                 "validity_rate": 1.0, "improvement_rate": 0.75,
+                                 "improvement_per_request": 0.51}],
+            "PARAMETER_CHANGE": [{"route": "a/slow", "attempts": 12,
+                                  "validity_rate": 1.0, "improvement_rate": 0.08,
+                                  "improvement_per_request": 0.01}],
+        },
+        "coverage": {}, "comparison": {},
+    }
+    text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
+    assert "RADICAL_RETHINK" in text and "PARAMETER_CHANGE" in text
+    assert "0.5100" in text and "0.0100" in text
+
+
+def test_no_operator_breakdown_is_shown_for_an_unsteered_run(fake_get):
+    """Upstream issues one undifferentiated request; there is nothing to break down."""
+    fake_get["route-quality"] = {
+        "routes": {"a/b": {"route": "a/b", "attempts": 12, "failures": 0,
+                           "duplicates": 0, "validity_rate": 1.0,
+                           "improvement_rate": 0.5, "mean_latency_s": 84.0,
+                           "improvement_per_request": 0.2}},
+        "coverage": {}, "comparison": {},
+    }
+    text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
+    assert "by operator" not in text

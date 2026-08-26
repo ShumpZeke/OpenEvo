@@ -292,6 +292,23 @@ def _route_quality_lines(control_url: str, run_id: str) -> List[str]:
             line += f"   {DIM}extra offspring{RESET} {extra}"
         out.append(line)
 
+    # Per operator, when a run had operator steering on. This is where the
+    # nuanced answer shows up: a slow, strong model may earn its latency on
+    # RADICAL_RETHINK and waste it on PARAMETER_CHANGE, which argues for
+    # routing by operator rather than picking a single winner.
+    by_operator = (q or {}).get("by_operator") or {}
+    if by_operator:
+        out.append(f"  {DIM}{'by operator':<30}{'route':<30}{'n':>4}"
+                   f"{'valid':>7}{'improv':>8}{'impr/req':>11}{RESET}")
+        for op, rows in sorted(by_operator.items()):
+            for i, r in enumerate(rows):
+                out.append(
+                    f"  {(op if i == 0 else '')[:29]:<30}{r['route'][:29]:<30}"
+                    f"{_fmt(r.get('attempts')):>4}"
+                    f"{r.get('validity_rate', 0) * 100:>6.0f}%"
+                    f"{r.get('improvement_rate', 0) * 100:>7.0f}%"
+                    f"{r.get('improvement_per_request', 0):>11.4f}")
+
     cov = (q or {}).get("coverage") or {}
     if isinstance(cov, dict) and cov.get("note"):
         out.append(f"  {GREY}{cov['note']}{RESET}")

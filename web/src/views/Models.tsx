@@ -216,6 +216,7 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
   const routes: Json[] = Object.values(data?.routes ?? {});
   const tp: Json = data?.throughput ?? {};
   const comparison: Json = data?.comparison ?? {};
+  const byOperator: Record<string, Json[]> = data?.by_operator ?? {};
   const coverage: Json = data?.coverage ?? {};
   const excluded: Record<string, string> = comparison.excluded_insufficient_data ?? {};
 
@@ -301,6 +302,40 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
               <span className="text-ink-dim">{tp.extra_offspring}</span>
             </span>
           )}
+        </div>
+      )}
+
+      {Object.keys(byOperator).length > 0 && (
+        <div className="px-3 py-2 border-t border-line">
+          <p className="text-2xs text-ink-faint uppercase tracking-wide mb-1">
+            by operator
+          </p>
+          {/* The nuanced answer this can produce: a slow, strong model may earn
+              its latency on RADICAL_RETHINK and waste it on PARAMETER_CHANGE,
+              which argues for routing by operator rather than picking one
+              winner. Only populated when a run had OE_MAX_OPERATORS set. */}
+          <Table>
+            <thead>
+              <tr><Th>Operator</Th><Th>Route</Th><Th>Attempts</Th><Th>Valid</Th>
+                  <Th>Improved</Th><Th>Impr / request</Th></tr>
+            </thead>
+            <tbody>
+              {Object.entries(byOperator).flatMap(([op, rows]) =>
+                rows.map((r: Json, i: number) => (
+                  <Row key={`${op}-${r.route}`}>
+                    <Td>{i === 0 ? <Mono className="text-ink">{op}</Mono> : null}</Td>
+                    <Td><Mono className="text-ink-dim">{r.route}</Mono></Td>
+                    <Td className="tabular">{fmtNum(r.attempts)}</Td>
+                    <Td className="tabular">{pct(r.validity_rate)}</Td>
+                    <Td className="tabular">{pct(r.improvement_rate)}</Td>
+                    <Td className="tabular">
+                      {typeof r.improvement_per_request === "number"
+                        ? r.improvement_per_request.toFixed(4) : "—"}
+                    </Td>
+                  </Row>
+                )))}
+            </tbody>
+          </Table>
         </div>
       )}
 
