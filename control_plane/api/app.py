@@ -35,6 +35,7 @@ from ..storage.store import Store
 from ..telemetry.bus import configure_bus, get_bus
 from ..telemetry.collector import EventCollector
 from ..telemetry.events import Component, Event, EventType, Status
+from ..telemetry.gpu import probe as gpu_probe
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -177,6 +178,12 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         except Exception as exc:
             info["host"] = None
             info["host_error"] = f"psutil unavailable: {exc}"
+
+        # Reported separately from `host` on purpose. A machine with no GPU is
+        # the normal case rather than a fault, so it must be distinguishable
+        # from a machine where sampling failed — and neither may be rendered as
+        # 0% utilised, which would be a fabricated number.
+        info["gpu"] = gpu_probe().to_dict()
         try:
             with open(os.path.join(_ROOT, "UPSTREAM.json")) as fh:
                 info["upstream"] = json.load(fh)

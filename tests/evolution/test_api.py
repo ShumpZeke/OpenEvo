@@ -223,3 +223,19 @@ def test_broker_status_does_not_raise_when_the_broker_is_absent(client, monkeypa
     """
     monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")
     assert client.get("/api/broker").status_code == 200
+
+
+def test_system_reports_gpu_presence_honestly(client):
+    """
+    A host with no accelerator is the normal case, not a fault, and must be
+    distinguishable from one where sampling failed. Neither may be rendered as
+    0% utilised — a number nothing measured.
+    """
+    body = client.get("/api/system").json()
+
+    assert "gpu" in body, "the system view says nothing about the accelerator"
+    assert isinstance(body["gpu"]["available"], bool)
+    if not body["gpu"]["available"]:
+        assert body["gpu"]["reason"], "absence must explain itself"
+        assert body["gpu"]["gpus"] == []
+        assert body["gpu"]["count"] == 0
