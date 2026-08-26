@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -20,7 +21,9 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..telemetry.events import Event, EventType, Status
-from .schema import SCHEMA, SCHEMA_VERSION
+from .schema import ADDITIVE_COLUMNS, SCHEMA, SCHEMA_VERSION, STRUCTURAL_CHANGES
+
+logger = logging.getLogger(__name__)
 
 
 def _j(obj: Any) -> str:
@@ -75,13 +78,66 @@ class Store:
 
     def _migrate(self) -> None:
         with self._write_lock:
+            previous = self._stored_version()
+            # Columns first, then the script. SCHEMA creates indexes over the
+            # newer columns (ix_cand_gen_model), and CREATE INDEX on a table
+            # that predates them fails outright — so reconciling afterwards
+            # never runs. On a new database there is no table yet and this is
+            # a no-op.
+            self._reconcile_columns()
             self._conn.executescript(SCHEMA)
+            if previous is not None and previous < SCHEMA_VERSION:
+                for version, what in sorted(STRUCTURAL_CHANGES.items()):
+                    if previous < version:
+                        # Not applied automatically: rebuilding needs the event
+                        # log, which the Store does not own. Saying so is better
+                        # than a projection that quietly serves old shapes.
+                        logger.warning(
+                            "Storage opened at schema v%s (now v%s): %s. "
+                            "Run Store.rebuild_projections_from_log() against "
+                            "this workspace's NDJSON log to correct it.",
+                            previous, SCHEMA_VERSION, what,
+                        )
             self._conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (str(SCHEMA_VERSION),),
             )
             self._conn.commit()
+
+    def _stored_version(self) -> Optional[int]:
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
+        except sqlite3.OperationalError:
+            return None          # brand new database; no schema_meta yet
+        try:
+            return int(row[0]) if row else None
+        except (TypeError, ValueError):
+            return None
+
+    def _reconcile_columns(self) -> None:
+        """
+        Add columns that a table gained after the workspace was created.
+
+        Without this, opening an older workspace leaves `candidates` without
+        `gen_request_id` and every attribution query fails on it — not at
+        startup, but whenever someone opens the view that reads it.
+        """
+        for table, columns in ADDITIVE_COLUMNS.items():
+            try:
+                present = {r[1] for r in self._conn.execute(
+                    f"PRAGMA table_info({table})")}
+            except sqlite3.OperationalError:
+                continue          # table not created yet; SCHEMA will make it
+            if not present:
+                continue
+            for name, decl in columns.items():
+                if name in present:
+                    continue
+                logger.info("Storage: adding %s.%s (%s)", table, name, decl)
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def close(self) -> None:
         with self._write_lock:
@@ -300,8 +356,8 @@ class Store:
                 created_at, candidate_type, language, combined_score, metrics,
                 complexity, diversity, code_hash, code_length, changes_summary,
                 map_elites_cell, eval_status, gen_request_id, gen_provider,
-                gen_model, gen_latency_ms, gen_tokens, metadata)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                gen_model, gen_latency_ms, gen_tokens, gen_operator, metadata)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(run_id, candidate_id) DO UPDATE SET
                  parent_id=COALESCE(excluded.parent_id, candidates.parent_id),
                  generation=COALESCE(excluded.generation, candidates.generation),
@@ -320,7 +376,8 @@ class Store:
                 md.get("map_elites_cell"), "pending",
                 md.get("generating_request_id"), md.get("generating_provider"),
                 md.get("generating_model"), md.get("generating_latency_ms"),
-                md.get("generating_tokens"), _j(md),
+                md.get("generating_tokens"), md.get("generating_operator"),
+                _j(md),
             ),
         )
         # Evaluation happens BEFORE the candidate is added to the database, so

@@ -18,7 +18,40 @@ Upstream checkpoint data is NOT duplicated here. Candidate code lives in
 OpenEvolve's own checkpoints; we store identity, metrics and pointers.
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+# Columns added after their table first shipped.
+#
+# `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it is, so a
+# workspace created before a column existed keeps the old shape and every query
+# naming that column fails with "no such column" — silently, until someone
+# opens the view that uses it. Reconciling these with `ALTER TABLE ADD COLUMN`
+# on open is the fix. It is the one schema change SQLite does cheaply, and for
+# an append-only projection store it is the only kind normally needed.
+#
+# Structural changes (a changed primary key, a dropped column) are not
+# expressible here and need `Store.rebuild_projections_from_log`, which is what
+# makes projections a cache rather than a second source of truth.
+ADDITIVE_COLUMNS = {
+    "candidates": {
+        # Added in v2 with candidate→request attribution.
+        "gen_request_id": "TEXT",
+        "gen_provider": "TEXT",
+        "gen_model": "TEXT",
+        "gen_latency_ms": "REAL",
+        "gen_tokens": "INTEGER",
+        # Added in v3 with operator-labelled mutations.
+        "gen_operator": "TEXT",
+    },
+}
+
+# Versions whose changes cannot be applied by ALTER TABLE. Opening an older
+# workspace logs what needs rebuilding rather than failing or, worse, quietly
+# serving wrong numbers.
+STRUCTURAL_CHANGES = {
+    2: "map_elites_cells is keyed by (run_id, island_id, cell_key); a v1 "
+       "database merged every island's feature map into one",
+}
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -125,6 +158,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     gen_model        TEXT,
     gen_latency_ms   REAL,
     gen_tokens       INTEGER,
+    gen_operator     TEXT,
     metadata         TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (run_id, candidate_id)
 );
@@ -135,6 +169,7 @@ CREATE INDEX IF NOT EXISTS ix_cand_island     ON candidates(run_id, island_id);
 CREATE INDEX IF NOT EXISTS ix_cand_cell       ON candidates(run_id, map_elites_cell);
 CREATE INDEX IF NOT EXISTS ix_cand_iteration  ON candidates(run_id, iteration);
 CREATE INDEX IF NOT EXISTS ix_cand_gen_model  ON candidates(run_id, gen_provider, gen_model);
+CREATE INDEX IF NOT EXISTS ix_cand_gen_op     ON candidates(run_id, gen_operator);
 
 -- Explicit lineage edges: a candidate may have several parents (crossover),
 -- which a single parent_id column cannot express.

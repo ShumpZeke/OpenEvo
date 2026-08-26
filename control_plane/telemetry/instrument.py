@@ -79,8 +79,9 @@ _worker_generation_pid: Optional[int] = None
 
 def _begin_worker_attribution() -> None:
     """Start a fresh attribution window. Called once per worker iteration."""
-    global _worker_generation, _worker_generation_pid
+    global _worker_generation, _worker_generation_pid, _worker_operator
     _worker_generation = None
+    _worker_operator = None
     _worker_generation_pid = os.getpid()
 
 
@@ -93,6 +94,8 @@ def _publish_generation(record: Dict[str, Any]) -> None:
     the worker path (where they do not share a process at all).
     """
     global _worker_generation
+    if _worker_operator and not record.get("operator"):
+        record = {**record, "operator": _worker_operator}
     try:
         _generating_request.set(record)
     except Exception:  # pragma: no cover - ContextVar.set does not normally fail
@@ -126,6 +129,57 @@ def _broker_route(response: Any) -> Optional[Dict[str, Any]]:
         if isinstance(value, dict) and value.get("model"):
             return value
     return None
+
+
+# Whether to steer each mutation with a named operator from the OE-MAX
+# taxonomy. Off unless asked for, because it changes what the model is asked
+# and would otherwise confound the stock-vs-MAX comparison: a difference in
+# results has to be attributable to one change at a time.
+ENV_OPERATORS = "OE_MAX_OPERATORS"
+
+# The operator chosen for the iteration this worker is running, so the request
+# it makes can be labelled with it.
+_worker_operator: Optional[str] = None
+
+
+def operators_enabled() -> bool:
+    return os.environ.get(ENV_OPERATORS, "").lower() in ("1", "true", "yes", "on")
+
+
+def _select_operator(run_id: Optional[str], iteration: Any,
+                     *, has_failure: bool, has_second_parent: bool) -> Optional[str]:
+    """
+    Pick the mutation class to ask for.
+
+    Uniform random, deliberately, and not yet the bandit. The bandit learns
+    from per-operator reward, and there is no per-operator reward until
+    mutations are labelled — which is what this function starts. Wiring the
+    bandit first would have it learn from a prior nobody measured. Measure,
+    then optimise.
+
+    Seeded from (run_id, iteration) so a rerun of the same run picks the same
+    operators. Workers are separate processes with no shared state, so a
+    derived seed is also the only way to keep the choice reproducible without
+    inventing a coordination channel.
+
+    Context filtering is upstream's own: asking for COUNTEREXAMPLE_REPAIR with
+    no counterexample produces a vague request, and the resulting bad numbers
+    would be blamed on a perfectly good operator.
+    """
+    try:
+        import random
+
+        from oe_max.search.operators import applicable
+
+        choices = applicable(has_failure=has_failure,
+                             has_second_parent=has_second_parent)
+        if not choices:
+            return None
+        rng = random.Random(f"{run_id}:{iteration}")
+        return rng.choice(choices).value
+    except Exception as exc:  # steering is an enhancement, never a requirement
+        logger.debug("operator selection failed: %r", exc)
+        return None
 
 
 def _generation_role() -> str:
@@ -193,6 +247,7 @@ def _attribution_fields(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "generating_model": rec.get("model"),
         "generating_latency_ms": rec.get("latency_ms"),
         "generating_tokens": rec.get("tokens"),
+        "generating_operator": rec.get("operator"),
     }
 
 # Env keys used to propagate telemetry config into worker processes.
@@ -1109,6 +1164,7 @@ def auto_install_from_env() -> Optional[EngineInstrumentation]:
     # and the guard flag makes this a no-op. It matters when it did not.
     try:
         install_worker_attribution_hook()
+        install_operator_hook()
     except Exception as exc:  # pragma: no cover
         logger.debug("attribution hook install failed: %r", exc)
     return _active
@@ -1142,6 +1198,7 @@ def install_worker_hook() -> None:
     wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
     process_parallel._worker_init = wrapper
     install_worker_attribution_hook()
+    install_operator_hook()
 
 
 def _emit_iteration_completed(result: Any, iteration: Any, duration_ms: float) -> None:
@@ -1176,6 +1233,73 @@ def _emit_iteration_completed(result: Any, iteration: Any, duration_ms: float) -
         ))
     except Exception as exc:  # pragma: no cover - telemetry must never break a run
         logger.debug("iteration-completed emit failed: %r", exc)
+
+
+def install_operator_hook() -> None:
+    """
+    Steer each mutation with a named operator class, and label it.
+
+    Upstream issues one undifferentiated "improve this program" request, so
+    every mutation is the same mutation and no credit assignment is possible:
+    `route_quality.by_operator` had nowhere to get an operator from and was
+    empty by construction. This is the missing half.
+
+    The directive is appended to the **system** message, not the user message.
+    The user message carries the program and the exact SEARCH/REPLACE format
+    contract; appending to it risks the model treating the directive as part of
+    the diff spec, and a broken diff format costs the whole request.
+
+    Only the mutation sampler is steered. Upstream builds a second
+    `PromptSampler` for evaluator feedback and marks it with
+    `set_templates("evaluator_system_message")` — telling an evaluator to
+    "substitute a fundamentally different algorithm" would corrupt the score
+    rather than the candidate, which is much harder to notice.
+
+    Off unless `OE_MAX_OPERATORS` is set. It changes what the model is asked,
+    and turning it on by default would confound every comparison already
+    recorded.
+    """
+    if not operators_enabled():
+        return
+    try:
+        from openevolve.prompt.sampler import PromptSampler
+    except ImportError:
+        return
+    original = getattr(PromptSampler, "build_prompt", None)
+    if original is None or getattr(original, "__evolution_instrumented__", False):
+        return
+
+    @functools.wraps(original)
+    def wrapper(sampler_self, *a, **kw):
+        global _worker_operator
+        prompt = original(sampler_self, *a, **kw)
+        try:
+            if getattr(sampler_self, "system_template_override", None):
+                return prompt          # evaluator feedback, not a mutation
+            if not isinstance(prompt, dict) or "system" not in prompt:
+                return prompt
+            artifacts = kw.get("program_artifacts") or {}
+            op = _select_operator(
+                _active.run_id if _active else None,
+                kw.get("evolution_round"),
+                has_failure=bool(artifacts),
+                has_second_parent=bool(kw.get("inspirations")),
+            )
+            if not op:
+                return prompt
+            from oe_max.search.operators import OPERATORS, OperatorClass
+
+            fragment = OPERATORS[OperatorClass(op)].prompt_fragment()
+            prompt = dict(prompt)
+            prompt["system"] = f"{prompt['system']}\n\n{fragment}"
+            _worker_operator = op
+        except Exception as exc:   # a steering failure must not lose the prompt
+            logger.debug("operator steering failed: %r", exc)
+        return prompt
+
+    wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
+    PromptSampler.build_prompt = wrapper  # type: ignore[method-assign]
+    logger.info("OE-MAX operator steering enabled (%s)", ENV_OPERATORS)
 
 
 def install_worker_attribution_hook() -> None:

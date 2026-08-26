@@ -45,6 +45,7 @@ SELECT m.request_id,
        m.total_tokens,
        m.metadata            AS request_metadata,
        c.candidate_id,
+       c.gen_operator        AS operator,
        c.combined_score      AS child_score,
        p.combined_score      AS parent_score
   FROM model_requests m
@@ -92,12 +93,35 @@ def _rejected_request_ids(conn: sqlite3.Connection, run_id: str) -> Dict[str, in
     return counts
 
 
+def _rejected_operators(conn: sqlite3.Connection, run_id: str) -> Dict[str, str]:
+    """
+    request_id → the operator that was asked for.
+
+    A rejected candidate never reaches the `candidates` projection, so its
+    operator is only in the event. Without this, every duplicate would be
+    unlabelled and the per-operator duplicate rate — the number that says an
+    operator is producing nothing new — would be blank for exactly the
+    operators worth catching.
+    """
+    out: Dict[str, str] = {}
+    for (payload,) in conn.execute(_REJECTION_SQL, (run_id,)):
+        try:
+            md = (json.loads(payload) or {}).get("metadata") or {}
+        except ValueError:
+            continue
+        rid, op = md.get("generating_request_id"), md.get("generating_operator")
+        if rid and op:
+            out[rid] = op
+    return out
+
+
 def build_tracker(conn: sqlite3.Connection, run_id: str,
                   min_attempts: Optional[int] = None) -> RouteQualityTracker:
     """Replay a run's stored requests into a `RouteQualityTracker`."""
     tracker = (RouteQualityTracker(min_attempts=min_attempts)
                if min_attempts is not None else RouteQualityTracker())
     rejected = _rejected_request_ids(conn, run_id)
+    rejected_operators = _rejected_operators(conn, run_id)
 
     conn.row_factory = sqlite3.Row
     for row in conn.execute(_ATTEMPT_SQL, (run_id, MUTATION_ROLE)):
@@ -118,6 +142,10 @@ def build_tracker(conn: sqlite3.Connection, run_id: str,
 
         tracker.record(Attempt(
             route=f"{provider}/{model}",
+            # Unlabelled unless operator steering was on for the run; upstream
+            # issues one undifferentiated request and there is no operator to
+            # recover after the fact.
+            operator=row["operator"] or rejected_operators.get(row["request_id"]),
             failed=failed,
             parsed=parsed,
             passed_g0=not failed and parsed,

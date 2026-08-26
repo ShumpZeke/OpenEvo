@@ -388,3 +388,93 @@ def test_out_of_order_completions_do_not_move_progress_backwards(store):
         _iteration_done(store, "run_1", i)
 
     assert _run_row(store, "run_1")["iterations_done"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Per-operator breakdown
+#
+# The nuanced answer route quality can produce: a slow, strong model may earn
+# its latency on RADICAL_RETHINK and waste it on PARAMETER_CHANGE, which argues
+# for routing *by operator* rather than picking one winner.
+# ---------------------------------------------------------------------------
+
+def _labelled(store, run_id, request_id, operator, *, provider="opencode_zen",
+              model="hy3-free", score=None, parent_id=None, parent_score=None):
+    _request(store, run_id, request_id, provider, model)
+    if parent_score is not None:
+        store.ingest([Event(
+            type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+            run_id=run_id, candidate_id=parent_id, summary="parent",
+            metrics={"combined_score": parent_score},
+            metadata={"parent_id": None, "generating_request_id": f"{request_id}_p",
+                      "generating_provider": provider, "generating_model": model,
+                      "generating_operator": operator})])
+    if score is not None:
+        store.ingest([Event(
+            type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+            run_id=run_id, candidate_id=f"cand_{request_id}", summary="child",
+            metrics={"combined_score": score},
+            metadata={"parent_id": parent_id,
+                      "generating_request_id": request_id,
+                      "generating_provider": provider, "generating_model": model,
+                      "generating_operator": operator})])
+
+
+def test_attempts_are_grouped_by_operator(store):
+    _labelled(store, "run_1", "req_1", "RADICAL_RETHINK", score=0.9,
+              parent_id="p1", parent_score=0.4)
+    _labelled(store, "run_1", "req_2", "PARAMETER_CHANGE", score=0.41,
+              parent_id="p2", parent_score=0.4)
+
+    breakdown = build_tracker(store.reader(), "run_1").operator_breakdown()
+    assert set(breakdown) == {"RADICAL_RETHINK", "PARAMETER_CHANGE"}
+    assert breakdown["RADICAL_RETHINK"][0]["best_delta"] == pytest.approx(0.5)
+    assert breakdown["PARAMETER_CHANGE"][0]["best_delta"] == pytest.approx(0.01, abs=1e-6)
+
+
+def test_an_unsteered_run_has_no_operator_breakdown(store):
+    """
+    Upstream issues one undifferentiated request. Inventing an operator label
+    for it would be worse than an empty breakdown, which is visibly empty.
+    """
+    _request(store, "run_1", "req_1", "opencode_zen", "hy3-free")
+    _candidate(store, "run_1", "cand_1", "req_1", "opencode_zen", "hy3-free")
+
+    tracker = build_tracker(store.reader(), "run_1")
+    assert tracker.routes["opencode_zen/hy3-free"].attempts == 1
+    assert tracker.operator_breakdown() == {}
+
+
+def test_a_rejected_candidates_operator_is_still_recovered(store):
+    """
+    A rejected candidate never reaches the `candidates` projection, so its
+    label is only in the event. Losing it would blank the per-operator
+    duplicate rate for exactly the operators worth catching.
+    """
+    _request(store, "run_1", "req_1", "opencode_zen", "hy3-free")
+    store.ingest([Event(
+        type=EventType.CANDIDATE_REJECTED, component=Component.DATABASE,
+        run_id="run_1", candidate_id="cand_1", status=Status.REJECTED,
+        summary="rejected",
+        metadata={"reason": "novelty_or_duplicate",
+                  "generating_request_id": "req_1",
+                  "generating_provider": "opencode_zen",
+                  "generating_model": "hy3-free",
+                  "generating_operator": "LOCAL_OPTIMIZE"})])
+
+    breakdown = build_tracker(store.reader(), "run_1").operator_breakdown()
+    assert breakdown["LOCAL_OPTIMIZE"][0]["duplicates"] == 1
+
+
+def test_the_same_operator_on_two_routes_is_kept_apart(store):
+    """The routing-by-operator question needs both dimensions, not one."""
+    _labelled(store, "run_1", "req_a", "RADICAL_RETHINK",
+              model="x-preview-f-free", score=0.9, parent_id="pa", parent_score=0.4)
+    _labelled(store, "run_1", "req_b", "RADICAL_RETHINK",
+              model="hy3-free", score=0.5, parent_id="pb", parent_score=0.4)
+
+    rows = build_tracker(store.reader(), "run_1").operator_breakdown()["RADICAL_RETHINK"]
+    assert {r["route"] for r in rows} == {"opencode_zen/x-preview-f-free",
+                                          "opencode_zen/hy3-free"}
+    # Ranked by yield per request, best first.
+    assert rows[0]["route"] == "opencode_zen/x-preview-f-free"
