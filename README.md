@@ -39,6 +39,11 @@ Both sit *around* upstream. The engine is byte-identical.
 - **Provider routing** — OpenCode Zen / Ox Alpha Free preferred by default, with
   automatic fallback to NVIDIA NIM and other OpenAI-compatible endpoints,
   driven by live health *and* verified capabilities.
+- **Route quality, not just route health** — every candidate is attributed to
+  the model request that generated it, so the question "which route produces
+  better mutations, and at what cost?" is answerable from a run's own
+  telemetry. `./scripts/route-experiment.sh` runs one arm per route and refuses
+  to name a winner on thin evidence.
 - **Agent sandbox** — OpenCode as an optional evaluation backend, in an
   environment that cannot reach the operator's own OpenCode installation.
 - **Everything upstream still works** — the original CLI, configs, examples,
@@ -115,6 +120,7 @@ oe_max/
   providers/        adapter, registry, live discovery + smoke tests
   broker/           OpenAI-compatible broker OpenEvolve points at
   router.py         chain selection, failover, retry, truncation escalation
+  route_quality.py  per-route mutation quality (three scarcity views)
   health.py         circuit breaker and rolling health
   evaluation/       G0 validity + G1 four-strength deduplication
   search/           mutation taxonomy + discounted Thompson sampling
@@ -126,6 +132,7 @@ control_plane/
   storage/          SQLite event log + derived projections
   api/              control, query and SSE streaming
   providers/        profiles, runtime doctor, health/capability router
+  analysis/         route quality built from stored telemetry
   sandbox/          OpenCode isolation boundary
   runner/           engine subprocess lifecycle
 web/                Control Center (React + TypeScript + Tailwind)
@@ -141,8 +148,8 @@ tests/              upstream suite (untouched) + tests/evolution
 | Suite | Result |
 |---|---|
 | Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
-| Control plane | **84 passed** |
-| OE-MAX (broker, limiter, gates, search, archives) | **110 passed** |
+| Control plane | **127 passed** |
+| OE-MAX (broker, limiter, gates, search, archives) | **135 passed** |
 | Web typecheck | clean |
 
 The upstream suite runs first: a change that breaks it is a regression in the

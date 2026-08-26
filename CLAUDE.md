@@ -51,7 +51,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 84 control plane + 110 OE-MAX
+./test.sh     # 437 upstream + 127 control plane + 135 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -68,6 +68,12 @@ fork is broken, not merely the control plane.
   telemetry silently disappears.
 - The rate limiter's epsilon is not cosmetic — removing it makes `acquire()`
   spin forever, and the tests hang rather than fail.
+- Nothing in memory crosses the worker→main process boundary. Anything a worker
+  must tell the main process rides on `Program.metadata` — and `_migrate_programs`
+  copies metadata wholesale, so exclude migrants or you will double-count.
+- Through the broker every route is called `oe-max-primary`. The serving route
+  comes from the `oe_max` stamp on the response body, not from what was asked
+  for.
 
 Full detail for each: `HANDOFF.md` §3.
 

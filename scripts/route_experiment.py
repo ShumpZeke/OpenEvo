@@ -123,9 +123,14 @@ def _wait(run_id: str, poll_s: float, timeout_s: float) -> str:
     last = ""
     while time.time() < deadline:
         try:
-            status = _get(f"{API}/api/query/runs/{run_id}")["status"]
-        except (urllib.error.URLError, OSError):
-            status = last or "unknown"
+            # The control API creates the run; the query projection only knows
+            # about it once its first events are ingested, so a freshly started
+            # run reads as "not found" for a moment. Treating that as "starting"
+            # rather than an error is the difference between a working poll and
+            # one that dies on the first tick.
+            status = _get(f"{API}/api/query/runs/{run_id}").get("status") or "starting"
+        except (urllib.error.URLError, OSError, KeyError, TypeError):
+            status = last or "starting"
         if status != last:
             print(f"    {run_id[:16]}… {status}", flush=True)
             last = status

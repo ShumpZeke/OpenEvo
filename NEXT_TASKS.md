@@ -10,36 +10,60 @@ Read `HANDOFF.md` first — especially §3, the traps.
 
 ## T1 — Fast-model routing experiment
 
-**Priority:** highest. **Effort:** medium. **Blocked by:** nothing.
+**Priority:** highest. **Effort:** small — the machinery is built.
+**Blocked by:** nothing. **Status:** run it and read the answer.
 
 ### Why
 
-Measured on a real run:
+Measured on real runs, and the numbers move:
 
-| route | success | avg latency |
-|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | 40% | 220 s |
-| `nemotron-3-ultra-free` | 100% | 112 s |
+| route | success | p50 latency | when |
+|---|---|---|---|
+| `x-preview-f-free` (Ox Alpha) | 40% | 220 s | first measurement |
+| `x-preview-f-free` (Ox Alpha) | 26% | 284 s | later, same week |
+| `nemotron-3-ultra-free` | 100% | 112 s | first measurement |
 
 If a cheaper route produces comparable mutation quality, throughput roughly
-doubles. The spec's objective divides by wall-clock and API requests, so this
-attacks the denominator directly.
+doubles. The objective divides by wall-clock and API requests, so this attacks
+the denominator directly. That Ox Alpha's own numbers moved by that much
+between measurements is itself the argument for re-running rather than
+trusting a table.
 
-### Where to start
+### What is already built
 
-`oe_max/router.py` already records per-route statistics
-(`Router.stats_by_route`). What is missing is *quality* per route, not just
-reliability.
+The three things this used to need are done:
 
-1. Label each generation with the route that served it (the provenance is
-   already on every response as `oe_max.provider` / `oe_max.model`).
-2. Record whether the resulting candidate passed G0/G1 and its fitness delta.
-3. Aggregate: mutation-validity rate and mean fitness delta **per route**.
+1. **Attribution.** Every candidate carries the model request that generated
+   it, across the worker→main process boundary
+   (`control_plane/telemetry/instrument.py`, `ATTRIBUTION_KEY`). Verified live:
+   12 of 15 candidates attributed, the other 3 being the seed program and two
+   migrant copies, which are unattributable by design.
+2. **Quality per route.** `oe_max/route_quality.py` defines the measures;
+   `control_plane/analysis/route_quality.py` builds them from stored telemetry;
+   `GET /api/query/runs/{id}/route-quality?pool=…` serves them.
+3. **The experiment itself.** `scripts/route-experiment.sh` runs one arm per
+   route off a single base config, pools the runs per route, and prints a
+   verdict that refuses to name a winner on thin evidence.
+
+### How to run it
+
+```bash
+./scripts/start-broker.sh                        # terminal 1
+./run.sh                                         # terminal 2
+./scripts/route-experiment.sh \
+    --routes x-preview-f-free,nemotron-3-ultra-free \
+    --iterations 12 --repeats 3
+```
+
+Three repeats per arm is the point: `MIN_ATTEMPTS_FOR_COMPARISON` is 20, and a
+12-iteration run does not get there alone. `--min-attempts` can lower the bar,
+but lowering it is a claim you then have to defend.
 
 ### Done when
 
 You can answer "does Ox Alpha produce better mutations than
-`nemotron-3-ultra-free`, and by how much per second?" with numbers from ≥3 runs.
+`nemotron-3-ultra-free`, and by how much per second?" with numbers from ≥3 runs
+per arm, and the verdict is not "insufficient evidence".
 
 ### Careful
 
@@ -47,6 +71,12 @@ The operator explicitly chose Ox Alpha as primary. **Do not change the default
 route on latency alone.** Bring evidence about quality, then propose it. If Ox
 Alpha is better per *request* but worse per *minute*, that is a genuine
 trade-off for the operator to decide, not for you to silently resolve.
+
+Read the three views before concluding anything. `improvement_per_request` is
+what matters under a rate contract, `improvement_per_second` when wall-clock is
+the constraint, `improvement_per_1k_tokens` when someone is paying. The same
+two routes can rank differently under each, and that is a result rather than a
+contradiction.
 
 ---
 

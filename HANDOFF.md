@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 84 control plane + 110 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 127 control plane + 135 OE-MAX.
 
 ---
 
@@ -140,6 +140,60 @@ Refilling the token bucket by exactly the required amount lands on
 `0.9999999999`; a strict `>= 1.0` computes a ~1e-12 wait and `acquire()` spins
 forever. The tests **hang** rather than fail. `_EPS` and `_MIN_WAIT` in
 `oe_max/limiter.py` exist for this. Do not remove them.
+
+### 3.7 Nothing in memory crosses the worker process boundary
+
+In the default `process_parallel` path the model request is made in a **worker
+process** and `ProgramDatabase.add` runs in the **main** process, which receives
+only a pickled `SerializableResult`. A ContextVar — or a thread-local, or a
+global — is correct inside the worker and simply does not exist on the other
+side.
+
+This cost a full debugging cycle to see: attribution was set correctly in every
+worker and a live 4-iteration run still produced **3 candidates and 0
+attributed**. Nothing was broken; the value was being dropped at the process
+edge.
+
+`Program.metadata` is the one channel that crosses, because it is a dataclass
+field that survives `to_dict()` → pickle → `Program(**dict)`. So
+`process_parallel._run_iteration_worker` is wrapped — it is the only frame
+spanning both halves — and stamps the attribution onto the child program's
+metadata before returning (`ATTRIBUTION_KEY` in
+`control_plane/telemetry/instrument.py`).
+
+**If you need to get anything else from a worker to the main process, that is
+the channel.** And check `migrant`: `_migrate_programs` copies metadata
+wholesale into the copy, so anything you put there will be duplicated onto
+migrants unless you exclude them.
+
+### 3.8 Through the broker, every route is called `oe-max-primary`
+
+OpenEvolve is pointed at the broker and only ever names the alias. Recorded
+naively, every route collapses into a single row called `local/oe-max-primary`
+— in exactly the configuration this project ships — and no per-route analysis
+is possible at all.
+
+The broker already stamps `body["oe_max"]` with the serving provider, model,
+attempt and reasoning tokens. The instrumentation reads it back off the parsed
+response (the OpenAI client keeps unknown fields in `model_extra`) and the
+completed event wins the projection, so `model_requests.provider/model` is the
+route that did the work and the alias survives as `requested_model`.
+
+If you add a new endpoint that fronts other providers, stamp it the same way or
+its traffic becomes unanalysable.
+
+### 3.9 Pinning a model must not drop the retry policy
+
+`_resolve_pinned` in the broker used to call `provider.chat` directly, skipping
+retry and truncation escalation. A pinned reasoning model then truncates where
+the same model on the chain succeeds — measured: a 16-token budget made
+`nemotron-3-ultra-free` return `finish_reason=length` after spending 17 tokens
+on hidden reasoning.
+
+It now goes through `Router.chat_pinned`, which applies the same policy without
+failover. This matters beyond correctness: every arm of a route A/B is pinned,
+so the old behaviour would have made the experiment measure the policy
+difference instead of the models.
 
 ---
 

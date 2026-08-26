@@ -57,6 +57,40 @@ raw response, then records `prompt_tokens`, `completion_tokens`,
 `total_tokens`, `finish_reason` and the model the provider says it served
 (which can differ from the one requested).
 
+**Generation provenance crosses a process boundary.** Every candidate records
+the model request that generated it — `gen_request_id`, `gen_provider`,
+`gen_model`, `gen_latency_ms`, `gen_tokens` — which upstream does not provide
+and no post-hoc join can recover (measured: 0 of 22 stored model requests
+carried a candidate id).
+
+Capturing it is not a matter of setting a variable, because in the default
+`process_parallel` path the model request happens in a **worker process** and
+`ProgramDatabase.add` happens in the **main** process, which receives only a
+pickled `SerializableResult`. A ContextVar is correct inside the worker and
+absent on the other side; a live run demonstrated it, producing 3 candidates
+and 0 attributed. The attribution is therefore stamped onto `Program.metadata`
+— a dataclass field that survives `to_dict()` → pickle → `Program(**dict)` — by
+wrapping `_run_iteration_worker`, the only frame that spans both halves.
+
+Within a worker iteration the *first* model request wins. The generating call
+comes first by construction; a later one can only be the evaluator's LLM
+feedback, and crediting a mutation to the request that judged it would be worse
+than leaving it unattributed.
+
+**Two cases are recorded as absent rather than guessed.** A migrant is a copy
+of an already-attributed program — `_migrate_programs` copies metadata
+wholesale, so without an explicit check one generation would be charged to its
+route three times. A stale context means a checkpoint reload. Both come back
+null, and `attribution_coverage` reports the shortfall with its reason, because
+under the rule above a plausible attribution is worse than a missing one: the
+missing one is visible.
+
+**The recorded route is the one that served the request.** Through the broker
+the engine only ever names the alias `oe-max-primary`, so the completed event
+carries the provider and model from the broker's `oe_max` response stamp and
+the alias is kept as `requested_model`. Without this every route through the
+broker is one indistinguishable row.
+
 ## Transport
 
 ```

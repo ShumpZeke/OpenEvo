@@ -383,3 +383,103 @@ hidden.
 ablation means deleting code, it is expensive to run and easy to get wrong.
 As a one-line substitution it is cheap enough to run every time, which is the
 difference between an ablation that is specified and one that actually happens.
+
+---
+
+## D25 — Attribution rides on `Program.metadata`, because nothing else crosses
+
+**Decision.** The link from a candidate to the model request that generated it
+is stamped onto `Program.metadata` inside the worker, by wrapping
+`process_parallel._run_iteration_worker`.
+
+**Evidence.** A ContextVar was the right mechanism for the in-process path and
+was measured failing anyway: a live 4-iteration run produced **3 candidates and
+0 attributed**. In the default `process_parallel` path the model request happens
+in a worker process and `database.add` happens in the main process, which
+receives only a pickled `SerializableResult`. Nothing in memory crosses that
+boundary — the value was correct in every worker and simply absent on the other
+side.
+
+`Program.metadata` is a dataclass field, so it survives `to_dict()` → pickle →
+`Program(**dict)`. `_run_iteration_worker` is the only frame that spans both
+halves of the problem, which makes it the only place the stamp can be applied.
+
+**Cost, stated honestly.** It is a second attribution channel alongside the
+ContextVar, and two mechanisms is worse than one. The ContextVar is kept
+because the non-parallel path has no worker frame to wrap. `_attribution_of`
+resolves them in one place with metadata winning, so no caller has to know.
+
+**Would change if.** Upstream gave `SerializableResult` a general-purpose
+passthrough field, or dropped the process pool.
+
+---
+
+## D26 — Two cases are left unattributed rather than guessed
+
+**Decision.** A migrant copy and a stale context are recorded as *no
+attribution*, not as an attribution to the most plausible request.
+
+**Evidence.** `_migrate_programs` copies metadata wholesale into the migrant, so
+without an explicit check a single generation would be charged to its route
+three times. Measured on the verification run: one generation on island 0 was
+copied to islands 1 and 2 with an identical `code_hash`. That is a 3×
+inflation of exactly the attempt count that `route_quality` ranks routes on.
+
+This is the no-fake-data rule applied to analysis rather than to the UI. A
+plausible attribution is worse than a null one, because a null is visible in
+`attribution_coverage` and a wrong one is not.
+
+---
+
+## D27 — The attempt set is model requests, not candidates
+
+**Decision.** `route_quality` charges every mutation-role model request as an
+attempt, including ones that produced nothing.
+
+**Evidence.** Ox Alpha was measured at 26% success and a 284 s p50. A route that
+burns 292 seconds and returns an unusable diff produces no candidate at all —
+counting candidates would erase its worst outcome and make the slowest, least
+reliable route look the cleanest.
+
+Failures are counted separately from unparseable responses, because a timeout
+is a route problem and an inapplicable diff is a model problem, and the fix for
+each is different. Both are still charged, because both consumed the wall-clock
+and the rate budget the efficiency measures divide by.
+
+---
+
+## D28 — Record the route that served, keep the alias that was asked for
+
+**Decision.** `model_requests.provider/model` hold the route that actually did
+the work; the broker alias survives as `requested_model` in metadata.
+
+**Why.** OpenEvolve is pointed at the broker and only ever names
+`oe-max-primary`. Recorded as asked, every route through the broker collapses
+into one row called `local/oe-max-primary` — in exactly the configuration this
+project ships — and no route comparison is possible.
+
+The broker already stamped `body["oe_max"]` on every response for provenance;
+this reads it back rather than inventing a second mechanism. Keeping the alias
+matters too: when a route substitution looks wrong, what the engine asked for
+is the first thing to check.
+
+**Cost.** The projection now lets the completed event overwrite provider and
+model, so event order matters where it did not before. Started events carry the
+alias and completed events carry the route; a reordering would show the alias.
+
+---
+
+## D29 — Pinning a route drops failover, not policy
+
+**Decision.** `Router.chat_pinned` applies the same retry and truncation
+escalation as the chain, to a single route.
+
+**Evidence.** The broker's pinned path called `provider.chat` directly. Measured
+consequence: a 16-token budget made `nemotron-3-ultra-free` return
+`finish_reason=length` after spending 17 tokens on hidden reasoning, where the
+same call on the chain escalates the budget and succeeds.
+
+Beyond the bug, this is what makes a route A/B trustworthy. Every arm of the
+experiment is pinned by definition, so the old behaviour would have compared
+routes under a policy the production chain does not use — measuring the policy
+difference and reporting it as a difference between models.
