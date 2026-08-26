@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 276 control plane + 227 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 282 control plane + 227 OE-MAX.
 
 ---
 
@@ -377,6 +377,41 @@ than adding zeros.
 Whether starting from a population actually beats starting from one program is
 **unmeasured**. It is an ablation arm waiting to be run.
 
+## 4f. All of it at once — and what that caught
+
+Every opt-in feature was tested separately and had never been run together.
+Doing that is what found the bugs below, none of which any unit test could
+have: they were all cases where a feature worked and its *record* did not.
+
+```bash
+EVOLUTION_EVALUATOR_PATH=examples/function_minimization/evaluator.py \
+OE_MAX_VERIFY_ENTRY_POINT=search_algorithm \
+OE_MAX_OPERATORS=1 OE_MAX_ISLAND_POLICIES=1 OE_MAX_MULTI_OFFSPRING=3 \
+OE_MAX_VERIFY=1 OE_MAX_SANDBOX_EVAL=1 OE_MAX_SEED_FORGE=3 \
+  ./scripts/run-evolution.sh --iterations 12
+```
+
+Verified on a 12-iteration run: 14 candidates carrying an operator, three
+distinct island policies in use, 2 extra offspring, 5 forge-descended
+candidates, 4 migrants flagged, 3 verifications passed.
+
+**Run this after adding any feature.** The three things it caught:
+
+- **`migrant` was never written to the projection.** `throughput` excluded
+  migrants by that key and `outcome` included them by its absence — both
+  tested green against synthetic events where the key *was* set, while the
+  real path never had it. Two analysis modules quietly measuring the wrong
+  population.
+- **`island_policy` existed only on the attribution record**, so the policy
+  layer was invisible in stored data and could not be evaluated at all.
+- **A null token count was rendered `«redacted»`**, which reads as a hidden
+  secret rather than as no data.
+
+The general shape: a flag that lives only on the in-memory `Program` is a
+filter that silently never matches. If a feature sets metadata that an analysis
+module reads, `_provenance_flags` in `instrument.py` is where it has to be
+copied onto the event.
+
 ---
 
 ## 5. What to do next
@@ -487,7 +522,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 276 control plane + 227 OE-MAX = 940 passing
+tests     437 upstream + 282 control plane + 227 OE-MAX = 946 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

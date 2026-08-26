@@ -171,3 +171,99 @@ def test_a_broken_hook_never_breaks_evolution(installed, monkeypatch):
     db.add(Program(id="c1", code="x = 1", metrics={"combined_score": 0.5}),
            iteration=1)
     assert "c1" in db.programs
+
+
+# ---------------------------------------------------------------------------
+# Provenance flags
+#
+# Every one of these is read back by an analysis module, and a flag that lives
+# only on the in-memory Program is a filter that silently never matches.
+# `throughput` was excluding migrants by a key the projection never wrote, and
+# `outcome` was including them for the same reason — both tested green against
+# synthetic events where the key *was* set, while the real path never had it.
+# ---------------------------------------------------------------------------
+
+def test_a_migrant_is_flagged_in_the_emitted_event(installed):
+    """
+    Upstream's own marker, and the one that was missing. Two analysis modules
+    filter on it.
+    """
+    engine, sink, bus = installed
+    from openevolve.config import Config
+    from openevolve.database import Program, ProgramDatabase
+
+    db = ProgramDatabase(Config().database)
+    db.add(Program(id="m1", code="x = 1", metrics={"combined_score": 0.5},
+                   metadata={"migrant": True}), iteration=1)
+    bus.flush()
+
+    ev = next(e for e in sink.events if e.type == EventType.CANDIDATE_CREATED
+              and e.candidate_id == "m1")
+    assert ev.metadata["migrant"] is True
+
+
+def test_flags_are_emitted_false_rather_than_omitted(installed):
+    """
+    So a consumer can tell "not a migrant" from "this run predates the flag".
+    An absent key is indistinguishable from an old run.
+    """
+    engine, sink, bus = installed
+    from openevolve.config import Config
+    from openevolve.database import Program, ProgramDatabase
+
+    db = ProgramDatabase(Config().database)
+    db.add(Program(id="c1", code="x = 1", metrics={"combined_score": 0.5}),
+           iteration=1)
+    bus.flush()
+
+    ev = next(e for e in sink.events if e.type == EventType.CANDIDATE_CREATED)
+    for flag in ("migrant", "multi_offspring", "seed_forge"):
+        assert ev.metadata[flag] is False
+
+
+def test_forge_provenance_survives_to_the_event(installed):
+    engine, sink, bus = installed
+    from openevolve.config import Config
+    from openevolve.database import Program, ProgramDatabase
+
+    db = ProgramDatabase(Config().database)
+    db.add(Program(id="f1", code="x = 2", metrics={"combined_score": 0.5},
+                   metadata={"seed_forge": True, "forge_origin": "scale_effort",
+                             "forge_detail": "x2.0 over 1 defaults"}),
+           iteration=0)
+    bus.flush()
+
+    ev = next(e for e in sink.events if e.type == EventType.CANDIDATE_CREATED
+              and e.candidate_id == "f1")
+    assert ev.metadata["seed_forge"] is True
+    assert ev.metadata["forge_origin"] == "scale_effort"
+
+
+def test_the_stored_row_can_be_filtered_on_the_flag(installed, tmp_path):
+    """
+    End to end, through the projection: the query the analysis modules actually
+    run must find the row.
+    """
+    engine, sink, bus = installed
+    from openevolve.config import Config
+    from openevolve.database import Program, ProgramDatabase
+
+    from control_plane.storage.store import Store
+
+    db = ProgramDatabase(Config().database)
+    db.add(Program(id="m1", code="x = 1", metrics={"combined_score": 0.5},
+                   metadata={"migrant": True}), iteration=1)
+    db.add(Program(id="c1", code="x = 2", metrics={"combined_score": 0.6}),
+           iteration=2)
+    bus.flush()
+
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        store.ingest([e for e in sink.events
+                      if e.type == EventType.CANDIDATE_CREATED])
+        rows = store.query(
+            "SELECT candidate_id FROM candidates "
+            " WHERE COALESCE(json_extract(metadata, '$.migrant'), 0) != 1")
+        assert [r["candidate_id"] for r in rows] == ["c1"]
+    finally:
+        store.close()

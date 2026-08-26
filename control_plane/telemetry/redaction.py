@@ -97,6 +97,11 @@ def is_secret_key(key: str, value: Any = None) -> bool:
     would have allowed. Redaction stays key-driven; this only narrows the false
     positives.
 
+    `None` is spared for the same reason a number is, and it matters more than
+    it looks: an absent token count rendered as «redacted» reads as a hidden
+    secret rather than as no data, which is exactly the confusion the no-fake-
+    data rule exists to prevent.
+
     The false positive that motivated this: `reasoning_tokens`, a count, was
     redacted because "token" is a secret key part. The measurement it carries —
     Ox Alpha spending 7,986 of an 8,000-token budget on hidden reasoning — is
@@ -108,8 +113,9 @@ def is_secret_key(key: str, value: Any = None) -> bool:
     norm = _normalize_key(key)
     if norm in SECRET_KEY_EXCEPTIONS:
         return False
-    if norm.endswith("tokens") and isinstance(value, (int, float)) \
-            and not isinstance(value, bool):
+    if norm.endswith("tokens") and (
+            value is None
+            or (isinstance(value, (int, float)) and not isinstance(value, bool))):
         # A numeric "…tokens" key is a count. Restricted to that suffix rather
         # than applied to every numeric value, so a numeric `password` or
         # `api_key` is still redacted.

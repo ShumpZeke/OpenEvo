@@ -132,3 +132,19 @@ def test_a_boolean_is_not_treated_as_a_count():
     """`bool` is an `int` in Python; a flag named …tokens is not a measurement."""
     out = default_redactor().redact({"has_tokens": True})
     assert out["has_tokens"] == REDACTED
+
+
+def test_an_absent_token_count_is_not_rendered_as_a_secret():
+    """
+    A null count coming back as «redacted» reads as a hidden secret rather than
+    as no data — the confusion the no-fake-data rule exists to prevent. Found
+    in real stored rows, where `generating_tokens: null` had been redacted.
+    """
+    out = default_redactor().redact({"generating_tokens": None,
+                                     "reasoning_tokens": None})
+    assert out == {"generating_tokens": None, "reasoning_tokens": None}
+
+
+def test_a_null_secret_is_still_redacted():
+    """The exemption is for counts, not for every null."""
+    assert default_redactor().redact({"api_key": None})["api_key"] == REDACTED

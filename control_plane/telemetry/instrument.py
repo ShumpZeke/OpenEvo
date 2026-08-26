@@ -275,6 +275,26 @@ def _attribution_of(program: Any) -> Optional[Dict[str, Any]]:
     return rec
 
 
+def _provenance_flags(program: Any) -> Dict[str, Any]:
+    """
+    How this candidate came to exist, as flags the projections can filter on.
+
+    `migrant` is upstream's own marker for a copy made by `_migrate_programs`;
+    the rest are OE-MAX features. They are emitted whether true or false so a
+    consumer can tell "not a migrant" from "this run predates the flag".
+    """
+    md = getattr(program, "metadata", None) or {}
+    flags = {
+        "migrant": bool(md.get("migrant")),
+        "multi_offspring": bool(md.get("multi_offspring")),
+        "seed_forge": bool(md.get("seed_forge")),
+    }
+    for key in ("forge_origin", "forge_detail", "island_policy"):
+        if md.get(key):
+            flags[key] = md[key]
+    return flags
+
+
 def _attribution_fields(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The provenance block attached to every candidate event."""
     rec = rec or {}
@@ -285,6 +305,9 @@ def _attribution_fields(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "generating_latency_ms": rec.get("latency_ms"),
         "generating_tokens": rec.get("tokens"),
         "generating_operator": rec.get("operator"),
+        # Which island policy asked for this mutation. Without it the policy
+        # layer is invisible in the stored data and cannot be evaluated.
+        "generating_island_policy": rec.get("island_policy"),
     }
 
 # Env keys used to propagate telemetry config into worker processes.
@@ -718,12 +741,14 @@ class EngineInstrumentation:
                 "code_hash": _hash(code),
                 "code_length": len(code) if code else None,
                 "candidate_type": "code",
-                # An extra offspring from a multi-alternative response. Recorded
-                # because the whole point of that feature is the ratio of
-                # *useful* candidates to requests, and a sibling that is
-                # indistinguishable from a primary child cannot be counted.
-                "multi_offspring": bool(
-                    (getattr(program, "metadata", None) or {}).get("multi_offspring")),
+                # Provenance flags, copied from the program rather than
+                # inferred. Every one of these is read back by an analysis
+                # module, and a flag that lives only on the in-memory Program
+                # is a filter that silently never matches — `throughput` was
+                # excluding migrants by a key the projection never wrote, and
+                # `outcome` was including them for the same reason. Found by
+                # running every feature at once and looking at the rows.
+                **_provenance_flags(program),
                 # Generation provenance — the link upstream does not provide.
                 **_attribution_fields(gen_req),
             },
