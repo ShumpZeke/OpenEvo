@@ -353,3 +353,163 @@ async def test_chain_behaviour_is_unchanged_by_the_refactor():
     r = await router.chat(None, [{"role": "user", "content": "hi"}])
     assert r.ok and r.provider == "fallback"
     assert len(primary.calls) == 3 and len(fallback.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Demotion of a route that mostly fails
+#
+# Measured live: Ox Alpha at 8% success over 12 attempts, with the circuit
+# breaker sitting closed on one recent failure. The reason is precise and worth
+# knowing: the breaker trips on N failures inside a rolling 60-second window,
+# and Ox Alpha's requests take ~300 seconds — so each failure ages out of the
+# window before the next one arrives, and the breaker can never accumulate.
+#
+# A breaker whose window is shorter than the request latency is inert. The
+# demotion below is latency-independent because its window counts attempts, not
+# seconds.
+# ---------------------------------------------------------------------------
+
+def _hammer(router, provider, model, outcomes):
+    from oe_max.providers.base import ChatResult
+
+    for ok in outcomes:
+        router.health.record(ChatResult(
+            Outcome.OK if ok else Outcome.SERVER_ERROR, provider, model, 10.0,
+            status_code=200 if ok else 500))
+
+
+def test_failures_spaced_wider_than_the_window_never_trip_the_breaker():
+    """
+    The live cause, reproduced directly. This is not a defect in the breaker —
+    it is what a *rolling time window* means — but it makes the breaker useless
+    for exactly the slowest routes, where a wasted request costs the most.
+    """
+    from oe_max.health import CircuitBreaker
+
+    breaker = CircuitBreaker(failure_threshold=5, window_seconds=60.0)
+    now = 1_000_000.0
+    for i in range(20):
+        breaker.record_failure(now=now + i * 300.0)     # 300s apart, like Ox Alpha
+    assert breaker.state(now + 20 * 300.0).value == "closed"
+    assert breaker.trips == 0
+
+
+def test_the_same_failures_close_together_do_trip_it():
+    """The breaker is not broken; it is measuring something else."""
+    from oe_max.health import CircuitBreaker
+
+    breaker = CircuitBreaker(failure_threshold=5, window_seconds=60.0)
+    now = 1_000_000.0
+    for i in range(5):
+        breaker.record_failure(now=now + i)
+    assert breaker.trips == 1
+
+
+def test_a_mostly_failing_route_is_demoted_out_of_the_chain():
+    # A high breaker threshold so the demotion is unambiguously what excludes
+    # the route, not the breaker firing first.
+    router, primary, fallback = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False] * 11 + [True])   # 8%, like the real one
+
+    routes, reasons = router.candidates()
+    assert [str(r) for r in routes] == ["fallback/bk-1"]
+    assert "degraded" in reasons["primary/ox_alpha"]
+    assert "8%" in reasons["primary/ox_alpha"]
+
+
+def test_a_healthy_route_is_untouched():
+    router, _, _ = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [True] * 12)
+    assert router.health.degraded("primary", "ox-1") is None
+    assert str(router.candidates()[0][0]) == "primary/ox-1"
+
+
+def test_a_route_exactly_at_the_threshold_is_not_demoted():
+    """
+    The comparison is `>=`, so the stated rate is acceptable rather than
+    borderline. Pinned because an off-by-one here silently changes which routes
+    a run is allowed to use.
+    """
+    from oe_max.health import DEGRADED_SUCCESS_RATE
+
+    router, _, _ = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [True] * 3 + [False] * 9)   # exactly 25%
+    assert abs(router.health.success_rate("primary", "ox-1")
+               - DEGRADED_SUCCESS_RATE) < 1e-9
+    assert router.health.degraded("primary", "ox-1") is None
+
+
+def test_a_route_with_little_history_gets_the_benefit_of_the_doubt():
+    """
+    A fresh fallback must be able to win a route and prove itself rather than
+    being locked out by two unlucky attempts.
+    """
+    router, _, _ = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False, False, False])
+    assert router.health.degraded("primary", "ox-1") is None
+
+
+def test_recovery_needs_no_cooldown():
+    """
+    The rolling window is the memory: the route comes back as soon as its
+    recent attempts recover, without a timer having to expire.
+    """
+    router, _, _ = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False] * 12)
+    assert router.health.degraded("primary", "ox-1")
+
+    _hammer(router, "primary", "ox-1", [True] * 40)
+    assert router.health.degraded("primary", "ox-1") is None
+
+
+def test_when_everything_is_degraded_the_least_bad_still_serves():
+    """
+    A run that dies with "no usable route" is worse than one served slowly by a
+    flaky provider. The reason says which choice was made.
+    """
+    router, _, _ = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False] * 9 + [True] * 3)     # 25%… no:
+    _hammer(router, "primary", "ox-1", [False] * 3)                  # → 20%
+    _hammer(router, "fallback", "bk-1", [False] * 13 + [True] * 2)   # 13%
+
+    routes, reasons = router.candidates()
+    assert len(routes) == 1
+    assert str(routes[0]) == "primary/ox-1", "the least-bad route should serve"
+    assert "serving anyway" in reasons["primary/ox_alpha"]
+    assert "degraded" in reasons["fallback/backup"]
+
+
+def test_a_tripped_breaker_is_reported_as_an_outage_not_as_degradation():
+    """
+    Both mechanisms exclude, and the reason has to say which — they call for
+    different responses. An outage waits; a degraded route needs replacing.
+    """
+    router, _, _ = build()
+    _hammer(router, "primary", "ox-1", [False] * 12)
+    _, reasons = router.candidates()
+    assert "circuit open" in reasons["primary/ox_alpha"]
+
+
+@pytest.mark.asyncio
+async def test_a_degraded_route_is_skipped_in_favour_of_a_healthy_one():
+    router, primary, fallback = build(failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False] * 11 + [True])
+
+    r = await router.chat(None, [{"role": "user", "content": "hi"}])
+    assert r.ok and r.provider == "fallback"
+    assert len(primary.calls) == 0, "the degraded route was tried anyway"
+
+
+@pytest.mark.asyncio
+async def test_pinning_still_reaches_a_degraded_route():
+    """
+    Pinning means "this route" — including when it is unwell. Demotion is a
+    chain-selection policy, and silently redirecting a pinned request would
+    make an A/B measure something other than what it named.
+    """
+    router, primary, _ = build(primary_script=[Outcome.OK], failure_threshold=20)
+    _hammer(router, "primary", "ox-1", [False] * 12)
+
+    r = await router.chat_pinned(None, _route("primary", "ox_alpha", "ox-1"),
+                                 [{"role": "user", "content": "hi"}])
+    assert r.ok and r.provider == "primary"

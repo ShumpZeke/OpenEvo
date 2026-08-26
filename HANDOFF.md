@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 282 control plane + 227 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 282 control plane + 238 OE-MAX.
 
 ---
 
@@ -194,6 +194,29 @@ It now goes through `Router.chat_pinned`, which applies the same policy without
 failover. This matters beyond correctness: every arm of a route A/B is pinned,
 so the old behaviour would have made the experiment measure the policy
 difference instead of the models.
+
+### 3.10 A circuit breaker is inert when its window is shorter than the latency
+
+Ox Alpha was measured at **8% success over 12 attempts** with the breaker
+sitting closed on one recent failure, and the reason is not what it looks like.
+The breaker trips on N failures inside a rolling **60-second** window. Ox
+Alpha's requests take ~300 seconds, so every failure ages out before the next
+arrives and the count never reaches the threshold.
+
+So the breaker cannot protect the slowest routes — exactly the ones where a
+wasted request costs most. `RouteHealth.degraded()` covers that gap with a
+window that counts *attempts* rather than seconds: below 25% success over at
+least 10 attempts, a route is demoted out of the chain, and re-admitted as soon
+as its recent attempts recover (the window is the memory, so no cooldown).
+
+Two properties worth preserving if you touch it:
+
+- **If every route is degraded, the least bad still serves.** A run that dies
+  with "no usable route" is worse than one served slowly by a flaky provider.
+  The route table says `serving anyway` when that happens.
+- **Pinning still reaches a degraded route.** Demotion is a chain-selection
+  policy; silently redirecting a pinned request would make an A/B experiment
+  measure something other than what it named.
 
 ---
 
@@ -522,7 +545,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 282 control plane + 227 OE-MAX = 946 passing
+tests     437 upstream + 282 control plane + 238 OE-MAX = 957 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

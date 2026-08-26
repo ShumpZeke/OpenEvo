@@ -191,14 +191,37 @@ class CircuitBreaker:
         }
 
 
+# A route succeeding less than this, over at least this many attempts, is
+# demoted out of the chain.
+#
+# Measured, not invented: Ox Alpha was observed at 8% success over 12 attempts
+# while the circuit breaker sat closed with one recent failure.
+#
+# The reason is precise and worth knowing. The breaker trips on N failures
+# inside a rolling **60-second** window, and Ox Alpha's requests take ~300
+# seconds — so every failure ages out of the window before the next one
+# arrives, and the count can never reach the threshold. A breaker whose window
+# is shorter than the request latency is inert, and it is inert for exactly the
+# slowest routes, where a wasted request costs the most.
+#
+# This check is latency-independent because its window counts *attempts*, not
+# seconds.
+DEGRADED_SUCCESS_RATE = 0.25
+DEGRADED_MIN_ATTEMPTS = 10
+
+
 class RouteHealth:
     """Health + breaker for every provider/model route the broker has used."""
 
-    def __init__(self, failure_threshold: int = 5, cooldown_seconds: float = 45.0) -> None:
+    def __init__(self, failure_threshold: int = 5, cooldown_seconds: float = 45.0,
+                 degraded_rate: float = DEGRADED_SUCCESS_RATE,
+                 degraded_min_attempts: int = DEGRADED_MIN_ATTEMPTS) -> None:
         self._windows: Dict[str, HealthWindow] = {}
         self._breakers: Dict[str, CircuitBreaker] = {}
         self._failure_threshold = failure_threshold
         self._cooldown = cooldown_seconds
+        self._degraded_rate = degraded_rate
+        self._degraded_min_attempts = degraded_min_attempts
 
     @staticmethod
     def key(provider: str, model: str) -> str:
@@ -216,6 +239,35 @@ class RouteHealth:
 
     def allow(self, provider: str, model: str) -> bool:
         return self.breaker(provider, model).allow()
+
+    def degraded(self, provider: str, model: str) -> Optional[str]:
+        """
+        Why this route should be demoted, or None.
+
+        Distinct from the breaker on purpose. The breaker is for an outage: N
+        failures inside a time window, then a cooldown, then a half-open probe.
+        This is for a route that merely mostly fails — where the failures are
+        spread too thinly in time for the breaker to see them, or an occasional
+        success clears its window, while nine of every ten requests are wasted.
+
+        No cooldown, because the rolling window *is* the memory: the route is
+        re-admitted the moment its recent attempts recover, without needing a
+        timer to expire.
+        """
+        w = self.window(provider, model)
+        if len(w.outcomes) < self._degraded_min_attempts:
+            # An optimistic default is deliberate elsewhere too: a fresh route
+            # deserves the chance to prove itself rather than being locked out
+            # for having no history.
+            return None
+        rate = w.success_rate
+        if rate >= self._degraded_rate:
+            return None
+        return (f"degraded: succeeding {rate:.0%} of the last "
+                f"{len(w.outcomes)} attempts (needs {self._degraded_rate:.0%})")
+
+    def success_rate(self, provider: str, model: str) -> float:
+        return self.window(provider, model).success_rate
 
     def record(self, result: Any) -> None:
         """Fold one ChatResult into health and breaker state."""

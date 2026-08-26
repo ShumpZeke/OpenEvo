@@ -82,6 +82,7 @@ class Router:
     def candidates(self, require_tools: bool = False) -> Tuple[List[Route], Dict[str, str]]:
         routes: List[Route] = []
         reasons: Dict[str, str] = {}
+        degraded: List[Tuple[Route, str, str]] = []
 
         for provider_name, model_key in self.chain:
             p = self.registry.provider(provider_name)
@@ -111,7 +112,28 @@ class Router:
                     f"circuit {br['state']}, {br['cooldown_remaining_s']}s remaining"
                 )
                 continue
-            routes.append(Route(p.name, model_key, spec.id))
+            route = Route(p.name, model_key, spec.id)
+            why = self.health.degraded(p.name, spec.id)
+            if why:
+                # Held back rather than dropped: if every route is degraded,
+                # the least-bad one still has to serve. A run that dies with
+                # "no usable route" is worse than one served slowly by a
+                # flaky provider.
+                degraded.append((route, label, why))
+                continue
+            routes.append(route)
+
+        if not routes and degraded:
+            degraded.sort(key=lambda item: self.health.success_rate(
+                item[0].provider, item[0].model_id), reverse=True)
+            best, label, why = degraded[0]
+            routes.append(best)
+            reasons[label] = f"{why} — serving anyway: every route is degraded"
+            for _, other_label, other_why in degraded[1:]:
+                reasons[other_label] = other_why
+        else:
+            for _, label, why in degraded:
+                reasons[label] = why
 
         return routes, reasons
 
