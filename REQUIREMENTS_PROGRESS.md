@@ -91,9 +91,9 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 | G0 parse/syntax/imports/interface | DONE | `evaluation/gates.py::g0_validity` |
 | G1 exact / normalized / AST / semantic dedup | DONE | `evaluation/gates.py::DedupIndex` (4 strengths) |
 | E0 smoke · E1 cheap subset · E2 full evaluator | PARTIAL | upstream cascade used (`cascade_evaluation`) |
-| V1 property / metamorphic / differential / randomized / hidden | DEFERRED | — |
+| V1 property / metamorphic / differential / randomized / hidden | DONE | `oe_max/verification/` | Property, metamorphic and randomized checks plus generic ones needing no task knowledge (loads, deterministic under seed, finite score). Verified by feeding it four programs that *cheat* — fabricated value, hard-coded answer, NaN, non-deterministic score — all caught. `examples/function_minimization/verification.py` is a working spec |
 | V2 symbolic / SMT / independent critic | DEFERRED | — |
-| Champion re-verification protocol | DEFERRED | — |
+| Champion re-verification protocol | DONE | `control_plane/telemetry/verification_hook.py` | Every new champion is verified before the run keeps optimising around it; verified once per candidate, so a champion re-confirmed is not re-run |
 
 25 gate tests. Weak candidates die at G0/G1 for microseconds — against a
 measured ~130 s per generation, that is the cascade's whole economic argument.
@@ -104,7 +104,7 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 |---|---|---|
 | Keys never reach candidates | DONE | Broker holds them; the engine gets only a local token |
 | Isolated candidate execution | PARTIAL | `control_plane/sandbox/opencode.py` enforces the isolation boundary; container executors not built |
-| Suspicious-jump verification | DEFERRED | Not built |
+| Suspicious-jump verification | DONE | `verification/suspicion.py` | Modified z-score on the run's own improvement history, median/MAD rather than mean/σ so one outlier cannot desensitise the detector against the next. Emits `candidate.suspicious` and triggers V1 |
 | Protect evaluator/hidden tests | DEFERRED | Needs the sandbox executors |
 
 ## §10–11 Archives and data layer
@@ -117,7 +117,7 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 | Pareto archive | DONE | `archives.ParetoArchive` — non-dominated set; crowding-aware trimming keeps the front's extremes |
 | Novelty archive | DONE | `archives.NoveltyArchive` — k-NN behaviour distance |
 | Failure archive | DONE | `archives.FailureArchive` — indexed by reason/operator, with a cheap `already_failed` pre-check and capped, de-duplicated prompt context |
-| Counterexample DB | DEFERRED | Needs the V1 verification stage |
+| Counterexample DB | DONE | `verification/counterexamples.py` | Every verification failure is stored, deduplicated by check-plus-input, evicted by how many candidates it has caught. `prompt_context()` is what COUNTEREXAMPLE_REPAIR and ADVERSARIAL_REPAIR need to be offered at all |
 | Operator & provider statistics | DONE | `bandit.snapshot`, `router.stats_by_route` |
 | PostgreSQL / pgvector / Parquet / DuckDB | DEFERRED | SQLite + append-only NDJSON event log used instead; adequate at current scale, and the event log is the migration path |
 

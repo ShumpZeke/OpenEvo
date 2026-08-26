@@ -483,3 +483,62 @@ Beyond the bug, this is what makes a route A/B trustworthy. Every arm of the
 experiment is pinned by definition, so the old behaviour would have compared
 routes under a policy the production chain does not use — measuring the policy
 difference and reporting it as a difference between models.
+
+---
+
+## D30 — Verification reports, it does not enforce
+
+**Decision.** A candidate that fails V1 verification stays in the population.
+The failure is emitted as an event with its counterexample.
+
+**Why.** Everything in `control_plane/` is instrumentation, installed by
+wrapping upstream methods at runtime (D1). Instrumentation that silently
+deleted the engine's work would make this fork behave differently from upstream
+while the patch surface stayed empty — a divergence no test of ours would
+catch, because our tests check that events are emitted, not that the population
+is the same as upstream's.
+
+**Cost, stated honestly.** A cheating candidate can still become and remain the
+champion. The operator sees `candidate.verification.failed` and decides.
+Enforcement is a real and reasonable next step; it is a different decision, and
+it should be made deliberately rather than arrived at.
+
+---
+
+## D31 — Verify champions and outliers, not everything
+
+**Decision.** V1 runs on a new champion and on an improvement far beyond the
+run's own history. Not on every candidate.
+
+**Evidence.** Verification of the shipped example costs ~1 s including 15
+randomized trials. At 12 iterations that is negligible; at the throughput
+multi-offspring is designed to buy, it is the throughput. Both extremes are
+wrong: verifying nothing means the first candidate that games the metric
+becomes the champion and every later generation is built on it.
+
+**Why those two.** A champion is what the run now optimises around, so its
+being wrong is the most expensive thing that can happen. And a score that
+leaps past the run's own distribution of improvements is the exact shape of a
+candidate that stopped solving the problem and started reporting a number.
+
+---
+
+## D32 — Median and MAD, not mean and standard deviation
+
+**Decision.** `SuspicionDetector` uses a modified z-score built from the median
+and the median absolute deviation.
+
+**Why.** The thing being detected is an outlier. An outlier drags the mean and
+inflates the standard deviation, so a conventional z-score test is desensitised
+by the very event it exists to catch — the first cheat is flagged, and it makes
+the second one look ordinary. The median and MAD are unmoved by a single
+extreme value.
+
+A floor on the scale is equally load-bearing and less obvious: late in a run
+every improvement is ~0, the MAD collapses toward zero, and any nonzero jump
+scores as infinitely unusual. Without the floor the detector flags every
+candidate on a plateau, which is where a run spends most of its time.
+
+Flagged jumps are still recorded into the history. Excluding them would make a
+genuine breakthrough permanently suspicious — and every real improvement after
+it, since the distribution would never learn the new scale.

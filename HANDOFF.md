@@ -303,6 +303,43 @@ What is *not* measured: whether a real model's alternatives are actually
 different. The local provider has a fixed pool of five mutations. The duplicate
 rate is the number that decides this feature — see NEXT_TASKS T2.
 
+## 4d. Verification (opt-in)
+
+`OE_MAX_VERIFY=1` checks whether an improvement is *real*. The evaluator
+answers "what did this score?", which is not "is this score honest", and
+evolutionary search is very good at the gap.
+
+```bash
+OE_MAX_VERIFY=1 EVOLUTION_EVALUATOR_PATH=examples/function_minimization/evaluator.py \
+  OE_MAX_VERIFY_ENTRY_POINT=search_algorithm \
+  ./scripts/run-evolution.sh --iterations 12
+```
+
+Verified against four programs that cheat, all caught: a fabricated value, a
+hard-coded answer, NaN, and a score that is a lucky draw.
+
+Four things worth knowing:
+
+- **It runs on two kinds of candidate**, not all of them: a new champion (the
+  run now optimises around it) and a jump far beyond this run's own history of
+  improvements. Verifying everything costs the throughput the rest of the
+  system exists to buy.
+- **A failure reports, it does not delete.** Instrumentation that removed the
+  engine's work would make this fork behave differently from upstream,
+  invisibly. Enforcement is a separate, explicit decision nobody has made yet.
+- **Hard-coding the answer passes every single-run property.** Only a
+  metamorphic relation — narrow the bounds, the answer must come from inside
+  them — catches it. If you add a task spec, add a metamorphic check or you are
+  only testing the easy cheats.
+- **A check that raises does not fail the candidate.** A broken check is our
+  bug; it is reported as an error instead.
+
+Task specs live in `verification.py` beside the evaluator; functions named
+`property_*`, `metamorphic_*`, `randomized_*` and `hidden_*` are discovered
+automatically. A task with no spec still gets the generic checks and the report
+says `spec_declared: false` — "verified" for a task that declared nothing would
+be a safety claim nobody made.
+
 ---
 
 ## 5. What to do next, in priority order
