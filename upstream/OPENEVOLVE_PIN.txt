@@ -1,0 +1,11 @@
+# Pinned upstream OpenEvolve commit.
+# Verified 2026-08-26: github.com/algorithmicsuperintelligence/openevolve and
+# github.com/codelion/openevolve resolve to the IDENTICAL commit — the former
+# is a rename/redirect of the latter, not a different project.
+repo    = https://github.com/algorithmicsuperintelligence/openevolve
+mirror  = https://github.com/codelion/openevolve
+commit  = 411fb59c886c18704caaffb611e17cf9e7d824d2
+version = 0.3.2
+license = Apache-2.0
+vendored_at = openevolve/   (byte-identical; see PATCH_SURFACE.md)
+baseline_tests = 437 passed, 17 slow deselected

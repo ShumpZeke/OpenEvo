@@ -10,11 +10,16 @@ PY="$PWD/.venv/bin/python"
 RC=0
 
 echo "=== upstream OpenEvolve compatibility suite ==="
-"$PY" -m pytest tests/ -q -m "not slow" --ignore=tests/evolution || RC=1
+"$PY" -m pytest tests/ -q -m "not slow" \
+  --ignore=tests/evolution --ignore=tests/oe_max || RC=1
 
 echo
 echo "=== control plane ==="
 "$PY" -m pytest tests/evolution -q || RC=1
+
+echo
+echo "=== OE-MAX (broker, limiter, gates, search) ==="
+"$PY" -m pytest tests/oe_max -q || RC=1
 
 echo
 if [ -d web/node_modules ]; then

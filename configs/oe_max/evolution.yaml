@@ -1,0 +1,55 @@
+# OpenEvolve pointed at the OE-MAX broker.
+#
+# The engine speaks plain OpenAI protocol to 127.0.0.1:8787 and knows nothing
+# about which provider serves a request. Routing, rate limiting, failover and
+# retry all happen behind this base_url — which is why upstream needs no changes
+# and why swapping a stealth-preview model is a config edit here, not a rewrite.
+
+max_iterations: 24
+checkpoint_interval: 6
+random_seed: 42
+
+llm:
+  # `oe-max-primary` is the broker alias. It resolves through the route chain:
+  # Ox Alpha (Zen) → Ox Alpha (OpenRouter) → verified free Zen fallbacks → NIM.
+  primary_model: "oe-max-primary"
+  primary_model_weight: 1.0
+  api_base: "http://127.0.0.1:8787/v1"
+  # Local broker token, NOT a provider credential. Upstream keys never leave
+  # the broker process.
+  api_key: "oe-max-local"
+  temperature: 0.8
+  # Measured, not guessed: Ox Alpha is a reasoning model and was observed
+  # spending 7,986-7,997 of an 8,000-token budget on hidden reasoning, leaving
+  # nothing for the visible diff. Five of eight iterations produced "No valid
+  # diffs found" as a result — ~130-second requests yielding nothing.
+  # 16,000 leaves ~8,000 for visible output after reasoning. A much
+  # larger budget mainly buys latency: OpenEvolve's own client timeout
+  # then fires before the response lands, which was observed at 32,000. The broker also
+  # detects finish_reason=length and escalates the budget on retry, so this is
+  # a sensible default rather than a load-bearing constant.
+  max_tokens: 16000
+  timeout: 900
+
+prompt:
+  system_message: |
+    You are an expert algorithm designer improving a function-minimization
+    routine. Find the global minimum of
+    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20
+    Escape local minima. Return a SEARCH/REPLACE diff.
+
+database:
+  population_size: 60
+  archive_size: 25
+  num_islands: 4
+  migration_interval: 6
+  migration_rate: 0.1
+  feature_dimensions: ["complexity", "diversity"]
+  feature_bins: 8
+
+evaluator:
+  timeout: 90
+  parallel_evaluations: 2
+
+diff_based_evolution: true
+max_code_length: 24000

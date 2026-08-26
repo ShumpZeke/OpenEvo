@@ -24,6 +24,7 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "pydantic>=2.0",
     "psutil>=5.9",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +43,9 @@ openevolve-run = "openevolve.cli:main"
 # Control plane entrypoints.
 evolution-server = "control_plane.api.cli:main"
 evolution-run = "control_plane.runner.entrypoint:main"
+# OE-MAX: provider broker and dashboard.
+oe-max-broker = "oe_max.broker.cli:main"
+oe-max-dashboard = "oe_max.dashboard:main"
 
 [tool.setuptools]
 packages = [
@@ -49,6 +53,8 @@ packages = [
     "control_plane", "control_plane.telemetry", "control_plane.storage",
     "control_plane.api", "control_plane.providers", "control_plane.sandbox",
     "control_plane.runner",
+    "oe_max", "oe_max.providers", "oe_max.broker", "oe_max.evaluation",
+    "oe_max.search",
 ]
 
 [tool.setuptools.dynamic]

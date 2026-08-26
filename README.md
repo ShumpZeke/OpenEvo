@@ -11,6 +11,18 @@ Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
 
 ---
 
+## Two layers
+
+**OE-MAX** — a local OpenAI-compatible **provider broker** on `127.0.0.1:8787`.
+OpenEvolve points at it and knows nothing about providers: routing, the NIM rate
+contract, failover, retry and credential ownership all live behind that one
+base URL. Ox Alpha (OpenCode Zen) is the primary route.
+
+**Control plane** — telemetry, storage, query/control APIs and a 19-view browser
+Control Center over live evolution.
+
+Both sit *around* upstream. The engine is byte-identical.
+
 ## What it adds
 
 - **Control Center** — 19 views over live evolution: lineage graph, MAP-Elites
@@ -31,9 +43,26 @@ Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
 ## Quick start
 
 ```bash
-./bootstrap.sh          # environment, deps, storage, UI build, doctor checks
-./run.sh                # Control Center → http://127.0.0.1:8000
+./bootstrap.sh                    # environment, deps, storage, UI build, checks
 ```
+
+Then, in two terminals:
+
+```bash
+./scripts/start-broker.sh         # OE-MAX broker → 127.0.0.1:8787
+./scripts/run-evolution.sh --task function_minimization --iterations 20
+```
+
+Watch it live:
+
+```bash
+./scripts/dashboard.sh            # providers, rate windows, routes, evolution
+./run.sh                          # browser Control Center → 127.0.0.1:8000
+```
+
+**No API key is required to try it.** OpenCode Zen was observed serving
+`x-preview-f-free` (Ox Alpha) without one — `./scripts/verify-providers.sh`
+shows what is actually reachable right now.
 
 Windows: `.\bootstrap.ps1` then `.\run.ps1`.
 
@@ -77,7 +106,16 @@ not reimplemented — it keeps working whether or not the Control Center is up.
 
 ```
 openevolve/         upstream engine — byte-identical, never edited
-scripts/            upstream visualizer + a local test provider
+oe_max/
+  limiter.py        global rate limiter (hard rolling-window invariant)
+  providers/        adapter, registry, live discovery + smoke tests
+  broker/           OpenAI-compatible broker OpenEvolve points at
+  router.py         chain selection, failover, retry, truncation escalation
+  health.py         circuit breaker and rolling health
+  evaluation/       G0 validity + G1 four-strength deduplication
+  search/           mutation taxonomy + discounted Thompson sampling
+  dashboard.py      terminal dashboard
+scripts/            operator scripts (.sh and .ps1) + upstream visualizer
 control_plane/
   telemetry/        event model, redaction, bus, engine instrumentation
   storage/          SQLite event log + derived projections
@@ -99,6 +137,7 @@ tests/              upstream suite (untouched) + tests/evolution
 |---|---|
 | Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
 | Control plane | **81 passed** |
+| OE-MAX (broker, limiter, gates, search) | **83 passed** |
 | Web typecheck | clean |
 
 The upstream suite runs first: a change that breaks it is a regression in the
@@ -118,20 +157,29 @@ fork, not merely a control-plane bug.
 | [UPSTREAM_SYNC_STRATEGY.md](UPSTREAM_SYNC_STRATEGY.md) | merging future releases |
 | [FEATURE_COVERAGE_MATRIX.md](FEATURE_COVERAGE_MATRIX.md) | requirement-by-requirement status |
 | [TEST_STRATEGY.md](TEST_STRATEGY.md) | what is tested and what is not |
+| [REQUIREMENTS_PROGRESS.md](REQUIREMENTS_PROGRESS.md) | OE-MAX spec coverage, gaps and blockers |
+| [BUILD_LOG.md](BUILD_LOG.md) | what was built and what the measurements changed |
+| [BENCHMARKS.md](BENCHMARKS.md) | live measurements from the real primary route |
 
-## Two things worth knowing up front
+## Three things worth knowing up front
 
 **Ox Alpha Free is free for a limited time, not permanently.** OpenCode's own
-documentation says so, so Evolution treats free status as a runtime-probed
-value and never renders it as unlimited.
+documentation says so, so free status is a runtime-probed value and is never
+rendered as unlimited.
 
-**Ox Alpha currently fails on any request carrying tools.** Verified against
-[anomalyco/opencode#44300](https://github.com/anomalyco/opencode/issues/44300).
-Plain completions work, so it remains the preferred route for OpenEvolve's
-mutation calls; agent roles that need function calling fall back automatically,
-and the Models page shows exactly why. The provider doctor re-probes this, so
-the moment it is fixed upstream the router can promote it back with no code
-change.
+**Ox Alpha is a reasoning model, and that changes the settings that work.** It
+was measured spending 7,986–7,997 of an 8,000-token budget on *hidden*
+reasoning, truncating the visible diff — 5 of 8 evolution iterations produced
+nothing from ~130-second requests. The broker now detects `finish_reason=length`
+and retries with a doubled budget, and `max_tokens`, the provider timeout and
+the client timeout are tuned together. See [BENCHMARKS.md](BENCHMARKS.md).
+
+**A listed model is not a working model.** Zen lists `deepseek-v4-flash-free`
+and returns "Model is unavailable" for it. Discovery is therefore two-stage:
+list, then smoke-test. Capabilities are probed too — which is why re-admitting
+Ox Alpha to tool-using roles after
+[anomalyco/opencode#44300](https://github.com/anomalyco/opencode/issues/44300)
+was fixed upstream needed no code change at all.
 
 ## Licence
 

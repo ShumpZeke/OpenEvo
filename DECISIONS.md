@@ -227,3 +227,159 @@ backfill every evaluated candidate displayed as `pending` forever — visible in
 the first live UI verification, where all 28 candidates read PENDING despite 23
 successful evaluations. Pinned by
 `test_eval_status_backfills_when_evaluation_precedes_candidate`.
+
+---
+
+# OpenEvolve MAX — additional decisions
+
+## D16 — A broker in front of OpenEvolve, not provider logic inside it
+
+**Decision.** OpenEvolve is configured with `api_base:
+http://127.0.0.1:8787/v1` and a single model alias. All provider identity,
+routing, rate limiting, failover and retry live in the OE-MAX broker.
+
+**Why.** Four things fall out of it that are otherwise hard:
+
+- Upstream stays byte-identical. It already speaks the OpenAI protocol, so this
+  needs zero engine changes and the patch surface stays empty.
+- Credentials exist in exactly one process. Candidate code and evaluators run
+  with no keys in their environment, which is what makes the
+  anti-reward-hacking boundary real rather than declared.
+- The rate contract is enforced at the single point every request crosses. A
+  limiter inside N worker processes is N limiters — and OpenEvolve evaluates in
+  a process pool.
+- Replacing a stealth-preview model becomes a config edit, which the spec
+  requires precisely because Ox Alpha may disappear.
+
+**Cost.** One more process to run, and one more hop of latency — negligible
+against a measured 130 s upstream call.
+
+---
+
+## D17 — Ox Alpha re-admitted to tool-using roles
+
+**Decision.** Reversed the earlier build's exclusion of `x-preview-f-free` from
+tool-requiring roles.
+
+**Evidence.** `anomalyco/opencode#44300` reported tools requests failing with
+"Upstream request failed: Endpoint is unavailable". Re-tested live on
+2026-08-26 through `httpx`: tools requests return **HTTP 200**. All five
+configured Zen models probe `tools=True`.
+
+**Why it required no code change.** Capability is probed and stored on
+`ModelSpec`, never hardcoded. The registry wrote the new truth and routing
+followed. This is the payoff for treating capability as measured data — the
+same mechanism will exclude it again automatically if the bug returns.
+
+---
+
+## D18 — httpx, chosen by evidence rather than preference
+
+**Decision.** The broker uses `httpx`.
+
+**Evidence.** Probing Zen with Python's `urllib` returned **HTTP 403
+`error code: 1010`** for every model — a Cloudflare fingerprint block. `curl`
+and `httpx` returned 200 against the same endpoint in the same minute.
+
+**Consequence beyond the broker.** The pre-existing
+`control_plane/providers/doctor.py` probes with `urllib`, so it would report a
+healthy Ox Alpha as unavailable. Recorded as a known defect in
+`REQUIREMENTS_PROGRESS.md` rather than silently fixed, because it belongs to the
+older subsystem and changing it is a separate, testable change.
+
+---
+
+## D19 — Truncation is a distinct outcome, and retries escalate the budget
+
+**Decision.** A 200 carrying `finish_reason=length` is classified `TRUNCATED`,
+not success. The router retries it with a **doubled** `max_tokens`, up to a
+ceiling, then moves to the next route.
+
+**Evidence.** Ox Alpha spent 7,986–7,997 of an 8,000-token budget on hidden
+reasoning. The visible diff was cut off, and **5 of 8 evolution iterations
+logged "No valid diffs found"** — roughly 60% of ~130-second requests produced
+nothing. After the fix: **0 failures**.
+
+**Why escalate rather than plain-retry.** An identical retry reproduces an
+identical truncation. The budget is the variable that has to change.
+
+**Why a ceiling.** Growing forever converts one wasted request into several
+larger ones, and on a rate-limited provider that is the worst possible failure
+mode.
+
+---
+
+## D20 — Token budget, provider timeout and client timeout are one setting
+
+**Decision.** Zen's provider timeout is 600 s, `max_tokens` is 16,000, and the
+engine's client timeout is 900 s — chosen together.
+
+**Evidence.** Fixing truncation by raising `max_tokens` to 16,000 pushed request
+duration past the broker's then-180 s timeout: **12 requests, 0 ok, 6 timeouts**.
+An earlier attempt at 32,000 tokens ran past OpenEvolve's own client timeout.
+Each individual value looked defensible; the combination did not.
+
+Recorded as a decision rather than a config tweak because it will recur with
+any reasoning model: raising one of the three alone converts a truncation
+failure into a timeout failure and looks like a regression.
+
+---
+
+## D21 — Only NIM gets a rate limiter
+
+**Decision.** NIM uses the full rolling-window `RateLimiter`; Zen and OpenRouter
+use `NullLimiter`.
+
+**Why.** The spec is explicit that 48 RPM is the NIM account's contract and must
+not be applied to Ox Alpha unless that provider independently requires it.
+Applying it everywhere would throttle a provider that has not asked to be
+throttled, and would make the NIM bound harder to reason about.
+
+`NullLimiter` is a null object rather than `Optional[RateLimiter]` so no call
+site has to special-case "no limit" — the shape where a real limiter eventually
+gets skipped by accident.
+
+---
+
+## D22 — The limiter carries an epsilon and a minimum wait
+
+**Decision.** Token comparison uses `>= 1.0 - 1e-9`, and any positive wait is
+floored at 1e-4 s.
+
+**Evidence.** Refilling the bucket by exactly the required amount lands on
+`0.9999999999`. A strict `>= 1.0` then computed a ~1e-12 wait, and `acquire()`
+span forever making invisible progress — the tests **hung** rather than failed,
+which is how it was found.
+
+Recorded because it is the kind of bug that looks like a deadlock and is
+actually arithmetic.
+
+---
+
+## D23 — SQLite and an append-only event log instead of PostgreSQL
+
+**Decision.** Deviates from the spec's PostgreSQL/pgvector/Parquet/DuckDB stack.
+
+**Why.** The existing control plane already stores full provenance and lineage
+in SQLite with an append-only NDJSON event log as the source of truth. At the
+current scale — tens of thousands of candidates — SQLite with WAL and proper
+indexes is not the bottleneck; a 130-second model call is. Adding a database
+server would satisfy the letter of the spec while making the system harder to
+run, which §20 explicitly warns against ("do not cargo-cult").
+
+**Migration path.** The event log is the source of truth and projections
+rebuild from it, so moving to PostgreSQL later is a new projector rather than a
+data migration. Recorded as a deviation in `REQUIREMENTS_PROGRESS.md`, not
+hidden.
+
+---
+
+## D24 — Ablation arms exist as code, not as removals
+
+**Decision.** `UniformRandom` and `EpsilonGreedy` ship alongside
+`DiscountedThompsonSampling` behind one `Selector` interface.
+
+**Why.** The spec requires ablations including "no operator bandit". If that
+ablation means deleting code, it is expensive to run and easy to get wrong.
+As a one-line substitution it is cheap enough to run every time, which is the
+difference between an ablation that is specified and one that actually happens.

@@ -1,0 +1,247 @@
+"""
+Provider health, retry policy and circuit breaking.
+
+Separated from the rate limiter on purpose. They answer different questions:
+
+  limiter  "may I start an attempt right now?"   — a contract with the provider
+  health   "is this route worth attempting?"     — an observation about it
+
+Conflating them produces a limiter that stops enforcing its bound when a
+provider looks unhealthy, which is exactly when retries spike and the bound
+matters most.
+"""
+
+from __future__ import annotations
+
+import random
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Deque, Dict, Optional
+
+from .providers.base import Outcome
+
+
+class CircuitState(str, Enum):
+    CLOSED = "closed"        # healthy, traffic flows
+    OPEN = "open"            # failing, traffic blocked
+    HALF_OPEN = "half_open"  # cooldown elapsed, allowing one probe
+
+
+@dataclass
+class RetryPolicy:
+    max_attempts: int = 4
+    base_delay_s: float = 1.0
+    max_delay_s: float = 30.0
+    jitter: bool = True
+    honor_retry_after: bool = True
+
+    def delay_for(self, attempt: int, retry_after: Optional[float] = None) -> float:
+        """Exponential backoff with jitter; provider guidance wins when given."""
+        if self.honor_retry_after and retry_after is not None:
+            base = max(retry_after, 0.0)
+        else:
+            base = min(self.base_delay_s * (2 ** max(0, attempt - 1)), self.max_delay_s)
+        if self.jitter:
+            # Full jitter: decorrelates retries so N workers that failed together
+            # do not all retry together and re-create the burst.
+            base = random.uniform(0.0, base) if base > 0 else 0.0
+        return min(base, self.max_delay_s)
+
+
+@dataclass
+class HealthWindow:
+    """Rolling health for one provider/model route."""
+
+    size: int = 50
+    outcomes: Deque[bool] = field(default_factory=lambda: deque(maxlen=50))
+    latencies: Deque[float] = field(default_factory=lambda: deque(maxlen=50))
+    consecutive_failures: int = 0
+    total_attempts: int = 0
+    total_failures: int = 0
+    total_rate_limited: int = 0
+    total_tokens: int = 0
+    last_error: Optional[str] = None
+    last_used: float = 0.0
+
+    def record(self, ok: bool, latency_ms: Optional[float] = None,
+               rate_limited: bool = False, tokens: int = 0,
+               error: Optional[str] = None) -> None:
+        self.outcomes.append(ok)
+        self.total_attempts += 1
+        self.last_used = time.time()
+        if latency_ms is not None:
+            self.latencies.append(latency_ms)
+        if rate_limited:
+            self.total_rate_limited += 1
+        if tokens:
+            self.total_tokens += tokens
+        if ok:
+            self.consecutive_failures = 0
+        else:
+            self.consecutive_failures += 1
+            self.total_failures += 1
+            self.last_error = error
+
+    @property
+    def success_rate(self) -> float:
+        # An unused route is optimistic, so a fresh fallback can win a route and
+        # prove itself instead of being locked out for having no history.
+        return sum(self.outcomes) / len(self.outcomes) if self.outcomes else 1.0
+
+    @property
+    def p50_latency_ms(self) -> Optional[float]:
+        if not self.latencies:
+            return None
+        s = sorted(self.latencies)
+        return s[len(s) // 2]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "success_rate": round(self.success_rate, 4),
+            "p50_latency_ms": self.p50_latency_ms,
+            "consecutive_failures": self.consecutive_failures,
+            "total_attempts": self.total_attempts,
+            "total_failures": self.total_failures,
+            "total_rate_limited": self.total_rate_limited,
+            "total_tokens": self.total_tokens,
+            "last_error": self.last_error,
+            "last_used": self.last_used or None,
+        }
+
+
+class CircuitBreaker:
+    """
+    Standard three-state breaker.
+
+    Half-open admits exactly one probe: if a provider is down, letting the full
+    load back in to "test" it just re-fails everything and restarts the cooldown.
+    """
+
+    def __init__(self, failure_threshold: int = 5, window_seconds: float = 60.0,
+                 cooldown_seconds: float = 45.0) -> None:
+        self.failure_threshold = failure_threshold
+        self.window_seconds = window_seconds
+        self.cooldown_seconds = cooldown_seconds
+        self._failures: Deque[float] = deque()
+        self._opened_at: Optional[float] = None
+        self._half_open_in_flight = False
+        self.trips = 0
+
+    def state(self, now: Optional[float] = None) -> CircuitState:
+        now = now if now is not None else time.time()
+        if self._opened_at is None:
+            return CircuitState.CLOSED
+        if now - self._opened_at >= self.cooldown_seconds:
+            return CircuitState.HALF_OPEN
+        return CircuitState.OPEN
+
+    def allow(self, now: Optional[float] = None) -> bool:
+        now = now if now is not None else time.time()
+        st = self.state(now)
+        if st is CircuitState.CLOSED:
+            return True
+        if st is CircuitState.OPEN:
+            return False
+        if self._half_open_in_flight:
+            return False
+        self._half_open_in_flight = True
+        return True
+
+    def record_success(self, now: Optional[float] = None) -> None:
+        self._failures.clear()
+        self._opened_at = None
+        self._half_open_in_flight = False
+
+    def record_failure(self, now: Optional[float] = None) -> None:
+        now = now if now is not None else time.time()
+        self._half_open_in_flight = False
+        if self.state(now) is CircuitState.HALF_OPEN:
+            # The probe failed: restart the full cooldown rather than
+            # immediately re-probing.
+            self._opened_at = now
+            return
+        self._failures.append(now)
+        cutoff = now - self.window_seconds
+        while self._failures and self._failures[0] <= cutoff:
+            self._failures.popleft()
+        if len(self._failures) >= self.failure_threshold:
+            self._opened_at = now
+            self.trips += 1
+            self._failures.clear()
+
+    def reset(self) -> None:
+        self._failures.clear()
+        self._opened_at = None
+        self._half_open_in_flight = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        now = time.time()
+        st = self.state(now)
+        return {
+            "state": st.value,
+            "recent_failures": len(self._failures),
+            "failure_threshold": self.failure_threshold,
+            "trips": self.trips,
+            "cooldown_remaining_s": (
+                round(max(0.0, self.cooldown_seconds - (now - self._opened_at)), 1)
+                if self._opened_at and st is CircuitState.OPEN else 0.0
+            ),
+        }
+
+
+class RouteHealth:
+    """Health + breaker for every provider/model route the broker has used."""
+
+    def __init__(self, failure_threshold: int = 5, cooldown_seconds: float = 45.0) -> None:
+        self._windows: Dict[str, HealthWindow] = {}
+        self._breakers: Dict[str, CircuitBreaker] = {}
+        self._failure_threshold = failure_threshold
+        self._cooldown = cooldown_seconds
+
+    @staticmethod
+    def key(provider: str, model: str) -> str:
+        return f"{provider}/{model}"
+
+    def window(self, provider: str, model: str) -> HealthWindow:
+        return self._windows.setdefault(self.key(provider, model), HealthWindow())
+
+    def breaker(self, provider: str, model: str) -> CircuitBreaker:
+        return self._breakers.setdefault(
+            self.key(provider, model),
+            CircuitBreaker(failure_threshold=self._failure_threshold,
+                           cooldown_seconds=self._cooldown),
+        )
+
+    def allow(self, provider: str, model: str) -> bool:
+        return self.breaker(provider, model).allow()
+
+    def record(self, result: Any) -> None:
+        """Fold one ChatResult into health and breaker state."""
+        w = self.window(result.provider, result.model)
+        b = self.breaker(result.provider, result.model)
+        ok = result.outcome is Outcome.OK
+        w.record(
+            ok, result.latency_ms,
+            rate_limited=result.outcome is Outcome.RATE_LIMITED,
+            tokens=int((result.usage or {}).get("total_tokens") or 0),
+            error=result.error,
+        )
+        if ok:
+            b.record_success()
+        elif result.outcome is not Outcome.BAD_REQUEST:
+            # A 400 is a statement about the request or a permanently
+            # unavailable model, not about provider health. Tripping the
+            # breaker on it would blame the provider for our own bad call.
+            b.record_failure()
+
+    def reset(self, provider: str, model: str) -> None:
+        self.breaker(provider, model).reset()
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            k: {"health": w.to_dict(),
+                "circuit": self._breakers[k].to_dict() if k in self._breakers else None}
+            for k, w in self._windows.items()
+        }

@@ -21,3 +21,6 @@ openevolve_output/
 .DS_Store
 *.log
 web/tsconfig.tsbuildinfo
+
+# OE-MAX run outputs
+runs/
