@@ -100,6 +100,54 @@ def measure(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
     }
 
 
+def provider_conditions(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
+    """
+    What the provider was doing *while this run ran*.
+
+    Arms of an ablation run one after another, so they are not sampling the
+    same provider. That is not hypothetical: within one session Ox Alpha went
+    40% → 11% success and nemotron went 77% → 48% with its p50 latency doubling.
+    An arm that ran through the bad half looks worse for reasons that have
+    nothing to do with the feature under test.
+
+    Computed per run from its own requests, so it is exact rather than a
+    snapshot of whatever the broker happens to report now.
+    """
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, "
+        "       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok, "
+        "       AVG(latency_ms) AS mean_latency "
+        "  FROM model_requests WHERE run_id = ? AND (role = ? OR role IS NULL)",
+        (run_id, MUTATION_ROLE)).fetchone()
+    n = int(row["n"] or 0)
+    return {
+        "requests": n,
+        "success_rate": round(int(row["ok"] or 0) / n, 4) if n else None,
+        "mean_latency_s": round((row["mean_latency"] or 0) / 1000.0, 1) if n else None,
+    }
+
+
+# How different two arms' provider success rates may be before the comparison
+# between them is worth more caveat than conclusion.
+DRIFT_TOLERANCE = 0.15
+
+
+def drift_warning(a: Dict[str, Any], b: Dict[str, Any],
+                  a_name: str, b_name: str) -> Optional[str]:
+    """A sentence when the two arms did not face the same provider."""
+    ra, rb = a.get("success_rate"), b.get("success_rate")
+    if ra is None or rb is None:
+        return None
+    if abs(ra - rb) < DRIFT_TOLERANCE:
+        return None
+    worse, better = ((b_name, a_name) if rb < ra else (a_name, b_name))
+    return (f"the provider was not the same for both arms: {a_name} saw "
+            f"{ra:.0%} success and {b_name} saw {rb:.0%}. {worse} ran through "
+            f"worse conditions than {better}, so some of this difference is "
+            f"the provider, not the feature.")
+
+
 # Below this many requests per arm the comparison is noise with a decimal point.
 MIN_REQUESTS_PER_ARM = 10
 
@@ -134,9 +182,32 @@ def compare(conn: sqlite3.Connection, baseline: List[str],
         }
 
     a, b = pooled(baseline), pooled(treatment)
-    return {"baseline": {"name": baseline_name, **a},
-            "treatment": {"name": treatment_name, **b},
-            "verdict": _verdict(a, b, baseline_name, treatment_name)}
+    conditions_a = _pooled_conditions(conn, baseline)
+    conditions_b = _pooled_conditions(conn, treatment)
+    drift = drift_warning(conditions_a, conditions_b, baseline_name, treatment_name)
+
+    verdict = _verdict(a, b, baseline_name, treatment_name)
+    if drift:
+        verdict = f"{verdict} CAVEAT: {drift}"
+    return {"baseline": {"name": baseline_name, **a, "conditions": conditions_a},
+            "treatment": {"name": treatment_name, **b, "conditions": conditions_b},
+            "drift": drift,
+            "verdict": verdict}
+
+
+def _pooled_conditions(conn: sqlite3.Connection,
+                       run_ids: List[str]) -> Dict[str, Any]:
+    parts = [provider_conditions(conn, r) for r in run_ids]
+    scored = [p for p in parts if p["success_rate"] is not None]
+    requests = sum(p["requests"] for p in parts)
+    if not scored:
+        return {"requests": requests, "success_rate": None, "mean_latency_s": None}
+    return {
+        "requests": requests,
+        "success_rate": round(sum(p["success_rate"] for p in scored) / len(scored), 4),
+        "mean_latency_s": round(
+            sum(p["mean_latency_s"] for p in scored) / len(scored), 1),
+    }
 
 
 def _verdict(a: Dict[str, Any], b: Dict[str, Any],

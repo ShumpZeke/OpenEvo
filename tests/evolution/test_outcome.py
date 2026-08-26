@@ -14,6 +14,7 @@ import pytest
 
 from control_plane.analysis.outcome import (
     MIN_REQUESTS_PER_ARM, area_under, best_so_far, compare, measure,
+    provider_conditions,
 )
 from control_plane.storage.store import Store
 from control_plane.telemetry.events import Component, Event, EventType
@@ -158,3 +159,72 @@ def test_an_arm_with_no_scored_candidates_says_so(store):
         _request(store, "b", f"b_r{i}")
 
     assert "nothing to compare" in compare(store.reader(), ["a"], ["b"])["verdict"]
+
+
+# ---------------------------------------------------------------------------
+# Provider drift between arms
+#
+# Ablation arms run one after another, so they do not sample the same provider.
+# Within one session Ox Alpha went 40% → 11% success and nemotron went 77% →
+# 48% with its p50 latency doubling. An arm that ran through the bad half looks
+# worse for reasons that have nothing to do with the feature under test.
+# ---------------------------------------------------------------------------
+
+def _arm_with_conditions(store, run_id, ok, failed, scores):
+    from control_plane.telemetry.events import Status
+
+    for i in range(ok):
+        _request(store, run_id, f"{run_id}_ok{i}")
+    for i in range(failed):
+        store.ingest([Event(
+            type=EventType.MODEL_REQUEST_FAILED, component=Component.LLM,
+            run_id=run_id, status=Status.FAILED, summary="failed",
+            metadata={"request_id": f"{run_id}_bad{i}", "provider": "p",
+                      "model": "m", "role": "mutation"})])
+    for i, s in enumerate(scores):
+        _candidate(store, run_id, f"{run_id}_c{i}", s)
+
+
+def test_conditions_are_computed_from_the_run_s_own_requests(store):
+    """
+    Exact rather than a snapshot of whatever the broker reports now — by the
+    time anyone reads the result, "now" is a different provider.
+    """
+    _arm_with_conditions(store, "a", ok=8, failed=2, scores=[0.5])
+    c = provider_conditions(store.reader(), "a")
+    assert c["requests"] == 10
+    assert c["success_rate"] == 0.8
+
+
+def test_a_comparison_across_drifted_conditions_is_caveated(store):
+    _arm_with_conditions(store, "a", ok=10, failed=1, scores=[0.5] * 10)
+    _arm_with_conditions(store, "b", ok=5, failed=6, scores=[0.9] * 10)
+
+    out = compare(store.reader(), ["a"], ["b"], treatment_name="arm")
+    assert out["drift"]
+    assert "not the same for both arms" in out["verdict"]
+    assert "the provider, not the feature" in out["verdict"]
+
+
+def test_arms_that_faced_the_same_provider_get_no_caveat(store):
+    _arm_with_conditions(store, "a", ok=10, failed=1, scores=[0.5] * 10)
+    _arm_with_conditions(store, "b", ok=10, failed=1, scores=[0.9] * 10)
+
+    out = compare(store.reader(), ["a"], ["b"])
+    assert out["drift"] is None
+    assert "CAVEAT" not in out["verdict"]
+
+
+def test_the_caveat_names_which_arm_had_it_worse(store):
+    _arm_with_conditions(store, "good", ok=11, failed=0, scores=[0.5] * 10)
+    _arm_with_conditions(store, "bad", ok=3, failed=8, scores=[0.9] * 10)
+
+    out = compare(store.reader(), ["good"], ["bad"],
+                  baseline_name="baseline", treatment_name="arm")
+    assert "arm ran through worse conditions than baseline" in out["verdict"]
+
+
+def test_a_run_with_no_requests_has_no_conditions_rather_than_zero(store):
+    """Zero success would read as "the provider failed", not "nothing was asked"."""
+    c = provider_conditions(store.reader(), "nothing")
+    assert c["success_rate"] is None and c["mean_latency_s"] is None

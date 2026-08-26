@@ -25,6 +25,21 @@ Structure: one shared baseline per repeat, then each arm, all on the same seed.
 A per-arm baseline would double the cost and add a second source of variance
 between the things being compared.
 
+The confound to watch
+---------------------
+
+Arms run one after another, so they do not sample the same provider. That is
+not hypothetical: within a single session Ox Alpha went 40% → 11% success and
+nemotron went 77% → 48% with its p50 latency doubling. An arm that ran through
+the bad half looks worse for reasons that have nothing to do with the feature.
+
+Each arm's provider success rate and mean latency are therefore printed
+alongside its result, and a comparison across materially different conditions
+is caveated rather than reported clean. **Interleaving repeats** — baseline,
+arm, baseline, arm — spreads the drift across both sides instead of
+concentrating it in whichever ran second, and is worth the extra runs when the
+provider is unstable.
+
     scripts/ablation.py --arms operators,island_policies --repeats 2
 
 Run it against a real provider
@@ -231,7 +246,7 @@ def main() -> int:
 def _report(results: List[Dict[str, Any]], arms: List[str],
             manifest_path: str) -> None:
     sys.path.insert(0, ROOT)
-    from control_plane.analysis.outcome import compare
+    from control_plane.analysis.outcome import compare, provider_conditions
     from control_plane.analysis.throughput import measure
     from control_plane.storage.store import Store
 
@@ -253,6 +268,17 @@ def _report(results: List[Dict[str, Any]], arms: List[str],
               f"raw={m['candidates_per_request']}  "
               f"distinct={m['useful_candidates_per_request']}  "
               f"dup={m['duplicate_share']}")
+
+    # Arms run one after another, so they do not sample the same provider.
+    # Printed for every arm rather than only when it drifts, because a reader
+    # comparing two numbers deserves to see the conditions each was measured
+    # under without being told to go looking.
+    print("\n=== provider conditions, per arm ===")
+    for r in results:
+        c = provider_conditions(conn, r["run_id"])
+        rate = f"{c['success_rate']:.0%}" if c["success_rate"] is not None else "—"
+        lat = f"{c['mean_latency_s']}s" if c["mean_latency_s"] is not None else "—"
+        print(f"  {r['name']:<26} success={rate:<6} mean={lat}")
 
     print("\n=== outcome, against the baseline ===")
     for arm in arms:
