@@ -186,8 +186,26 @@ def main() -> int:
     out_dir = os.path.join(ROOT, "runs", f"route-experiment-{stamp}")
     os.makedirs(out_dir, exist_ok=True)
 
+    manifest_path = os.path.join(out_dir, "experiment.json")
     run_ids: List[str] = []
     results: List[Dict[str, Any]] = []
+
+    def checkpoint() -> None:
+        """
+        Write what is known after every arm.
+
+        Learned the hard way: an experiment that only writes its manifest at
+        the end loses every completed arm when the machine goes away mid-run,
+        and these arms cost tens of minutes each. The run ids are the valuable
+        part — the analysis can be recomputed from the store at any time.
+        """
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump({"routes": routes, "task": args.task,
+                       "iterations": args.iterations, "repeats": args.repeats,
+                       "seed": args.seed, "arms": results, "run_ids": run_ids,
+                       "complete": len(results) == len(routes) * args.repeats},
+                      fh, indent=2)
+
     for route in routes:
         cfg_path = _pinned_config(args.config, route, args.seed, out_dir)
         for rep in range(args.repeats):
@@ -206,6 +224,7 @@ def main() -> int:
             status = _wait(run_id, poll_s=10.0, timeout_s=args.timeout)
             results.append({"route": route, "run_id": run_id, "status": status,
                             "wall_clock_s": round(time.time() - started, 1)})
+            checkpoint()
 
     print("\n=== arms ===")
     for r in results:
@@ -223,8 +242,7 @@ def main() -> int:
 
     manifest = {"routes": routes, "task": args.task, "iterations": args.iterations,
                 "repeats": args.repeats, "seed": args.seed, "arms": results,
-                "comparison": comparison}
-    manifest_path = os.path.join(out_dir, "experiment.json")
+                "run_ids": run_ids, "complete": True, "comparison": comparison}
     with open(manifest_path, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
 
