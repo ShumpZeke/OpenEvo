@@ -164,13 +164,44 @@ search quality, and the comparison writeup should separate the two.
 
 What *can* be said from the runs performed:
 
-| run | config | requests | ok | tokens | diff failures | best score |
-|---|---|---|---|---|---|---|
-| 1 | 8k tokens, no truncation handling | 9 | 9 | 75,889 | 5 of 8 | 1.0586 |
-| 2 | 8k + truncation detection | — | — | — | **0** | 1.0586 |
+| run | config | diff failures | best score |
+|---|---|---|---|
+| 1 | 8k tokens, no truncation handling | **5 of 8** | 1.0586 |
+| 2 | 8k + truncation detection | 0 (cut short) | 1.0586 |
+| 3 | 16k + truncation detection + 600s provider timeout | **0 of 10** | **1.4995** |
 
-The improvement demonstrated is in **request efficiency**, not in final score:
-the same search now wastes far fewer of its expensive requests.
+The demonstrated improvement is in **request efficiency**, not a claim about
+search quality: the same search now wastes far fewer of its expensive requests.
+Run 3 also found a genuine improvement, `1.0586 → 1.4995 (+0.4409)`, but with
+one seed and ten iterations that is an anecdote, not a benchmark.
+
+### Run 3, in full
+
+```
+22 requests to Ox Alpha · 9 ok (41%) · 128,958 tokens · avg 229 s
+   errors: 10 transport, 1 unavailable, 1 server, 1 truncated
+ 1 request  to nemotron-3-ultra-free · 1 ok (100%) · 6,107 tokens · avg 112 s
+ 0 diff-parse failures · 0 client timeouts
+ best score 1.0586 → 1.4995
+```
+
+Two things this establishes beyond the truncation fix:
+
+1. **Ox Alpha's reliability under sustained load is ~41%**, dominated by
+   transport errors rather than rate limiting. Over three separate runs it has
+   been consistently slow (avg 130–229 s) and consistently flaky. That is not a
+   reason to drop it — it is the operator's chosen primary and it produced the
+   improvement — but it is the reason the retry, circuit-breaker and failover
+   machinery is load-bearing rather than decorative.
+
+2. **The failover chain works in production.** When Ox Alpha degraded, traffic
+   moved to `nemotron-3-ultra-free`, which returned 100% success at half the
+   latency. That was never explicitly exercised in a test; it happened on its
+   own under real conditions.
+
+The second point is what makes the fast-model routing experiment (below) the
+highest-value next step: a route that is ~2× faster and, on this sample,
+substantially more reliable is already quietly picking up the slack.
 
 ## What to measure next
 
