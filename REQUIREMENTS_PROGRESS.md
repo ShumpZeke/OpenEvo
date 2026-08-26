@@ -113,7 +113,11 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 |---|---|---|
 | MAP-Elites archive | DONE | Upstream, surfaced in the control plane |
 | Lineage archive + full provenance | DONE | `control_plane/storage` — candidate, parent, model, provider, generation, island, metrics, seed, commit |
-| Hall of Fame / Pareto / Novelty / Failure / Counterexample archives | DEFERRED | Not built |
+| Hall of Fame archive | DONE | `archives.HallOfFame` — keeps deposed champions, not just a top-N list |
+| Pareto archive | DONE | `archives.ParetoArchive` — non-dominated set; crowding-aware trimming keeps the front's extremes |
+| Novelty archive | DONE | `archives.NoveltyArchive` — k-NN behaviour distance |
+| Failure archive | DONE | `archives.FailureArchive` — indexed by reason/operator, with a cheap `already_failed` pre-check and capped, de-duplicated prompt context |
+| Counterexample DB | DEFERRED | Needs the V1 verification stage |
 | Operator & provider statistics | DONE | `bandit.snapshot`, `router.stats_by_route` |
 | PostgreSQL / pgvector / Parquet / DuckDB | DEFERRED | SQLite + append-only NDJSON event log used instead; adequate at current scale, and the event log is the migration path |
 
