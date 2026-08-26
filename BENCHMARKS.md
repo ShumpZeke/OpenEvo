@@ -285,6 +285,45 @@ prompt said. It says nothing about a real model, and the duplicate rate is the
 number that decides this feature. That measurement needs a real provider and
 has not been run.
 
+## T1, first real result — and the two views disagree
+
+Three arms, same task, same seed, one route pinned each, through
+`scripts/route-experiment.sh`. Pooled:
+
+| route | attempts | valid | improved | mean latency | **improv / request** | **improv / second** |
+|---|---|---|---|---|---|---|
+| `x-preview-f-free` (Ox Alpha) | 4 | 100% | 75% | 418.5 s | **0.331** | 7.90e-04 |
+| `hy3-free` | 8 | 100% | 75% | 428.4 s | 0.263 | 6.15e-04 |
+| `nemotron-3-ultra-free` | 12 | 100% | 58% | **83.6 s** | 0.229 | **2.74e-03** |
+
+**Ox Alpha produces the best mutations per request and the worst per second.**
+It is ~5x slower, so a 44% better yield per request becomes a 3.5x worse yield
+per unit of wall-clock. That inversion is the result — and it is exactly what
+having three scarcity views exists to expose. Which one to route on depends on
+what is scarce: under a rate contract (NIM: 48 RPM) the per-request column
+decides; when wall-clock is the constraint, the per-second column does.
+
+**This is not yet enough evidence to change anything, and the numbers say so.**
+Read against `MIN_ATTEMPTS_FOR_COMPARISON` (20), every arm is thin, and they
+are not even thin equally:
+
+- the Ox Alpha arm has **4 attempts**, and was cut off by a container restart
+  rather than by the experiment;
+- the `hy3-free` arm has 8, cut off by the 1800 s per-arm timeout;
+- only `nemotron-3-ultra-free` ran its full 12 iterations.
+
+The comparison above was produced with `--min-attempts 4`, five times below the
+module's own bar. Lowering it was a deliberate choice to see the shape of the
+answer, and it is not a result to act on. 100% validity and zero duplicates
+across every arm is itself a small-sample artefact.
+
+What the run *does* establish is that the machinery works end to end: pinned
+arms, per-route attribution across the process boundary, quality separated from
+reliability, and a verdict that names what it is not entitled to conclude.
+
+Re-run it with `--repeats 3` and no `--min-attempts` override before anyone
+proposes a routing change.
+
 ## What to measure next
 
 Ordered by expected value given the measurements above:
@@ -295,7 +334,8 @@ Ordered by expected value given the measurements above:
    against *requests* rather than wall-clock.
 3. **Operator bandit ablation** — `uniform_random` versus
    `discounted_thompson`, already a one-line substitution.
-4. **Fast-model routing.** `laguna-s-2.1-free` and
-   `nemotron-3.5-lightning-free` are 50–100× faster than Ox Alpha. Whether Ox
-   Alpha's quality justifies its latency for *every* operator class is an open
-   empirical question the route statistics are already collecting data for.
+4. **Fast-model routing, properly.** The first three-arm run (above) is
+   suggestive and far too thin: `--repeats 3`, no `--min-attempts` override,
+   and a per-arm timeout generous enough that Ox Alpha finishes. Whether its
+   quality justifies its latency for *every* operator class is now answerable
+   per operator too, since mutations can be labelled (`OE_MAX_OPERATORS=1`).

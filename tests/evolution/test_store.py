@@ -182,3 +182,147 @@ def test_eval_status_backfills_when_evaluation_precedes_candidate(store):
     row = store.query_one("SELECT * FROM candidates WHERE candidate_id='c1'")
     assert row["eval_status"] == "ok", "evaluated candidate must not read as pending"
     assert row["combined_score"] == 0.66
+
+
+# ---------------------------------------------------------------------------
+# Orphaned runs
+#
+# A run killed by a crash, a container restart or `kill -9` never emits its own
+# stopped event, so the projection keeps reporting it as running — forever, and
+# in the Control Center's run list. The operator reads "running" and waits for
+# output that will never come, which is worse than a blank.
+# ---------------------------------------------------------------------------
+
+def _running_run(store, run_id, pid):
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    store.ingest([Event(
+        type=EventType.EXPERIMENT_CREATED, component=Component.CONTROL_PLANE,
+        run_id=run_id, experiment_id=f"exp_{run_id}", metadata={"name": run_id})])
+    store.ingest([Event(
+        type=EventType.EXPERIMENT_STARTED, component=Component.CONTROLLER,
+        run_id=run_id, experiment_id=f"exp_{run_id}", pid=pid,
+        summary="evolution run started")])
+
+
+def _status(store, run_id):
+    return store.query_one("SELECT status, error, ended_at FROM runs WHERE run_id=?",
+                           (run_id,))
+
+
+def test_a_run_whose_process_is_gone_is_marked_failed(tmp_path):
+    from control_plane.storage.store import Store
+
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        _running_run(store, "run_dead", pid=999_999)   # no such process
+        assert _status(store, "run_dead")["status"] == "running"
+
+        reconciled = store.reconcile_orphaned_runs()
+
+        assert [r["run_id"] for r in reconciled] == ["run_dead"]
+        row = _status(store, "run_dead")
+        assert row["status"] == "failed"
+        assert "never reported an end" in row["error"]
+        assert row["ended_at"] is not None
+    finally:
+        store.close()
+
+
+def test_a_live_engine_process_is_left_alone(tmp_path):
+    """
+    A real running engine must survive reconciliation, or a reconnect would
+    kill the status of the run the operator is actually watching.
+
+    Uses a real subprocess whose command line looks like the engine's, because
+    the predicate reads /proc — a mock would test the mock.
+    """
+    import subprocess
+    import sys
+    import time as _time
+
+    from control_plane.storage.store import Store, _process_alive
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         "import time; __name__ = 'control_plane.runner.entrypoint'; time.sleep(30)"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        # The marker has to be in argv, which is what /proc/<pid>/cmdline shows.
+        assert "control_plane.runner.entrypoint" in " ".join(proc.args)
+        _time.sleep(0.2)
+        assert _process_alive(proc.pid) is True
+
+        _running_run(store, "run_live", pid=proc.pid)
+        assert store.reconcile_orphaned_runs() == []
+        assert _status(store, "run_live")["status"] == "running"
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+        store.close()
+
+
+def test_a_recycled_pid_does_not_keep_a_dead_run_alive():
+    """
+    Signal 0 alone is not enough: PIDs are reused, and a recycled one would
+    keep a dead run marked running indefinitely — the exact failure being
+    fixed.
+    """
+    import os
+
+    from control_plane.storage.store import _process_alive
+
+    # This test process is alive but is pytest, not an engine entrypoint.
+    assert _process_alive(os.getpid()) is False
+    assert _process_alive(-1) is False
+
+
+def test_a_run_with_no_recorded_pid_is_not_guessed_at(tmp_path):
+    """
+    Every Event stamps its own pid, so this cannot arrive through the normal
+    path — but a row written any other way must not be judged on a pid that is
+    not there. Whether a process on another machine is alive is unknowable
+    from here, and unknowable is left alone.
+    """
+    from control_plane.storage.store import Store
+
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        _running_run(store, "run_nopid", pid=999_999)
+        store._conn.execute("UPDATE runs SET pid = NULL WHERE run_id = 'run_nopid'")
+        store._conn.commit()
+
+        assert store.reconcile_orphaned_runs() == []
+        assert _status(store, "run_nopid")["status"] == "running"
+    finally:
+        store.close()
+
+
+def test_a_finished_run_is_not_re_marked(tmp_path):
+    from control_plane.storage.store import Store
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        _running_run(store, "run_done", pid=999_999)
+        store.ingest([Event(
+            type=EventType.EXPERIMENT_COMPLETED, component=Component.CONTROLLER,
+            run_id="run_done", experiment_id="exp_run_done", pid=999_999,
+            summary="completed")])
+        assert store.reconcile_orphaned_runs() == []
+        assert _status(store, "run_done")["status"] == "completed"
+    finally:
+        store.close()
+
+
+def test_reconciling_twice_is_idempotent(tmp_path):
+    from control_plane.storage.store import Store
+
+    store = Store(str(tmp_path / "cp.db"))
+    try:
+        _running_run(store, "run_dead", pid=999_999)
+        assert len(store.reconcile_orphaned_runs()) == 1
+        assert store.reconcile_orphaned_runs() == []
+    finally:
+        store.close()

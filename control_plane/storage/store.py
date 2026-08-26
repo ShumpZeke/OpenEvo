@@ -46,6 +46,34 @@ def _excerpt(text: Any, limit: int = 4000) -> Optional[str]:
     return s if len(s) <= limit else s[:limit] + f"\n… «truncated {len(s) - limit} chars»"
 
 
+def _process_alive(pid: int) -> bool:
+    """
+    Whether a recorded engine PID is still this run's process.
+
+    Signal 0 alone is not enough: PIDs are reused, and a recycled one would
+    keep a dead run marked "running" indefinitely — the exact failure being
+    fixed. Where /proc is readable the command line is checked too, so a PID
+    now belonging to something unrelated is correctly treated as gone.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # alive, owned by someone else
+    except OSError:
+        return True          # cannot tell; do not claim it is dead
+
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            cmdline = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return True          # no /proc (macOS, Windows); the signal is all we have
+    return "control_plane.runner.entrypoint" in cmdline or "openevolve" in cmdline
+
+
 class Store:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -763,6 +791,44 @@ class Store:
         return rows[0] if rows else None
 
     # -- maintenance -----------------------------------------------------
+
+    def reconcile_orphaned_runs(self) -> List[Dict[str, Any]]:
+        """
+        Mark runs whose process is gone but whose status still says "running".
+
+        A run killed by a crash, a container restart or a `kill -9` never emits
+        its own stopped event, so the projection keeps reporting it as running
+        — forever, and in the Control Center's run list. That is precisely the
+        plausible-looking wrong value this project treats as worse than a
+        blank: the operator reads "running" and waits for output that will
+        never come.
+
+        Only *this machine's* runs can be judged, and only when a PID is
+        recorded. Anything unknowable is left alone rather than guessed at.
+        """
+        rows = self.query(
+            "SELECT run_id, pid, started_at FROM runs "
+            " WHERE status IN ('running', 'created') AND pid IS NOT NULL")
+        reconciled: List[Dict[str, Any]] = []
+        for row in rows:
+            if _process_alive(int(row["pid"])):
+                continue
+            with self._write_lock:
+                self._conn.execute(
+                    "UPDATE runs SET status='failed', ended_at=COALESCE(ended_at, ?),"
+                    "                error=COALESCE(error, ?)"
+                    " WHERE run_id=? AND status IN ('running','created')",
+                    (time.time(),
+                     _j({"type": "orphaned",
+                         "message": "the engine process is gone and the run never "
+                                    "reported an end; marked failed on reconnect"}),
+                     row["run_id"]),
+                )
+                self._conn.commit()
+            logger.warning("Run %s was marked running but pid %s is gone; "
+                           "recorded as failed", row["run_id"], row["pid"])
+            reconciled.append({"run_id": row["run_id"], "pid": row["pid"]})
+        return reconciled
 
     def rebuild_projections_from_log(self, ndjson_path: str) -> int:
         """

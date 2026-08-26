@@ -52,6 +52,9 @@ class AppState:
         self.collector_port = self.collector.serve_socket(
             port=int(os.environ.get("EVOLUTION_COLLECTOR_PORT", "0"))
         )
+        # A run whose process died with the container never emitted its own
+        # stopped event, and would otherwise be reported as running forever.
+        self.orphaned_runs = self.store.reconcile_orphaned_runs()
         self.runner = RunManager(self.workspace, collector_port=self.collector_port)
         self.router = ModelRouter()
         self.doctor = ProviderDoctor()

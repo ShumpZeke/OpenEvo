@@ -59,6 +59,18 @@ Three repeats per arm is the point: `MIN_ATTEMPTS_FOR_COMPARISON` is 20, and a
 12-iteration run does not get there alone. `--min-attempts` can lower the bar,
 but lowering it is a claim you then have to defend.
 
+### What one run already showed
+
+A three-arm run is recorded in BENCHMARKS.md. The headline is that the two
+efficiency views **disagree**: Ox Alpha leads on improvement per *request*
+(0.331 vs 0.229) and loses badly on improvement per *second* (7.9e-04 vs
+2.7e-03), because it is ~5x slower. That is the trade-off to put in front of
+the operator, not a switch to make.
+
+It is not enough evidence: the arms were 4, 8 and 12 attempts against a
+minimum of 20, and two of them were cut off by a timeout and a container
+restart rather than by the design.
+
 ### Done when
 
 You can answer "does Ox Alpha produce better mutations than
