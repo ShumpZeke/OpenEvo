@@ -47,6 +47,7 @@ import httpx
 
 from ..limiter import NullLimiter, RateLimiter
 from .base import ChatResult, ModelSpec, Outcome, ProviderAdapter, ProviderRole
+from .catalogue import build_provider, load_catalogue, materialise_models
 
 # Verified live 2026-08-26.
 OPENCODE_ZEN_BASE = "https://opencode.ai/zen/v1"
@@ -74,6 +75,8 @@ def build_default_registry(
     nim_target_rpm: float = 42.0,
     nim_burst: float = 2.0,
     nim_state_path: Optional[str] = None,
+    include_catalogue: bool = True,
+    catalogue_path: Optional[str] = None,
 ) -> Dict[str, ProviderAdapter]:
     """
     The shipped provider set.
@@ -266,7 +269,23 @@ def build_default_registry(
         },
     )
 
-    return {p.name: p for p in (zen, openrouter, nim)}
+    providers: Dict[str, ProviderAdapter] = {
+        p.name: p for p in (zen, openrouter, nim)
+    }
+
+    # Catalogue providers are additive and never override a built-in: the three
+    # above carry hand-checked timeouts, a rate contract and curated model
+    # tables that a generic entry would flatten. Everything else an operator
+    # configures joins alongside them, key-gated, so declaring fifteen
+    # providers costs nothing when fourteen have no credential.
+    if include_catalogue:
+        cat = load_catalogue(catalogue_path)
+        for entry in cat.get("providers") or []:
+            if entry.name in providers:
+                continue
+            providers[entry.name] = build_provider(entry)
+
+    return providers
 
 
 class Registry:
@@ -310,6 +329,22 @@ class Registry:
                 ))
         self.discovered = out
         self.discovered_at = time.time()
+        # Catalogue providers arrive with no models at all; their concrete ids
+        # come from the listing we just fetched, never from this file.
+        for p in self.providers.values():
+            if getattr(p, "prefer_patterns", None) and out.get(p.name):
+                found = materialise_models(p, out[p.name])
+                if found:
+                    # Preserve any belief already measured about a model that
+                    # is still listed — a failed smoke test must not be
+                    # forgotten just because discovery ran again.
+                    for key, spec in found.items():
+                        old = p.models.get(key)
+                        if old is not None:
+                            spec.available = old.available
+                            spec.supports_tools = old.supports_tools
+                            spec.observed_latency_ms = old.observed_latency_ms
+                    p.models = found
         # Reconciling here rather than leaving it to callers: a check that must
         # be remembered is a check that gets forgotten, which is precisely how
         # the withdrawn primary survived in the chain.

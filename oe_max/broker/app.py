@@ -280,10 +280,17 @@ def create_app(registry: Optional[Registry] = None,
         if state.client is None:
             raise HTTPException(status_code=503, detail="broker not started")
         discovered = await state.registry.discover(state.client)
+        # Discovery can create routes that did not exist when the chains were
+        # built — a catalogue provider has no models until its listing is
+        # fetched. Rebuilding here is what makes a newly credentialled provider
+        # actually reachable instead of merely present.
+        chain_sizes = state.router.refresh_chains()
         probes = await state.registry.verify(state.client, check_tools=check_tools)
         state.verified_at = time.time()
         return {
             "discovered_counts": {k: len(v) for k, v in discovered.items()},
+            "reconciled": state.registry.reconciled,
+            "chain_sizes": chain_sizes,
             "probes": [p.to_dict() for p in probes],
             "eligible_routes": state.router.snapshot()["eligible"],
         }

@@ -1,0 +1,341 @@
+# ---------------------------------------------------------------------------
+# Provider catalogue.
+#
+# Adding an OpenAI-compatible provider is an edit here, not a code change.
+# Every provider is key-gated, so listing many costs nothing: one without its
+# credential is simply not usable and never enters a chain.
+#
+# HOW MODEL IDS GET HERE: they do not. Entries declare *patterns* of interest,
+# and the registry materialises concrete models from each provider's own live
+# listing. A pattern is not a claim that a model exists; a remembered id is,
+# and this project has now been bitten by remembered ids three times —
+# `x-preview-f-free` (withdrawn), `deepseek-ai/deepseek-v4-pro` and
+# `qwen/qwen2.5-coder-32b-instruct` (never in NVIDIA's catalogue at all).
+#
+# VERIFICATION VOCABULARY, used strictly:
+#   verified            we made the call and saw the result, on the date given
+#   catalogue-verified  the id came from the provider's live listing, uncalled
+#   documented          official docs say so; we did not test it
+#   unverified          neither
+#
+# Endpoint liveness below was probed on 2026-08-26 from this repository. Free
+# tiers are DOCUMENTED, not verified: no credential for these providers exists
+# here, so no inference call has been made to any of them.
+# ---------------------------------------------------------------------------
+
+providers:
+
+  - name: groq
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    requires_key: true
+    timeout_s: 120
+    liveness: "verified 2026-08-26 — HTTP 401 'Invalid API Key', endpoint alive"
+    free_tier:
+      status: free_recurring
+      note: >-
+        Free plan, no credit card. Limits are per model and small; console docs
+        show openai/gpt-oss-120b at 30 RPM / 1K RPD / 8K TPM / 200K TPD. Limits
+        are per organisation, so extra keys do not raise them.
+      source: "console.groq.com/docs/rate-limits (fetched 2026-08-26)"
+      confidence: documented
+    prefer_patterns: ["gpt-oss", "llama-3.3", "llama-4", "qwen", "kimi", "deepseek"]
+    max_models: 6
+
+  - name: cerebras
+    base_url: https://api.cerebras.ai/v1
+    api_key_env: CEREBRAS_API_KEY
+    requires_key: true
+    timeout_s: 120
+    liveness: "verified 2026-08-26 — HTTP 403 'Not authenticated', endpoint alive"
+    free_tier:
+      status: free_recurring
+      note: >-
+        Reported as a recurring daily allowance (~1M tokens/day, ~30 RPM) with
+        no credit card, resetting at 00:00 UTC, and a free-tier context cap
+        around 8K. NOT confirmed against official docs — the pricing URL
+        redirects away from the inference docs — so treat the numbers as
+        indicative. The 8K context cap is the figure that would matter most
+        here and is the least confirmed.
+      source: "secondary reports only; official pricing page not confirmed"
+      confidence: unverified
+    prefer_patterns: ["gpt-oss", "qwen", "llama-4", "llama-3.3"]
+    max_models: 5
+
+  - name: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — endpoint alive, 404 without a credential"
+    free_tier:
+      status: free_recurring
+      note: >-
+        Google AI Studio offers a free tier on the Gemini API with per-model
+        RPM/RPD limits. Availability varies by region and by model. Free-tier
+        prompts may be used to improve Google's products, which is a material
+        difference from the other providers here and matters for private code.
+      source: "ai.google.dev pricing; not re-fetched this session"
+      confidence: documented
+    prefer_patterns: ["flash", "pro"]
+    max_models: 5
+
+  - name: mistral
+    base_url: https://api.mistral.ai/v1
+    api_key_env: MISTRAL_API_KEY
+    requires_key: true
+    timeout_s: 120
+    liveness: "verified 2026-08-26 — HTTP 401 'Invalid API Key', endpoint alive"
+    free_tier:
+      status: free_recurring
+      note: >-
+        La Plateforme has an "experiment" free tier requiring phone
+        verification. Devstral and Codestral are the relevant models for code
+        work.
+      source: "docs.mistral.ai; not re-fetched this session"
+      confidence: documented
+    prefer_patterns: ["devstral", "codestral", "mistral-large", "magistral"]
+    max_models: 5
+
+  - name: sambanova
+    base_url: https://api.sambanova.ai/v1
+    api_key_env: SAMBANOVA_API_KEY
+    requires_key: true
+    public_listing: true
+    timeout_s: 120
+    liveness: >-
+      verified 2026-08-26 — /models answered WITHOUT a credential and returned
+      7 models, so catalogue membership is checkable before a key exists
+    free_tier:
+      status: signup_credits
+      note: >-
+        Free tier is credit-based rather than a recurring allowance. Useful as
+        a fallback, not as a primary.
+      source: "cloud.sambanova.ai; not re-fetched this session"
+      confidence: unverified
+    prefer_patterns: ["DeepSeek", "MiniMax", "Llama", "gemma"]
+    max_models: 5
+
+  - name: modelscope
+    base_url: https://api-inference.modelscope.cn/v1
+    api_key_env: MODELSCOPE_API_KEY
+    requires_key: true
+    public_listing: true
+    timeout_s: 180
+    liveness: >-
+      verified 2026-08-26 — /models answered without a credential, 47 models
+    free_tier:
+      status: free_recurring
+      note: >-
+        Reported daily free call quota for bound accounts. Chinese-region
+        endpoint; expect higher latency from elsewhere — measured 1.8s just to
+        list models from this container.
+      source: "modelscope.cn; not re-fetched this session"
+      confidence: unverified
+    prefer_patterns: ["DeepSeek", "Qwen", "GLM", "Kimi", "MiniMax"]
+    max_models: 6
+
+  - name: chutes
+    base_url: https://llm.chutes.ai/v1
+    api_key_env: CHUTES_API_KEY
+    requires_key: true
+    public_listing: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — /models answered without a credential, 14 models"
+    free_tier:
+      status: unverified
+      note: >-
+        Free access has been reported and has also been reported as withdrawn
+        or moved behind a paid floor. Not confirmed either way here.
+      source: "none confirmed"
+      confidence: unverified
+    prefer_patterns: ["DeepSeek", "Qwen", "GLM", "gemma"]
+    max_models: 5
+
+  - name: huggingface
+    base_url: https://router.huggingface.co/v1
+    api_key_env: HF_TOKEN
+    requires_key: true
+    public_listing: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — /models answered without a credential, 136 models"
+    free_tier:
+      status: signup_credits
+      note: >-
+        Inference Providers gives registered users a small monthly credit
+        allowance; it routes to third-party providers underneath, so both
+        availability and terms depend on the provider actually serving.
+      source: "huggingface.co/docs/inference-providers; not re-fetched"
+      confidence: documented
+    prefer_patterns: ["DeepSeek", "Qwen", "GLM", "Kimi", "gpt-oss"]
+    max_models: 6
+
+  - name: zai_glm
+    base_url: https://api.z.ai/api/paas/v4
+    api_key_env: ZAI_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 auth error, endpoint alive"
+    free_tier:
+      status: unverified
+      note: "Z.ai has previously offered a free GLM flash model. Not confirmed."
+      source: "none confirmed"
+      confidence: unverified
+    prefer_patterns: ["glm"]
+    max_models: 4
+
+  - name: dashscope_qwen
+    base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 auth error, endpoint alive"
+    free_tier:
+      status: signup_credits
+      note: >-
+        Alibaba Cloud Model Studio grants a time-limited token allowance per
+        model on activation. International endpoint configured here.
+      source: "alibabacloud.com model studio docs; not re-fetched"
+      confidence: unverified
+    prefer_patterns: ["qwen3", "qwen-max", "qwen-plus", "qwen-coder"]
+    max_models: 5
+
+  - name: deepseek
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 'Authentication Fails', endpoint alive"
+    free_tier:
+      status: paid
+      note: "No free tier. Listed because it is cheap and strong, not because it is free."
+      source: "platform.deepseek.com pricing"
+      confidence: documented
+    prefer_patterns: ["deepseek"]
+    max_models: 3
+
+  - name: moonshot
+    base_url: https://api.moonshot.ai/v1
+    api_key_env: MOONSHOT_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 'Incorrect API key', endpoint alive"
+    free_tier:
+      status: paid
+      note: "Paid. Kimi models are strong at agentic coding."
+      source: "platform.moonshot.ai"
+      confidence: documented
+    prefer_patterns: ["kimi"]
+    max_models: 4
+
+  - name: minimax
+    base_url: https://api.minimax.io/v1
+    api_key_env: MINIMAX_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 auth error, endpoint alive"
+    free_tier:
+      status: paid
+      note: "Paid."
+      source: "minimax.io"
+      confidence: documented
+    prefer_patterns: ["minimax", "abab"]
+    max_models: 3
+
+  - name: siliconflow
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 'Invalid token', endpoint alive"
+    free_tier:
+      status: unverified
+      note: "Has previously carried free-tagged models. Not confirmed."
+      source: "none confirmed"
+      confidence: unverified
+    prefer_patterns: ["DeepSeek", "Qwen", "GLM", "Kimi"]
+    max_models: 5
+
+  - name: nebius
+    base_url: https://api.studio.nebius.com/v1
+    api_key_env: NEBIUS_API_KEY
+    requires_key: true
+    timeout_s: 180
+    liveness: "verified 2026-08-26 — HTTP 401 'token is not present', endpoint alive"
+    free_tier:
+      status: signup_credits
+      note: "Signup credits."
+      source: "studio.nebius.com; not re-fetched"
+      confidence: unverified
+    prefer_patterns: ["DeepSeek", "Qwen", "gpt-oss", "Llama"]
+    max_models: 5
+
+# ---------------------------------------------------------------------------
+# Retired, dead, or misleading. Recorded so nobody spends another afternoon
+# rediscovering them. Remove an entry only with evidence it works again.
+# ---------------------------------------------------------------------------
+retired:
+
+  - name: github_models
+    base_url: https://models.github.ai/inference
+    finding: >-
+      RETIRED. Probed 2026-08-26: HTTP 410 with code
+      `github_models_retirement_brownout` — "GitHub Models is temporarily
+      unavailable as part of a scheduled retirement brownout." A brownout is
+      the rehearsal for a shutdown, so this is not an outage to wait out. It
+      was widely recommended as a free endpoint; it is not one.
+    verified: "2026-08-26"
+
+  - name: targon
+    base_url: https://api.targon.com/v1
+    finding: "Probed 2026-08-26: HTTP 410 Gone, empty body."
+    verified: "2026-08-26"
+
+  - name: opencode_zen_ox_alpha
+    base_url: https://opencode.ai/zen/v1
+    finding: >-
+      Model `x-preview-f-free` (Ox Alpha) WITHDRAWN. Absent from /models, and a
+      completion returns `ModelError: Model x-preview-f-free is not supported`.
+      Removal rather than gating: a paid Zen model returns `AuthError: Missing
+      API key` instead. Was this project's configured primary route.
+    verified: "2026-08-26"
+
+  - name: opencode_zen_deepseek_v4_flash_free
+    base_url: https://opencode.ai/zen/v1
+    finding: >-
+      Listed in /models but unserveable: HTTP 400 "Model is unavailable",
+      unchanged 2026-08-25 to 2026-08-26. The original evidence that a listing
+      is not a working model.
+    verified: "2026-08-26"
+
+  - name: opencode_zen_mimo
+    base_url: https://opencode.ai/zen/v1
+    finding: >-
+      `mimo-v2.5-free`: HTTP 429 `FreeUsageLimitError` on every attempt. A
+      shared free pool that is empty, not a per-account rate limit — retrying
+      does not help. Handled by Outcome.FREE_LIMIT_EXHAUSTED.
+    verified: "2026-08-26"
+
+  - name: opencode_zen_muse_spark_contributor
+    base_url: https://opencode.ai/zen/v1
+    finding: >-
+      `muse-spark-1.2-contributor-free`: newly listed, returns HTTP 500
+      "Internal server error". The name suggests it is gated to OpenCode
+      contributors.
+    verified: "2026-08-26"
+
+  - name: nvidia_nim_deepseek_v4_pro
+    base_url: https://integrate.api.nvidia.com/v1
+    finding: >-
+      `deepseek-ai/deepseek-v4-pro` is NOT in NVIDIA's catalogue and appears
+      never to have been. This project configured it as its strong fallback,
+      so the fallback could not have served a request. NIM's /v1/models is
+      public — one unauthenticated GET would have caught it.
+    verified: "2026-08-26"
+
+  - name: nvidia_nim_qwen_coder
+    base_url: https://integrate.api.nvidia.com/v1
+    finding: >-
+      `qwen/qwen2.5-coder-32b-instruct` is NOT in NVIDIA's catalogue. NIM hosts
+      no Qwen model at all as of 2026-08-26.
+    verified: "2026-08-26"

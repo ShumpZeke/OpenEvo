@@ -102,6 +102,39 @@ class Router:
         self.request_log: List[Dict[str, Any]] = []
         self.max_log = 2000
 
+    def registry_routes(self) -> List[Tuple[str, str]]:
+        """
+        Every (provider, model_key) the registry currently knows, in a stable
+        order: providers in registration order, models by descending priority.
+        """
+        out: List[Tuple[str, str]] = []
+        for name, provider in self.registry.providers.items():
+            for key, spec in sorted(
+                provider.models.items(), key=lambda kv: -kv[1].priority
+            ):
+                out.append((name, key))
+        return out
+
+    def refresh_chains(self) -> Dict[str, int]:
+        """
+        Rebuild the role chains to include routes discovered since startup.
+
+        Catalogue providers have no models until a listing is fetched, so a
+        chain built at construction cannot contain them. Without this, adding
+        GROQ_API_KEY would produce a provider that discovers models, reports
+        them healthy, and is never routed to — the most confusing possible
+        outcome, because everything looks configured and nothing uses it.
+
+        The configured chain still leads. Discovered routes join the tail, so
+        a new provider is a fallback until someone deliberately promotes it,
+        rather than silently displacing a route that has been measured.
+        """
+        known = set(self.chain)
+        tail = [r for r in self.registry_routes() if r not in known]
+        self.chain = list(self.chain) + tail
+        self.chains = build_chains(self.chain)
+        return {role.value: len(chain) for role, chain in self.chains.items()}
+
     # -- selection -----------------------------------------------------
 
     def candidates(
