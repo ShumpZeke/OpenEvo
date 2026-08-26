@@ -118,6 +118,18 @@ hash) so nodes do not jump as new candidates stream in during a live run.
 | `runner/manager.py` | subprocess lifecycle, real controls, capability reporting |
 | `runner/entrypoint.py` | installs hooks, then runs upstream's own CLI |
 | `api/app.py` | control, query, SSE, classic-visualizer bridge |
+| `telemetry/multi_offspring.py` | splits N alternatives before upstream's parser sees them |
+| `telemetry/sandbox_eval.py` | replaces in-process evaluation with a sandboxed one |
+| `telemetry/verification_hook.py` | decides which candidates are worth verifying |
+| `telemetry/seed_hook.py` | turns the first program into a starting population |
+| `analysis/route_quality.py` | stored telemetry → per-route mutation quality |
+| `analysis/throughput.py` | candidates per request, and how many are distinct |
+| `analysis/outcome.py` | best-so-far against requests; area under it |
+| `oe_max/route_quality.py` | what the quality measures mean |
+| `oe_max/verification/` | V1 property/metamorphic/randomized checks; counterexamples |
+| `oe_max/execution/` | resource-capped candidate execution, backends and their gaps |
+| `oe_max/search/policies.py` | per-island search posture over operator disruption |
+| `oe_max/search/seed_forge.py` | a starting population from one seed, no model requests |
 
 ## Scaling
 
@@ -138,10 +150,17 @@ events. Concretely:
 
 Stated plainly rather than stubbed:
 
-- **Sandbox execution backends.** The isolation boundary, preflight and status
-  reporting are implemented and tested; the container/worktree executors that
-  would run candidates inside them are not. The Agent Sandbox page reports the
-  backend as disabled and explains why.
+- **The container execution backend, verified.** `oe_max/execution/` implements
+  both backends and candidates now run under real ceilings
+  (`OE_MAX_SANDBOX_EVAL`). The subprocess backend is exercised by tests that
+  actually try to exceed each limit. The container backend — the one that adds
+  network and filesystem isolation — has **never run**: `docker` is on PATH
+  here and its daemon is unreachable, which the probe reports rather than
+  assuming. `describe_backends()` states what each backend does not stop.
+- **The operator bandit, in the loop.** `search/bandit.py` is built and tested;
+  operator selection is uniform random. The bandit learns from per-operator
+  reward, and there was none until mutations could be labelled — that data is
+  only now starting to exist.
 - **Oh My OpenAgent orchestration.** Detection is implemented and deliberately
   does not hardcode a package name; the orchestration layer is not built.
 - **Alert engine.** The `alerts` table and thresholds are designed; no evaluator
