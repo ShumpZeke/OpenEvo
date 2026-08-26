@@ -83,6 +83,12 @@ def _begin_worker_attribution() -> None:
     _worker_generation = None
     _worker_operator = None
     _worker_generation_pid = os.getpid()
+    try:
+        from . import multi_offspring
+
+        multi_offspring.reset()
+    except Exception:  # pragma: no cover - import cannot realistically fail
+        pass
 
 
 def _publish_generation(record: Dict[str, Any]) -> None:
@@ -290,6 +296,44 @@ def _hash(text: Optional[str]) -> Optional[str]:
     return hashlib.sha256(text.encode()).hexdigest()[:16] if text else None
 
 
+def _add_siblings(db, program: Any, iteration: Any, target_island: Any) -> None:
+    """
+    Put the extra offspring into the population, next to the primary child.
+
+    Deliberately a normal `add`: the siblings go through the same MAP-Elites
+    placement, the same novelty gate and the same telemetry as any other
+    candidate. Special-casing them would make their measured yield
+    incomparable to everything else, which is the one thing a throughput
+    experiment cannot afford.
+
+    Re-entrancy is handled by stripping the siblings key from what is added —
+    without that, a sibling carrying its own sibling list would recurse.
+    """
+    from . import multi_offspring
+
+    md = getattr(program, "metadata", None)
+    if not isinstance(md, dict):
+        return
+    siblings = md.pop(multi_offspring.SIBLINGS_KEY, None)
+    if not siblings:
+        return
+    try:
+        from openevolve.database import Program
+    except ImportError:
+        return
+
+    for spec in siblings:
+        try:
+            spec = dict(spec)
+            spec_md = dict(spec.get("metadata") or {})
+            spec_md.pop(multi_offspring.SIBLINGS_KEY, None)
+            spec["metadata"] = spec_md
+            db.add(Program(**spec), iteration=iteration, target_island=target_island)
+        except Exception as exc:
+            # One bad sibling must not cost the iteration that produced it.
+            logger.debug("sibling add failed: %r", exc)
+
+
 class EngineInstrumentation:
     """Installs/removes runtime hooks on the OpenEvolve engine."""
 
@@ -395,6 +439,7 @@ class EngineInstrumentation:
                     )
                 except Exception as exc:  # telemetry must never break evolution
                     logger.debug("telemetry add hook failed: %r", exc)
+                _add_siblings(db_self, program, iteration, target_island)
                 return result
 
             return wrapper
@@ -541,6 +586,12 @@ class EngineInstrumentation:
                 "code_hash": _hash(code),
                 "code_length": len(code) if code else None,
                 "candidate_type": "code",
+                # An extra offspring from a multi-alternative response. Recorded
+                # because the whole point of that feature is the ratio of
+                # *useful* candidates to requests, and a sibling that is
+                # indistinguishable from a primary child cannot be counted.
+                "multi_offspring": bool(
+                    (getattr(program, "metadata", None) or {}).get("multi_offspring")),
                 # Generation provenance — the link upstream does not provide.
                 **_attribution_fields(gen_req),
             },
@@ -1201,6 +1252,50 @@ def install_worker_hook() -> None:
     install_operator_hook()
 
 
+def _attach_siblings(result: Any, iteration: Any, args: Any, kwargs: Any) -> None:
+    """
+    Carry the extra offspring home from the worker.
+
+    They ride on the primary child's metadata because that is the only thing
+    that crosses the process boundary (§3.7). If the iteration produced no
+    primary child there is nothing to ride on and nothing to carry: an
+    alternative to a mutation that itself failed is not worth rescuing.
+    """
+    from . import multi_offspring
+
+    if not multi_offspring.enabled():
+        return
+    child = getattr(result, "child_program_dict", None)
+    if not isinstance(child, dict):
+        multi_offspring.take_alternatives()      # discard; nothing to attach to
+        return
+    try:
+        db_snapshot = kwargs.get("db_snapshot") if kwargs else None
+        parent_id = kwargs.get("parent_id") if kwargs else None
+        if db_snapshot is None and len(args) >= 1:
+            db_snapshot = args[0]
+        if parent_id is None and len(args) >= 2:
+            parent_id = args[1]
+        parent = ((db_snapshot or {}).get("programs") or {}).get(parent_id) or {}
+
+        siblings = multi_offspring.build_siblings(
+            parent_code=parent.get("code") or "",
+            parent_id=parent_id or "",
+            parent_metadata=dict(child.get("metadata") or {}),
+            iteration=iteration,
+            primary_code=child.get("code"),
+            language=child.get("language") or "python",
+        )
+        if siblings:
+            md = child.get("metadata")
+            if not isinstance(md, dict):
+                md = {}
+                child["metadata"] = md
+            md[multi_offspring.SIBLINGS_KEY] = siblings
+    except Exception as exc:   # extra offspring are a bonus, never a requirement
+        logger.debug("sibling construction failed: %r", exc)
+
+
 def _emit_iteration_completed(result: Any, iteration: Any, duration_ms: float) -> None:
     """
     Mark the end of one evolution iteration, from the worker that ran it.
@@ -1259,7 +1354,9 @@ def install_operator_hook() -> None:
     and turning it on by default would confound every comparison already
     recorded.
     """
-    if not operators_enabled():
+    from . import multi_offspring
+
+    if not operators_enabled() and not multi_offspring.enabled():
         return
     try:
         from openevolve.prompt.sampler import PromptSampler
@@ -1277,6 +1374,11 @@ def install_operator_hook() -> None:
             if getattr(sampler_self, "system_template_override", None):
                 return prompt          # evaluator feedback, not a mutation
             if not isinstance(prompt, dict) or "system" not in prompt:
+                return prompt
+            # Both features decorate the same prompt; doing it in one place is
+            # what keeps a prompt from being decorated twice.
+            prompt = multi_offspring.install_prompt_hook(prompt)
+            if not operators_enabled():
                 return prompt
             artifacts = kw.get("program_artifacts") or {}
             op = _select_operator(
@@ -1299,7 +1401,9 @@ def install_operator_hook() -> None:
 
     wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
     PromptSampler.build_prompt = wrapper  # type: ignore[method-assign]
-    logger.info("OE-MAX operator steering enabled (%s)", ENV_OPERATORS)
+    if operators_enabled():
+        logger.info("OE-MAX operator steering enabled (%s)", ENV_OPERATORS)
+    multi_offspring.install_parse_hooks()
 
 
 def install_worker_attribution_hook() -> None:
@@ -1341,6 +1445,7 @@ def install_worker_attribution_hook() -> None:
                 md[ATTRIBUTION_KEY] = dict(rec)
         except Exception as exc:  # attribution is observability, never control
             logger.debug("worker attribution failed: %r", exc)
+        _attach_siblings(result, iteration, a, kw)
         _emit_iteration_completed(result, iteration, (time.perf_counter() - t0) * 1000.0)
         return result
 

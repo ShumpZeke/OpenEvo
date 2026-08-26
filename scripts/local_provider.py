@@ -106,6 +106,17 @@ MUTATIONS = [
 ]
 
 
+_ALTERNATIVES_RE = re.compile(
+    r"Produce\s+(\d+)\s+SEPARATE AND MATERIALLY DIFFERENT alternatives",
+    re.IGNORECASE)
+
+
+def _alternatives_requested(prompt: str) -> int:
+    """How many alternatives the caller asked for, if any."""
+    m = _ALTERNATIVES_RE.search(prompt or "")
+    return int(m.group(1)) if m else 1
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "EvolutionLocalProvider/1.0"
     seed_counter = 0
@@ -164,7 +175,27 @@ class Handler(BaseHTTPRequestHandler):
                 first = m.group(1).strip().splitlines()[0].strip()
                 if first and first in prompt:
                     applicable.append((desc, diff))
-        desc, diff = rng.choice(applicable or MUTATIONS)
+        pool = applicable or MUTATIONS
+
+        # Honour a request for several alternatives, the way a cooperative
+        # model would. Without this there is no way to exercise multi-offspring
+        # end to end without spending a real provider's time, and the parsing
+        # is the part most worth exercising.
+        wanted = _alternatives_requested(prompt)
+        if wanted > 1 and len(pool) > 1:
+            chosen = rng.sample(pool, min(wanted, len(pool)))
+            sections = [
+                f"### ALTERNATIVE {i}\n{d}\n"
+                for i, (_, d) in enumerate(chosen, start=1)
+            ]
+            content = (
+                "Here are several different approaches.\n\n" + "\n".join(sections)
+            )
+            self._json(200, self._completion(
+                body.get("model", "evolution-local"), content))
+            return
+
+        desc, diff = rng.choice(pool)
 
         content = (
             f"I will improve the search algorithm: {desc}.\n\n"
