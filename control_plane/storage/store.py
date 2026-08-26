@@ -201,11 +201,19 @@ class Store:
 
         # Runs advance on generation boundaries even when nothing else changed.
         if t == EventType.GENERATION_COMPLETED and run_id:
-            cur.execute(
-                "UPDATE runs SET iterations_done = MAX(COALESCE(iterations_done,0), ?)"
-                " WHERE run_id = ?",
-                (ev.iteration or ev.generation or 0, run_id),
-            )
+            # Upstream numbers iterations from 0 (`start_iteration = 0` in
+            # controller.py), so finishing iteration 11 of a 12-iteration run
+            # means 12 are done. Storing the index would leave every completed
+            # run reading one short of its target — a wrong number rather than
+            # a missing one, which is the failure mode this project treats as
+            # worse than showing nothing.
+            index = ev.iteration if ev.iteration is not None else ev.generation
+            if index is not None:
+                cur.execute(
+                    "UPDATE runs SET iterations_done ="
+                    " MAX(COALESCE(iterations_done,0), ?) WHERE run_id = ?",
+                    (int(index) + 1, run_id),
+                )
 
     def _project_experiment(self, cur: sqlite3.Cursor, ev: Event) -> None:
         md = ev.metadata

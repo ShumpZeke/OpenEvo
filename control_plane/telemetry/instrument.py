@@ -1144,6 +1144,40 @@ def install_worker_hook() -> None:
     install_worker_attribution_hook()
 
 
+def _emit_iteration_completed(result: Any, iteration: Any, duration_ms: float) -> None:
+    """
+    Mark the end of one evolution iteration, from the worker that ran it.
+
+    Upstream emits no generation boundary, so `runs.iterations_done` sat at 0
+    for the whole of every run — and a progress bar reading "0 / 12" while the
+    run is plainly working is exactly the plausible-looking wrong number the
+    no-fake-data rule exists to prevent.
+
+    This frame is the right place because it is reached once per iteration
+    whether or not the iteration produced anything: an iteration that returned
+    "No valid diffs found" still happened, still consumed a request, and still
+    has to count as progress. Attributing progress only to successful
+    iterations would make a degraded route look like a stalled run.
+    """
+    inst = _active
+    if inst is None or iteration is None:
+        return
+    try:
+        error = getattr(result, "error", None)
+        emit(inst._ev(
+            EventType.GENERATION_COMPLETED, Component.CONTROLLER,
+            iteration=int(iteration), duration_ms=duration_ms,
+            status=Status.FAILED if error else Status.OK,
+            summary=(f"iteration {iteration} produced nothing: {error}" if error
+                     else f"iteration {iteration} completed"),
+            metadata={"produced_candidate": bool(
+                getattr(result, "child_program_dict", None)),
+                "error": error},
+        ))
+    except Exception as exc:  # pragma: no cover - telemetry must never break a run
+        logger.debug("iteration-completed emit failed: %r", exc)
+
+
 def install_worker_attribution_hook() -> None:
     """
     Carry generation provenance across the worker→main process boundary.
@@ -1168,9 +1202,10 @@ def install_worker_attribution_hook() -> None:
         return
 
     @functools.wraps(original)
-    def wrapper(*a, **kw):
+    def wrapper(iteration=None, *a, **kw):
         _begin_worker_attribution()
-        result = original(*a, **kw)
+        t0 = time.perf_counter()
+        result = original(iteration, *a, **kw)
         try:
             rec = _take_worker_attribution()
             child = getattr(result, "child_program_dict", None)
@@ -1182,6 +1217,7 @@ def install_worker_attribution_hook() -> None:
                 md[ATTRIBUTION_KEY] = dict(rec)
         except Exception as exc:  # attribution is observability, never control
             logger.debug("worker attribution failed: %r", exc)
+        _emit_iteration_completed(result, iteration, (time.perf_counter() - t0) * 1000.0)
         return result
 
     wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]

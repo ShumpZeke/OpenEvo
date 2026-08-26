@@ -316,3 +316,75 @@ def test_a_direct_provider_call_is_unaffected(store):
 
     assert list(build_tracker(store.reader(), "run_1").routes) == \
         ["nvidia_nim/nemotron-super-49b"]
+
+
+# ---------------------------------------------------------------------------
+# Run progress
+#
+# Upstream emits no generation boundary, so `runs.iterations_done` sat at 0 for
+# the whole of every run — a progress bar reading "0 / 12" while the run is
+# plainly working. A wrong number is worse than a missing one.
+# ---------------------------------------------------------------------------
+
+def _start_run(store, run_id):
+    store.ingest([Event(
+        type=EventType.EXPERIMENT_CREATED, component=Component.CONTROL_PLANE,
+        run_id=run_id, experiment_id=f"exp_{run_id}", summary="run created",
+        metadata={"name": run_id})])
+
+
+def _iteration_done(store, run_id, iteration, *, error=None):
+    store.ingest([Event(
+        type=EventType.GENERATION_COMPLETED, component=Component.CONTROLLER,
+        run_id=run_id, iteration=iteration,
+        status=Status.FAILED if error else Status.OK,
+        summary=f"iteration {iteration} completed",
+        metadata={"produced_candidate": error is None, "error": error},
+    )])
+
+
+def _run_row(store, run_id):
+    return store.reader().execute(
+        "SELECT iterations_done FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+
+
+def test_progress_counts_iterations_not_indices(store):
+    """
+    Upstream numbers iterations from 0, so finishing index 11 of a 12-iteration
+    run means 12 are done — not 11.
+    """
+    _start_run(store, "run_1")
+    for i in range(12):
+        _iteration_done(store, "run_1", i)
+
+    assert _run_row(store, "run_1")["iterations_done"] == 12
+
+
+def test_the_very_first_iteration_registers(store):
+    """Iteration 0 is falsy; a truthiness test would drop it silently."""
+    _start_run(store, "run_1")
+    _iteration_done(store, "run_1", 0)
+
+    assert _run_row(store, "run_1")["iterations_done"] == 1
+
+
+def test_an_iteration_that_produced_nothing_still_counts_as_progress(store):
+    """
+    "No valid diffs found" is a completed iteration: it consumed a request and
+    real time. Counting only successful ones makes a degraded route look like a
+    stalled run.
+    """
+    _start_run(store, "run_1")
+    _iteration_done(store, "run_1", 0, error="No valid diffs found in response")
+    _iteration_done(store, "run_1", 1)
+
+    assert _run_row(store, "run_1")["iterations_done"] == 2
+
+
+def test_out_of_order_completions_do_not_move_progress_backwards(store):
+    """Iterations run in parallel and finish out of order."""
+    _start_run(store, "run_1")
+    for i in (5, 1, 3, 0):
+        _iteration_done(store, "run_1", i)
+
+    assert _run_row(store, "run_1")["iterations_done"] == 6
