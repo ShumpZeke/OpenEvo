@@ -25,8 +25,11 @@ queue. This file is the short version of the rules that are load-bearing.
 5. **Credentials stay inside the broker process.** Candidates and evaluators get
    no keys. Redaction runs before persistence, not at render time.
 
-6. **Provider and model IDs are configuration, not constants.** Ox Alpha is a
-   stealth preview that may vanish.
+6. **Provider and model IDs are configuration, not constants.** Ox Alpha was a
+   stealth preview that might vanish, and on 2026-08-26 it did. Two NVIDIA
+   models this repo shipped as its "strong fallback" were never in NVIDIA's
+   catalogue at all. Model ids are discovered from provider listings and
+   reconciled on every discovery — do not write one down from memory.
 
 ## If another agent is working here too
 
@@ -61,8 +64,11 @@ fork is broken, not merely the control plane.
 
 - `urllib` gets Cloudflare `403 error code: 1010` from OpenCode Zen; `httpx`
   works. (Fixed in the doctor — do not reintroduce it in new probing code.)
-- Ox Alpha spends ~8,000 tokens on *hidden reasoning*; `max_tokens`, the
-  provider timeout and the client timeout must be changed together.
+- Reasoning models spend most of a small budget on *hidden reasoning*;
+  `max_tokens`, the provider timeout and the client timeout must be changed
+  together. Only `laguna-s-2.1-free` measured zero, which is why it judges.
+- A 429 saying "Rate limit exceeded, please try again later" may mean the free
+  allowance is spent, not that you are too fast. Only the error type says which.
 - A model in Zen's `/models` listing may still return "Model is unavailable".
 - The telemetry bus must be rebuilt after `fork()`, or all worker-process
   telemetry silently disappears.

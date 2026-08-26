@@ -20,7 +20,8 @@ Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
 **OE-MAX** — a local OpenAI-compatible **provider broker** on `127.0.0.1:8787`.
 OpenEvolve points at it and knows nothing about providers: routing, the NIM rate
 contract, failover, retry and credential ownership all live behind that one
-base URL. Ox Alpha (OpenCode Zen) is the primary route.
+base URL. Routing is **per role** — reasoner, coder, judge, fast — each with its
+own chain, addressed by model alias so the engine needs no changes.
 
 **Control plane** — telemetry, storage, query/control APIs and a 19-view browser
 Control Center over live evolution.
@@ -36,9 +37,11 @@ Both sit *around* upstream. The engine is byte-identical.
 - **Real telemetry** — a typed event model instrumented at the engine boundary.
   Every value the UI shows traces to an emitted event; there are no fixtures or
   placeholder metrics anywhere in the frontend.
-- **Provider routing** — OpenCode Zen / Ox Alpha Free preferred by default, with
-  automatic fallback to NVIDIA NIM and other OpenAI-compatible endpoints,
-  driven by live health *and* verified capabilities.
+- **Provider routing** — free OpenCode Zen routes preferred by default, with
+  automatic fallback to NVIDIA NIM and thirteen other OpenAI-compatible
+  providers, driven by live health *and* verified capabilities. Providers are
+  configuration (`configs/oe_max/providers.yaml`) and their model ids are
+  discovered from each provider's own listing rather than written down.
 - **Route quality, not just route health** — every candidate is attributed to
   the model request that generated it, so the question "which route produces
   better mutations, and at what cost?" is answerable from a run's own
@@ -69,9 +72,10 @@ Watch it live:
 ./run.sh                          # browser Control Center → 127.0.0.1:8000
 ```
 
-**No API key is required to try it.** OpenCode Zen was observed serving
-`x-preview-f-free` (Ox Alpha) without one — `./scripts/verify-providers.sh`
-shows what is actually reachable right now.
+**No API key is required to try it.** OpenCode Zen serves four free models
+without one — verified 2026-08-26 — and `./scripts/verify-providers.sh` shows
+what is actually reachable right now. Every other provider is key-gated and
+inert until you add its key, so the shipped configuration works as-is.
 
 Windows: `.\bootstrap.ps1` then `.\run.ps1`.
 
@@ -166,7 +170,7 @@ fork, not merely a control-plane bug.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |
 | [DECISIONS.md](DECISIONS.md) | engineering decisions and their evidence |
 | [TELEMETRY.md](TELEMETRY.md) | event model, transport, no-fake-data rule |
-| [PROVIDERS.md](PROVIDERS.md) | routing policy, Ox Alpha's real status |
+| [PROVIDERS.md](PROVIDERS.md) | what each provider actually does, verified; and the dead-endpoint list |
 | [SANDBOX.md](SANDBOX.md) | OpenCode isolation boundary |
 | [SECURITY.md](SECURITY.md) | secret handling and redaction |
 | [PATCH_SURFACE.md](PATCH_SURFACE.md) | every upstream file touched (none) |
@@ -179,23 +183,27 @@ fork, not merely a control-plane bug.
 
 ## Three things worth knowing up front
 
-**Ox Alpha Free is free for a limited time, not permanently.** OpenCode's own
-documentation says so, so free status is a runtime-probed value and is never
-rendered as unlimited.
+**A free route can stop existing.** Ox Alpha (`x-preview-f-free`) was this
+project's primary and was withdrawn from Zen — probed 2026-08-26, absent from
+`/models` and answering `ModelError: ... is not supported`. Free status is a
+runtime-probed value, never rendered as unlimited, and the model tables are
+reconciled against each provider's live listing on every discovery so a
+withdrawal disables itself. See [PROVIDERS.md](PROVIDERS.md).
 
-**Ox Alpha is a reasoning model, and that changes the settings that work.** It
-was measured spending 7,986–7,997 of an 8,000-token budget on *hidden*
-reasoning, truncating the visible diff — 5 of 8 evolution iterations produced
-nothing from ~130-second requests. The broker now detects `finish_reason=length`
-and retries with a doubled budget, and `max_tokens`, the provider timeout and
-the client timeout are tuned together. See [BENCHMARKS.md](BENCHMARKS.md).
+**A reasoning model can spend its whole budget thinking.** Ox Alpha was measured
+using 7,986–7,997 of an 8,000-token budget on *hidden* reasoning, truncating the
+visible diff — 5 of 8 iterations produced nothing from ~130-second requests. Its
+replacement reasons too. The broker detects `finish_reason=length` and retries
+with a doubled budget, and `max_tokens`, the provider timeout and the client
+timeout are tuned together. It is also why judging routes to a different model
+than mutation: of the free Zen routes, only `laguna-s-2.1-free` reports zero
+reasoning tokens, and ranking candidates does not need hidden thought.
 
-**A listed model is not a working model.** Zen lists `deepseek-v4-flash-free`
-and returns "Model is unavailable" for it. Discovery is therefore two-stage:
-list, then smoke-test. Capabilities are probed too — which is why re-admitting
-Ox Alpha to tool-using roles after
-[anomalyco/opencode#44300](https://github.com/anomalyco/opencode/issues/44300)
-was fixed upstream needed no code change at all.
+**A listed model is not a working model, and an unlisted one is not a model.**
+Zen lists `deepseek-v4-flash-free` and returns "Model is unavailable" for it, so
+discovery is two-stage: list, then smoke-test. The converse is what caught Ox
+Alpha's withdrawal and two NVIDIA models this project had configured that were
+never in NVIDIA's catalogue at all.
 
 ## Licence
 
