@@ -82,32 +82,58 @@ contradiction.
 
 ## T2 — Multi-offspring per request (spec §7F)
 
-**Priority:** high. **Effort:** medium. **Blocked by:** nothing.
+**Priority:** built, needs a real-provider benchmark. **Effort:** small.
+**Status:** implemented and verified locally; the number that matters is not
+measured yet.
 
-### Why
+### What is built
 
-At ~220 s and ~8,000 tokens per request, extracting 2–3 diverse candidates from
-one request is close to a linear throughput win. The latency measurement is what
-makes this valuable here specifically.
+`OE_MAX_MULTI_OFFSPRING=3` asks each request for N alternatives and turns the
+extras into ordinary candidates — same MAP-Elites placement, same novelty gate,
+same telemetry. `control_plane/telemetry/multi_offspring.py`.
 
-### Where to start
+Measured on a local run: **2.50 candidates per request against 1.08**, 17 of 30
+candidates arriving as extra offspring, and the siblings' best score beating the
+primaries'. So the mechanism works and the extras compete.
 
-`oe_max/search/operators.py::build_prompt`. Ask for N clearly separated
-alternatives, parse them apart, and push each through the existing
-`evaluation/gates.py` G0 → G1 chain. The dedup index will tell you immediately
-whether the "diverse" alternatives are actually diverse — that is the thing to
-measure.
+### What is not measured
+
+**Whether a real model's alternatives are actually different.** The local
+provider draws from a fixed pool of five mutations, so its duplicate rate says
+nothing about a real one. The failure mode this feature has is precisely three
+near-identical alternatives collapsing to one AST hash — throughput that is not
+real — and only a real provider can show it.
+
+```bash
+./scripts/start-broker.sh
+OE_MAX_MULTI_OFFSPRING=3 ./scripts/run-evolution.sh --iterations 12
+```
+
+Then compare against the same run at N=1. The numbers to read:
+
+| | where |
+|---|---|
+| candidates per request | `candidates` ÷ mutation `model_requests` |
+| *useful* candidates per request | exclude `candidate.rejected` events |
+| distinct code hashes | `SELECT COUNT(DISTINCT code_hash)` |
+| whether siblings ever win | `is_best` on a row with `multi_offspring` |
 
 ### Done when
 
-A benchmark shows candidates-per-request and *useful* candidates-per-request
-against the single-offspring baseline over ≥3 seeds.
+Candidates-per-request and *useful* candidates-per-request are measured against
+the N=1 baseline over ≥3 seeds on a real provider.
 
 ### Careful
 
-The spec says do not enable globally until benchmarked. The failure mode is
-three near-identical candidates that all collapse to one AST hash — throughput
-that is not real. `DedupIndex.stats()` measures exactly that; watch it.
+The spec says do not enable globally until benchmarked, which is why it is
+opt-in. Watch the duplicate rate, not the raw count: three alternatives that
+collapse to one AST hash are one candidate that cost a request-and-a-half.
+
+Watch truncation too. Asking for three alternatives triples the response
+length, and a reasoning model that spends 7,986 of an 8,000-token budget on
+hidden reasoning has nothing left. `MAX_OFFSPRING` is capped at 5 for that
+reason; if truncation rises, lower N before raising `max_tokens` (see
+HANDOFF §3.3 — that is one coupled setting, not three).
 
 ---
 

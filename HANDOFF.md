@@ -65,7 +65,7 @@ Watch it:
 **No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
 one. That was verified live, repeatedly.
 
-Tests: `./test.sh` → 437 upstream + 165 control plane + 140 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 214 control plane + 140 OE-MAX.
 
 ---
 
@@ -270,6 +270,38 @@ Three things to know before changing it:
   Steering that one corrupts the *score* rather than the candidate, which is
   much harder to notice than a broken diff.
 
+## 4c. Multi-offspring per request (opt-in)
+
+`OE_MAX_MULTI_OFFSPRING=3` asks each request for N alternatives and turns the
+extras into ordinary candidates. Local run: **2.50 candidates per request
+against 1.08**.
+
+```bash
+OE_MAX_MULTI_OFFSPRING=3 ./scripts/run-evolution.sh --iterations 12
+```
+
+The design constraint worth understanding before changing anything:
+**prompting alone cannot do this.** Upstream applies *every* diff block it
+finds, in sequence, so three alternatives in one response produce one
+incoherent merge, not three children. The alternatives are therefore separated
+before upstream's parser sees them — `extract_diffs`/`apply_diff` are wrapped so
+the primary child is byte-for-byte what it would have been at N=1, and the rest
+become siblings in the worker.
+
+Two traps already paid for, both of which failed *silently*:
+
+- **The preamble is not alternative 1.** "Here are three approaches…" contains
+  no diff, and applying a diff-free string returns the parent unchanged — the
+  run looks healthy and evolves nothing.
+- **`apply_diff` calls `extract_diffs` internally.** The wrapper re-enters with
+  an already-split alternative that has no marker, and an unconditional
+  assignment wipes the stash. The first live run produced zero siblings and no
+  error at all.
+
+What is *not* measured: whether a real model's alternatives are actually
+different. The local provider has a fixed pool of five mutations. The duplicate
+rate is the number that decides this feature — see NEXT_TASKS T2.
+
 ---
 
 ## 5. What to do next, in priority order
@@ -401,7 +433,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 165 control plane + 140 OE-MAX = 742 passing
+tests     437 upstream + 214 control plane + 140 OE-MAX = 791 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

@@ -221,14 +221,62 @@ The second point is what makes the fast-model routing experiment (below) the
 highest-value next step: a route that is ~2× faster and, on this sample,
 substantially more reliable is already quietly picking up the slack.
 
+## Route health moves, so a table is a snapshot
+
+Ox Alpha's own numbers changed materially within a week, on the same task
+through the same broker:
+
+| measured | success | p50 latency | attempts |
+|---|---|---|---|
+| first run | 40% | 220 s | 15 |
+| later | 26% | **284 s** | 23 |
+
+Two single requests during that later window returned in 294.8 s and 502.6 s.
+This is the argument for re-running the route experiment rather than trusting
+any table here, including this one — and for `route_quality`'s refusal to
+recommend a routing change from a thin sample.
+
+For contrast, on the same day, against the *same* evolution prompt:
+
+| route | mean latency | note |
+|---|---|---|
+| `nemotron-3-ultra-free` | **83.6 s** | 12 attempts, 100% valid, 0 duplicates, 58% improved |
+| `hy3-free` | ~261 s | 2 s on a trivial probe — the prompt is what makes it slow |
+| `x-preview-f-free` | 284 s p50 | 26% success |
+
+The `hy3-free` row is worth keeping precisely because it is embarrassing for
+quick probes: a route that answers a one-line prompt in 2 seconds took ~4
+minutes on a real evolution prompt. Capability probes measure reachability,
+not throughput.
+
+## Multi-offspring, measured locally
+
+`OE_MAX_MULTI_OFFSPRING=3`, 12 iterations, local provider:
+
+| | N=1 | N=3 |
+|---|---|---|
+| mutation requests | 12 | 12 |
+| candidates | 13 | 30 |
+| **candidates per request** | **1.08** | **2.50** |
+| extra offspring | 0 | 17 |
+| best score, primaries | 1.4045 | 1.4045 |
+| best score, siblings | — | **1.4953** |
+
+The siblings out-scored the primary children, so they compete on merit rather
+than padding the archive.
+
+**What this does not show.** The local provider draws from a fixed pool of five
+mutations, so its duplicate rate says nothing about a real model — and the
+duplicate rate is the number that decides this feature. Three near-identical
+alternatives collapsing to one AST hash is throughput that is not real. That
+measurement needs a real provider and has not been run.
+
 ## What to measure next
 
 Ordered by expected value given the measurements above:
 
-1. **Multi-offspring (spec §7F).** At ~130 s and ~8,000 tokens per request,
-   getting 2–3 diverse candidates from one request is close to a linear
-   throughput win. This is the single highest-value experiment on this route,
-   and the latency measurement is what makes that clear.
+1. **Multi-offspring on a real provider.** Built and measured locally (above);
+   the duplicate rate on a real model is the number that decides it.
 2. **Stock vs MAX, ≥5 seeds**, measuring area under the best-so-far curve
    against *requests* rather than wall-clock.
 3. **Operator bandit ablation** — `uniform_random` versus
