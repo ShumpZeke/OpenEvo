@@ -287,22 +287,77 @@ served slowly.
 
 ---
 
+## Session: the primary route had stopped existing (2026-08-26)
+
+Re-probed every configured provider and found the routing layer pointed at
+three models that could not serve, one of which was the primary.
+
+**What was wrong**
+
+| | |
+|---|---|
+| `x-preview-f-free` (Ox Alpha) | withdrawn from Zen — absent from `/models`, `ModelError: not supported`. Headed every chain in both routing layers. |
+| `deepseek-ai/deepseek-v4-pro` | not in NVIDIA's catalogue; configured as the "strong fallback". |
+| `qwen/qwen2.5-coder-32b-instruct` | not in NVIDIA's catalogue. NIM hosts no Qwen model at all. |
+| Zen `deepseek-v4-flash` | configured `requires_key=False`; returns 401 without a key. |
+
+The withdrawal arrives as HTTP **401** with a ModelError body, so it reads as a
+credential problem until you look at the body — which is how it went unnoticed.
+
+**What changed**
+
+- Routing is per role (reasoner / coder / judge / fast), addressed by broker
+  alias so the engine is untouched. The free Zen routes differ in *kind*: only
+  `laguna-s-2.1-free` reports zero hidden-reasoning tokens, and it now judges.
+  End to end the judge route answers in 859 ms against the reasoner's 8,158 ms.
+- `Registry.reconcile()` crosses the live listing against what is configured on
+  every discovery. Two-stage discovery asked "is a listed model serveable?" and
+  never the converse. Run against the real endpoints it found all three dead
+  models on its own, keylessly — both Zen's and NIM's listings are public.
+- Providers are configuration (`configs/oe_max/providers.yaml`, 15 of them,
+  key-gated). The catalogue names *patterns*, never model ids; concrete ids are
+  materialised from each provider's own listing.
+- An exhausted free allowance is no longer treated as a rate limit. Both are
+  429 and Zen's free-limit message even says "try again later"; only the type
+  distinguishes them. It now parks the route instead of spending four retries.
+- Retrying one route is bounded by wall-clock, not only attempt count. The
+  primary averaged 90 s per request, so four attempts is six minutes with a
+  working fallback idle.
+- A single failed probe no longer demotes a route. Caught live: laguna failed
+  one probe between two successful runs, which would have removed the judge and
+  fast roles' leading route until someone re-ran verification.
+- The Control Center showed the control plane's router while the *broker* did
+  the routing. `GET /api/broker` and a new panel show what actually serves.
+- GPU monitoring implemented — `RESOURCE_GPU` had been declared and never
+  emitted.
+
+**Verified end to end**: bootstrap, broker, an 8-iteration evolution run
+(7 programs, four islands, best 1.4607 from 0.7614), checkpoint resume
+(7 programs restored with generation counters intact), dashboard, provider
+verification, Control Center. Tests 437 + 327 + 295.
+
+---
+
 ## Blocked
 
-**Live NIM and OpenRouter verification.** No `NVIDIA_API_KEY` or
-`OPENROUTER_API_KEY` in the environment. The adapters, the global limiter, the
-retry/breaker path and the routing logic are implemented and tested offline
-against a scripted provider; the HTTP round-trip to those two endpoints is
-**unverified**. NIM model discovery is deliberately empty rather than populated
-from remembered IDs.
+**Live NIM and catalogue-provider verification.** No credential for any of them
+exists here. Endpoint liveness is verified for all 15, and NIM's model ids are
+**catalogue-verified** against its public listing — but not one inference call
+has been made, and `available` stays `None` rather than `True`.
 
-To verify: put the keys in `.env`, then `./scripts/verify-providers.sh`.
+To verify: put a key in `.env`, then `./scripts/verify-providers.sh`.
 
 **The container execution backend.** `docker` is on PATH here and its daemon is
 not reachable, so the `--network none` / read-only-root / dropped-capabilities
 path has never run. The probe reports it unavailable with the daemon's own
 error rather than assuming.
 
-**Ox Alpha.** Not blocked by a credential — it serves keylessly — but at 11%
-success and ~300 s per request it cannot currently be benchmarked. That is a
-measurement, not an outage: see BENCHMARKS.
+**Ox Alpha.** No longer blocked, because it no longer exists. It was never
+benchmarkable at 11% success and ~300 s per request, and on 2026-08-26 it was
+withdrawn from Zen entirely. The route that replaced it, `nemotron-3-ultra-free`,
+measured 67% success and ~90 s per request over a real run — better, and still
+the flakiest part of the system.
+
+**The PowerShell scripts.** `verify-providers.ps1` and `ablation.ps1` were added
+for parity and have **never been run**: there is no PowerShell in this
+container. The Python they call is tested.
