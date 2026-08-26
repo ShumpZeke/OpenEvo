@@ -188,3 +188,38 @@ def test_a_candidate_nobody_verified_reports_an_empty_list(client):
     state = client.app.state.evolution
     _candidate_with_request(state)
     assert client.get("/api/query/runs/r1/candidates/c1").json()["verification"] == []
+
+
+# --------------------------------------------------------------------------
+# The broker is a different process, and it is the one that actually routes.
+# --------------------------------------------------------------------------
+
+
+def test_broker_status_is_honest_when_the_broker_is_not_running(client, monkeypatch):
+    """
+    The rule that matters here is the no-fabricated-data rule.
+
+    An operator reading an invented route table would make worse decisions than
+    one told plainly that we cannot see the broker. So an unreachable broker
+    must yield `reachable: false` and a null router — never an empty-but-
+    plausible table, which reads as "all routes healthy, nothing has happened
+    yet".
+    """
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")   # discard port
+    body = client.get("/api/broker").json()
+
+    assert body["reachable"] is False
+    assert body["router"] is None
+    assert body["registry"] is None
+    assert body["detail"], "an unreachable broker must say why"
+    assert "127.0.0.1:9" in body["base"]
+
+
+def test_broker_status_does_not_raise_when_the_broker_is_absent(client, monkeypatch):
+    """
+    A missing broker is the normal state before `start-broker.sh` runs. The
+    Control Center must still load — a 500 here would take the whole Models
+    view down for a condition that is expected.
+    """
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")
+    assert client.get("/api/broker").status_code == 200

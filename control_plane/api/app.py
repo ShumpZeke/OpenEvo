@@ -20,6 +20,7 @@ import queue
 import time
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -685,6 +686,40 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         snap = state.router.snapshot()
         snap["last_doctor_reports"] = state.last_doctor_reports
         return snap
+
+    @app.get("/api/broker")
+    async def broker_status() -> Dict[str, Any]:
+        """
+        The live state of the OE-MAX broker: the router that actually serves.
+
+        This exists because the Control Center was showing the control plane's
+        own `ModelRouter` while every real routing decision was being made in a
+        different process, on :8787. An operator could watch a route reported
+        healthy here while the broker had its circuit open, or watch a route
+        the broker had parked for an exhausted free allowance and see nothing
+        at all. Two routers, one of them serving, and the UI showed the other.
+
+        When the broker is not running this reports that plainly. It must not
+        synthesise a route table: an operator reading invented health would
+        make worse decisions than one reading "not reachable".
+        """
+        base = os.environ.get("OE_MAX_BASE", "http://127.0.0.1:8787")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{base}/v1/oe-max/status")
+                r.raise_for_status()
+                payload = r.json()
+        except Exception as exc:
+            return {
+                "reachable": False,
+                "base": base,
+                "detail": f"{type(exc).__name__}: {exc}"[:200],
+                "router": None,
+                "registry": None,
+            }
+        payload["reachable"] = True
+        payload["base"] = base
+        return payload
 
     @app.post("/api/providers/doctor")
     async def run_doctor(probe_tools: bool = True) -> Dict[str, Any]:
