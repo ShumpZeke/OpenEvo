@@ -325,10 +325,19 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
                   <Row key={`${op}-${r.route}`}>
                     <Td>{i === 0 ? <Mono className="text-ink">{op}</Mono> : null}</Td>
                     <Td><Mono className="text-ink-dim">{r.route}</Mono></Td>
-                    <Td className="tabular">{fmtNum(r.attempts)}</Td>
+                    <Td className="tabular">
+                      {fmtNum(r.attempts)}
+                      {/* Shown but marked: a table sorted by yield looks
+                          equally confident on one attempt as on forty. */}
+                      {r.sufficient === false ? (
+                        <span className="text-ink-faint"
+                              title="too few attempts to read as a finding"> ?</span>
+                      ) : null}
+                    </Td>
                     <Td className="tabular">{pct(r.validity_rate)}</Td>
                     <Td className="tabular">{pct(r.improvement_rate)}</Td>
-                    <Td className="tabular">
+                    <Td className={r.sufficient === false
+                      ? "tabular text-ink-faint" : "tabular"}>
                       {typeof r.improvement_per_request === "number"
                         ? r.improvement_per_request.toFixed(4) : "—"}
                     </Td>
@@ -336,6 +345,11 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
                 )))}
             </tbody>
           </Table>
+          {data?.operator_evidence?.note ? (
+            <p className="text-2xs text-ink-faint mt-1">
+              ? {data.operator_evidence.note}
+            </p>
+          ) : null}
         </div>
       )}
 

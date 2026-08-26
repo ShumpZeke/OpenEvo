@@ -79,8 +79,9 @@ export const api = {
   routeQuality: (id: string, p: Json = {}) =>
     req<{
       run_id?: string; runs?: string[];
-      coverage: Json; routes: Record<string, Json>;
+      coverage: Json; routes: Record<string, Json>; throughput: Json;
       comparison: Json; by_operator: Record<string, Json[]>;
+      operator_evidence: Json;
     }>(`/api/query/runs/${id}/route-quality${qs(p)}`),
 
   evaluations: (id: string, p: Json = {}) =>

@@ -202,14 +202,27 @@ class RouteStats:
 # operator's chosen primary on the strength of three samples.
 MIN_ATTEMPTS_FOR_COMPARISON = 20
 
+# The same discipline, applied per operator — at a lower bar, and the reason is
+# arithmetic rather than a lowered standard. Fifteen operators subdivide the
+# same sample, so requiring 20 attempts each would need 300 requests before the
+# breakdown said anything at all; at ~100 s per request that is eight hours.
+#
+# Five is still a real bar: it is the difference between "this operator has a
+# pattern" and "this operator was tried once and got lucky". Rows below it are
+# shown — they are what the run did — but marked, so a reader cannot mistake
+# one sample for a finding.
+MIN_ATTEMPTS_PER_OPERATOR = 5
+
 
 class RouteQualityTracker:
     """Accumulates per-route mutation quality and ranks routes by efficiency."""
 
-    def __init__(self, min_attempts: int = MIN_ATTEMPTS_FOR_COMPARISON) -> None:
+    def __init__(self, min_attempts: int = MIN_ATTEMPTS_FOR_COMPARISON,
+                 min_attempts_per_operator: int = MIN_ATTEMPTS_PER_OPERATOR) -> None:
         self.routes: Dict[str, RouteStats] = {}
         self.by_operator: Dict[str, Dict[str, RouteStats]] = {}
         self.min_attempts = min_attempts
+        self.min_attempts_per_operator = min_attempts_per_operator
 
     def record(self, a: Attempt) -> None:
         self.routes.setdefault(a.route, RouteStats(a.route)).record(a)
@@ -294,18 +307,46 @@ class RouteQualityTracker:
         This is where a nuanced answer can appear: a slow, strong model may earn
         its latency on RADICAL_RETHINK and waste it on PARAMETER_CHANGE, which
         argues for routing *by operator* rather than picking one winner.
+
+        Every row carries `sufficient`. Ranking fifteen operators over a
+        twelve-request run means ranking single samples, and a table sorted by
+        yield looks equally confident whether a row rests on one attempt or
+        forty — which is the failure `compare()` refuses to make and this used
+        to make freely.
         """
         return {
-            op: [s.to_dict() for s in sorted(
-                routes.values(), key=lambda s: s.improvement_per_request, reverse=True)]
+            op: [{**s.to_dict(),
+                  "sufficient": s.attempts >= self.min_attempts_per_operator}
+                 for s in sorted(routes.values(),
+                                 key=lambda s: s.improvement_per_request,
+                                 reverse=True)]
             for op, routes in self.by_operator.items()
         }
+
+    def operator_evidence(self) -> Dict[str, Any]:
+        """How much of the per-operator breakdown is worth acting on."""
+        totals = {op: sum(s.attempts for s in routes.values())
+                  for op, routes in self.by_operator.items()}
+        sufficient = [op for op, n in totals.items()
+                      if n >= self.min_attempts_per_operator]
+        note = None
+        if totals and not sufficient:
+            note = (f"no operator reached {self.min_attempts_per_operator} "
+                    f"attempts; this breakdown shows what the run did, not "
+                    f"which operator is better")
+        elif totals and len(sufficient) < len(totals):
+            note = (f"{len(sufficient)} of {len(totals)} operators reached "
+                    f"{self.min_attempts_per_operator} attempts")
+        return {"attempts_per_operator": totals,
+                "min_attempts_per_operator": self.min_attempts_per_operator,
+                "sufficient": sorted(sufficient), "note": note}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "routes": {k: v.to_dict() for k, v in self.routes.items()},
             "comparison": self.compare(),
             "by_operator": self.operator_breakdown(),
+            "operator_evidence": self.operator_evidence(),
         }
 
     def render(self) -> str:

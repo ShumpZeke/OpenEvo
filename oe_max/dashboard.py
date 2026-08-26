@@ -302,12 +302,20 @@ def _route_quality_lines(control_url: str, run_id: str) -> List[str]:
                    f"{'valid':>7}{'improv':>8}{'impr/req':>11}{RESET}")
         for op, rows in sorted(by_operator.items()):
             for i, r in enumerate(rows):
+                # Thin rows are shown — they are what the run did — but dimmed
+                # and marked, so a single lucky sample cannot be read as a
+                # finding just because the table sorted it to the top.
+                thin = r.get("sufficient") is False
+                colour, mark = (GREY, " ?") if thin else ("", "")
                 out.append(
-                    f"  {(op if i == 0 else '')[:29]:<30}{r['route'][:29]:<30}"
+                    f"  {colour}{(op if i == 0 else '')[:29]:<30}{r['route'][:29]:<30}"
                     f"{_fmt(r.get('attempts')):>4}"
                     f"{r.get('validity_rate', 0) * 100:>6.0f}%"
                     f"{r.get('improvement_rate', 0) * 100:>7.0f}%"
-                    f"{r.get('improvement_per_request', 0):>11.4f}")
+                    f"{r.get('improvement_per_request', 0):>9.4f}{mark}{RESET}")
+        note = ((q or {}).get("operator_evidence") or {}).get("note")
+        if note:
+            out.append(f"  {GREY}? {note}{RESET}")
 
     cov = (q or {}).get("coverage") or {}
     if isinstance(cov, dict) and cov.get("note"):

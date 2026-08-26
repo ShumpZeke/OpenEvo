@@ -9,7 +9,8 @@ import json
 import pytest
 
 from oe_max.route_quality import (
-    Attempt, RouteQualityTracker, RouteStats,
+    MIN_ATTEMPTS_FOR_COMPARISON, MIN_ATTEMPTS_PER_OPERATOR, Attempt,
+    RouteQualityTracker, RouteStats,
 )
 
 
@@ -202,3 +203,87 @@ def test_corrupt_or_missing_history_is_not_fatal(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("{not json")
     assert RouteQualityTracker.load(str(bad)).routes == {}
+
+
+# ---------------------------------------------------------------------------
+# Evidence discipline in the per-operator view
+#
+# `compare()` refuses to rank routes on thin evidence. `operator_breakdown()`
+# used to rank fifteen operators over a twelve-request run without saying a
+# word — a table sorted by yield looks equally confident whether a row rests on
+# one attempt or forty.
+# ---------------------------------------------------------------------------
+
+def _attempt(tracker, operator, *, delta=None, n=1, route="zen/model"):
+    for _ in range(n):
+        tracker.record(Attempt(route=route, operator=operator, accepted=True,
+                               fitness_delta=delta, latency_ms=100.0, tokens=500))
+
+
+def test_a_single_sample_is_marked_insufficient():
+    t = RouteQualityTracker()
+    _attempt(t, "RADICAL_RETHINK", delta=0.9, n=1)
+
+    row = t.operator_breakdown()["RADICAL_RETHINK"][0]
+    assert row["attempts"] == 1
+    assert row["sufficient"] is False
+
+
+def test_enough_attempts_marks_it_sufficient():
+    t = RouteQualityTracker()
+    _attempt(t, "PARAMETER_CHANGE", delta=0.01, n=MIN_ATTEMPTS_PER_OPERATOR)
+
+    assert t.operator_breakdown()["PARAMETER_CHANGE"][0]["sufficient"] is True
+
+
+def test_thin_rows_are_shown_rather_than_hidden():
+    """
+    They are what the run did. Dropping them would misrepresent the run in the
+    other direction — as though those operators were never tried.
+    """
+    t = RouteQualityTracker()
+    _attempt(t, "DECOMPOSE", n=1)
+    assert "DECOMPOSE" in t.operator_breakdown()
+
+
+def test_the_evidence_summary_says_when_nothing_is_actionable():
+    t = RouteQualityTracker()
+    for op in ("DECOMPOSE", "LOCAL_OPTIMIZE", "RADICAL_RETHINK"):
+        _attempt(t, op, n=1)
+
+    evidence = t.operator_evidence()
+    assert evidence["sufficient"] == []
+    assert "not which operator is better" in evidence["note"]
+
+
+def test_the_evidence_summary_counts_what_cleared_the_bar():
+    t = RouteQualityTracker()
+    _attempt(t, "LOCAL_OPTIMIZE", n=MIN_ATTEMPTS_PER_OPERATOR)
+    _attempt(t, "DECOMPOSE", n=1)
+
+    evidence = t.operator_evidence()
+    assert evidence["sufficient"] == ["LOCAL_OPTIMIZE"]
+    assert "1 of 2 operators" in evidence["note"]
+
+
+def test_a_fully_evidenced_breakdown_carries_no_caveat():
+    t = RouteQualityTracker()
+    for op in ("LOCAL_OPTIMIZE", "DECOMPOSE"):
+        _attempt(t, op, n=MIN_ATTEMPTS_PER_OPERATOR)
+    assert t.operator_evidence()["note"] is None
+
+
+def test_the_operator_bar_is_lower_than_the_route_bar_and_says_why():
+    """
+    Arithmetic, not a lowered standard: fifteen operators subdividing one
+    sample would need 300 requests to clear the route bar each.
+    """
+    assert MIN_ATTEMPTS_PER_OPERATOR < MIN_ATTEMPTS_FOR_COMPARISON
+    assert MIN_ATTEMPTS_PER_OPERATOR > 1
+
+
+def test_an_unsteered_run_has_no_operator_evidence_to_report():
+    t = RouteQualityTracker()
+    t.record(Attempt(route="zen/model", accepted=True))
+    assert t.operator_evidence()["attempts_per_operator"] == {}
+    assert t.operator_evidence()["note"] is None

@@ -162,3 +162,51 @@ def test_no_operator_breakdown_is_shown_for_an_unsteered_run(fake_get):
     }
     text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
     assert "by operator" not in text
+
+
+def test_a_thin_operator_row_is_marked(fake_get):
+    """
+    Shown but marked. A table sorted by yield looks equally confident on one
+    attempt as on forty, and the top row is the one people read.
+    """
+    fake_get["route-quality"] = {
+        "routes": {"a/b": {"route": "a/b", "attempts": 12, "failures": 0,
+                           "duplicates": 0, "validity_rate": 1.0,
+                           "improvement_rate": 0.5, "mean_latency_s": 84.0,
+                           "improvement_per_request": 0.2}},
+        "by_operator": {
+            "RADICAL_RETHINK": [{"route": "a/b", "attempts": 1,
+                                 "validity_rate": 1.0, "improvement_rate": 1.0,
+                                 "improvement_per_request": 0.9,
+                                 "sufficient": False}],
+        },
+        "operator_evidence": {
+            "note": "no operator reached 5 attempts; this breakdown shows what "
+                    "the run did, not which operator is better"},
+        "coverage": {}, "comparison": {},
+    }
+    text = plain("\n".join(dashboard._route_quality_lines("http://cp", "run_1")))
+    assert "RADICAL_RETHINK" in text
+    assert "?" in text
+    assert "not which operator is better" in text
+
+
+def test_a_well_evidenced_operator_row_carries_no_mark(fake_get):
+    fake_get["route-quality"] = {
+        "routes": {"a/b": {"route": "a/b", "attempts": 40, "failures": 0,
+                           "duplicates": 0, "validity_rate": 1.0,
+                           "improvement_rate": 0.5, "mean_latency_s": 84.0,
+                           "improvement_per_request": 0.2}},
+        "by_operator": {
+            "LOCAL_OPTIMIZE": [{"route": "a/b", "attempts": 20,
+                                "validity_rate": 1.0, "improvement_rate": 0.5,
+                                "improvement_per_request": 0.2,
+                                "sufficient": True}],
+        },
+        "operator_evidence": {"note": None},
+        "coverage": {}, "comparison": {},
+    }
+    lines = [l for l in plain("\n".join(
+        dashboard._route_quality_lines("http://cp", "run_1"))).split("\n")
+        if "LOCAL_OPTIMIZE" in l]
+    assert lines and "?" not in lines[0]
