@@ -168,7 +168,7 @@ What *can* be said from the runs performed:
 |---|---|---|---|
 | 1 | 8k tokens, no truncation handling | **5 of 8** | 1.0586 |
 | 2 | 8k + truncation detection | 0 (cut short) | 1.0586 |
-| 3 | 16k + truncation detection + 600s provider timeout | **0 of 10** | **1.4995** |
+| 3 | 16k + truncation detection + 600s provider timeout | **0 in 9 iterations** | **1.4995** |
 
 The demonstrated improvement is in **request efficiency**, not a claim about
 search quality: the same search now wastes far fewer of its expensive requests.
@@ -177,13 +177,31 @@ one seed and ten iterations that is an anecdote, not a benchmark.
 
 ### Run 3, in full
 
+**The run did not finish.** It completed 9 of 10 iterations and was then killed
+by a 2400-second wall-clock cap I had set on the command — exit 124, my own
+limit, not an engine or provider failure. A checkpoint was written at iteration
+6 and the run is resumable:
+
+```bash
+./scripts/resume-evolution.sh runs/max-final
+```
+
+Numbers as measured over those 9 iterations:
+
 ```
 22 requests to Ox Alpha · 9 ok (41%) · 128,958 tokens · avg 229 s
    errors: 10 transport, 1 unavailable, 1 server, 1 truncated
  1 request  to nemotron-3-ultra-free · 1 ok (100%) · 6,107 tokens · avg 112 s
- 0 diff-parse failures · 0 client timeouts
+ 0 diff-parse failures · 2 client timeouts
  best score 1.0586 → 1.4995
 ```
+
+The headline result — 0 diff-parse failures against 5 of 8 before the fix —
+holds regardless of the run being cut short, because it is a ratio over the
+iterations that did run. The 2 client timeouts are worth noting rather than
+rounding away: at ~229 s average against a 900 s client limit, a slow request
+plus retries can still exceed it. That is the coupling described in Measurement
+3 and it has not been fully eliminated, only reduced.
 
 Two things this establishes beyond the truncation fix:
 
