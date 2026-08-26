@@ -435,6 +435,30 @@ filter that silently never matches. If a feature sets metadata that an analysis
 module reads, `_provenance_flags` in `instrument.py` is where it has to be
 copied onto the event.
 
+## 4g. An experiment may be running when you arrive
+
+A three-repeat `baseline` vs `multi_offspring` ablation was started at the end
+of the last session and takes 2–4 hours. Check for it before starting anything
+that competes for the broker:
+
+```bash
+ls -t runs/ablation-*/ablation.json | head -1 | xargs cat | tail -5
+```
+
+`"complete": false` means it was interrupted. The manifest checkpoints after
+every arm, so the run ids are preserved either way — recompute the comparison
+from the store at any time rather than re-running:
+
+```python
+from control_plane.storage.store import Store
+from control_plane.analysis.outcome import compare
+```
+
+The question it is settling: the first ablation measured multi-offspring at
+2.73 distinct candidates per request and only 1.11x per second, with the
+slowdown ambiguous between the feature and provider drift. Three interleaved
+repeats separate the two.
+
 ---
 
 ## 5. What to do next
