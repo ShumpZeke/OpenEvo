@@ -11,7 +11,12 @@ exactly why:
     smoke-tested.
   * `mimo-v2.5-free` returns 429 `FreeUsageLimitError` — free tiers carry real
     limits that differ per model.
-  * `x-preview-f-free` (Ox Alpha) answered with **no Authorization header at
+  * `x-preview-f-free` (Ox Alpha) was withdrawn entirely on or before
+    2026-08-26 — absent from `/models`, HTTP 401 "Model x-preview-f-free is
+    not supported" — after leading DEFAULT_CHAIN. So did its OpenRouter
+    alias `stealth/ox-alpha`, which is not in OpenRouter's 416-model
+    catalogue. An id you remember is not an id the provider serves.
+  * `x-preview-f-free` (Ox Alpha) had answered with **no Authorization header at
     all**, so requiring a key would have disabled the primary route.
   * Ox Alpha latency ranged 2s–25s with an intermittent 503, so health must be
     judged over several probes rather than one.
@@ -82,25 +87,47 @@ def build_default_registry(
         # deliberately generous; the router's retry path handles genuine hangs.
         timeout_s=600.0,
         models={
-            "ox_alpha": ModelSpec(
-                key="ox_alpha", id="x-preview-f-free", priority=100,
-                ephemeral_preview=True,
-                notes="Ox Alpha Free. Stealth preview, free for a limited time.",
-            ),
+            # `ox_alpha` (`x-preview-f-free`) was here at priority 100 and led
+            # DEFAULT_CHAIN. OpenCode Zen withdrew it on or before 2026-08-26:
+            # absent from `/models`, and a direct request answers HTTP 401
+            # "Model x-preview-f-free is not supported". Removed rather than
+            # demoted — an id the provider does not serve is not a fallback,
+            # it is a guaranteed failed attempt at the head of every retry.
             "nemotron_ultra": ModelSpec(
-                key="nemotron_ultra", id="nemotron-3-ultra-free", priority=70,
-                notes="Free, tools verified working 2026-08-26.",
+                key="nemotron_ultra", id="nemotron-3-ultra-free", priority=100,
+                notes=(
+                    "Free. Now the primary. Re-probed 2026-08-26 keyless: 3/3 "
+                    "chat at 4.04s p50, 3/3 tools emitting real tool_calls at "
+                    "7.13s p50."
+                ),
+            ),
+            "hy3": ModelSpec(
+                key="hy3", id="hy3-free", priority=70,
+                notes=(
+                    "Free. Fastest *reliable* tools route: 3/3 chat at 2.34s "
+                    "p50, 3/3 tools at 2.86s p50 (2026-08-26, keyless)."
+                ),
             ),
             "nemotron_lightning": ModelSpec(
                 key="nemotron_lightning", id="nemotron-3.5-lightning-free",
-                priority=60, notes="Fast free route (~750ms observed).",
+                priority=60,
+                notes=(
+                    "Free. 3/3 chat at 2.82s p50, 3/3 tools at 10.41s p50 "
+                    "(2026-08-26). The earlier '~750ms observed' note came from "
+                    "a trivial completion and understated it by ~4x; it spends "
+                    "~120 tokens per reply on hidden reasoning."
+                ),
             ),
             "laguna": ModelSpec(
                 key="laguna", id="laguna-s-2.1-free", priority=55,
-                notes="Fast free route (~675ms observed).",
-            ),
-            "hy3": ModelSpec(
-                key="hy3", id="hy3-free", priority=50, notes="Free route.",
+                notes=(
+                    "Free. Fastest route measured — 1.74s p50 — and the least "
+                    "reliable: 8/10 chat, and only 1/3 tools attempts emitted a "
+                    "tool call, the rest failing HTTP 503 'Endpoint is "
+                    "unavailable'. Last in the chain for that reason. The "
+                    "earlier '~675ms observed' note came from a trivial "
+                    "completion."
+                ),
             ),
         },
     )
@@ -114,10 +141,24 @@ def build_default_registry(
         requires_key=True,
         timeout_s=180.0,
         models={
-            "ox_alpha": ModelSpec(
-                key="ox_alpha", id="stealth/ox-alpha", priority=80,
-                ephemeral_preview=True,
-                notes="Alternate Ox Alpha route. Verify before relying on it.",
+            # `stealth/ox-alpha` was here as an alternate Ox Alpha route. It is
+            # not in OpenRouter's catalogue either — checked keylessly against
+            # all 416 listed models on 2026-08-26 — so it was a second dead id
+            # sitting at position 2 of DEFAULT_CHAIN.
+            #
+            # Replaced with a route whose id was read from that catalogue and
+            # whose pricing OpenRouter publishes as $0. Serving is UNVERIFIED:
+            # OpenRouter requires a key for completions and this repo holds
+            # none. Worth keying anyway — its rate limit is a different bucket
+            # from Zen's.
+            "nemotron_ultra_free": ModelSpec(
+                key="nemotron_ultra_free",
+                id="nvidia/nemotron-3-ultra-550b-a55b:free", priority=65,
+                notes=(
+                    "Listed at $0 in OpenRouter's catalogue (read keylessly "
+                    "2026-08-26). Model id catalogue-checked; serving NOT "
+                    "verified. `:free` variants carry their own daily caps."
+                ),
             ),
         },
     )

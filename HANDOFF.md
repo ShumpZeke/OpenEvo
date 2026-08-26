@@ -59,13 +59,20 @@ Watch it:
 ```bash
 ./scripts/dashboard.sh             # terminal 3: providers, rate window, routes
 ./run.sh                           # browser Control Center → :8000
-./scripts/verify-providers.sh      # what is actually reachable right now
+./scripts/verify-providers.sh      # what the broker can reach right now
 ```
 
-**No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
-one. That was verified live, repeatedly.
+Before any of that, check the routing table is not stale — it has been:
 
-Tests: `./test.sh` → 437 upstream + 303 control plane + 250 OE-MAX.
+```bash
+python3 scripts/check-models.py --catalog-only    # seconds, no server needed
+```
+
+**No API key needed.** OpenCode Zen serves its free tier without one — verified
+2026-08-26 across four models. It served `x-preview-f-free` (Ox Alpha) the same
+way until that model was withdrawn; see trap 3.11.
+
+Tests: `./test.sh` → 437 upstream + 362 control plane + 258 OE-MAX.
 
 ---
 
@@ -89,11 +96,18 @@ could not tell.
 Keep the trap in mind anyway: any new probing code you add must not reach for
 `urllib`.
 
-### 3.2 Ox Alpha spends its entire token budget on hidden reasoning
+### 3.2 A reasoning model spends its entire token budget on hidden reasoning
 
-Measured: **7,986–7,997 reasoning tokens out of an 8,000 budget.** The visible
-diff gets truncated and OpenEvolve logs `No valid diffs found` — five of eight
-iterations produced nothing from ~130-second requests.
+Measured on Ox Alpha: **7,986–7,997 reasoning tokens out of an 8,000 budget.**
+The visible diff gets truncated and OpenEvolve logs `No valid diffs found` —
+five of eight iterations produced nothing from ~130-second requests.
+
+Ox Alpha is gone (see 3.11) but the trap is not: every route in the current
+table is a reasoning model. `nemotron-3.5-lightning-free` spends ~120 tokens per
+short reply and `nemotron-3-ultra-free` ~30; scale that to a real diff and the
+same failure returns. It bit the provider doctor as recently as 2026-08-26,
+where a 16-token probe budget made a healthy model look like it had answered
+with nothing — and the doctor recorded that as a pass.
 
 Handled: the broker classifies `finish_reason=length` as `TRUNCATED` and retries
 with a **doubled** budget (an identical retry reproduces an identical
@@ -119,12 +133,52 @@ Current coupled values:
 Change one alone and a truncation failure becomes a timeout failure that looks
 like a regression.
 
-### 3.4 A listed model is not a working model
+### 3.4 A listed model is not a working model — and an unlisted one may work
 
 Zen's `/models` lists `deepseek-v4-flash-free`; calling it returns HTTP 400
-"Model is unavailable". `mimo-v2.5-free` returns 429 `FreeUsageLimitError`.
-Discovery is therefore two-stage — list, then smoke-test — in
-`oe_max/providers/registry.py`. Do not "simplify" it back to one stage.
+"Model is unavailable". `mimo-v2.5-free` and `big-pickle` return 429
+`FreeUsageLimitError`. Discovery is therefore two-stage — list, then smoke-test —
+in `oe_max/providers/registry.py`. Do not "simplify" it back to one stage.
+
+The converse is equally true and easier to forget: Ox Alpha served for weeks
+while never appearing in the listing at all. So
+`control_plane/providers/catalog.py` reconciles every configured id against the
+provider's catalogue and reports `listed` / `absent` / `unknown`, but **absent
+never disables a route** — the live probe stays the authority. A catalogue that
+could not be fetched is `unknown`, never `absent`; reporting a network failure
+as "the model is gone" would retire healthy routes.
+
+### 3.11 Model ids rot, and the whole default table can die at once
+
+On **2026-08-26 four of the five configured remote routes were dead
+simultaneously**:
+
+| route | model id | what happened |
+|---|---|---|
+| `zen-ox-alpha-free` | `x-preview-f-free` | withdrawn: absent from Zen's catalogue, HTTP 401 "Model x-preview-f-free is not supported" |
+| `zen-deepseek-v4-flash` | `deepseek-v4-flash` | configured keyless; it is Zen's **paid** tier and answers HTTP 401 "Missing API key." |
+| `nim-deepseek-v4-pro` | `deepseek-ai/deepseek-v4-pro` | absent from NIM's catalogue |
+| `nim-qwen25-coder-32b` | `qwen/qwen2.5-coder-32b-instruct` | absent from NIM's catalogue — NIM lists no qwen model at all now |
+
+Every role chain led with Ox Alpha, so the shipped defaults routed every role to
+a model that no longer existed. The test suite passed throughout: it asserted
+`zen-ox-alpha-free` was selected for `Role.MUTATION`, and it was — from our own
+table.
+
+Three guards came out of it, and none of them is a substitute for re-probing:
+
+1. `catalog.py` reconciles against the provider's live listing on every doctor
+   pass, **before** the credential check — a missing NIM key is not the
+   interesting fact when the model id no longer exists.
+2. `tests/evolution/test_providers.py` asserts *properties* (every chain leads
+   with an enabled, usable route; tool chains only contain tools-capable
+   routes) rather than model names.
+3. A failed doctor probe now takes the route out of selection for
+   `probe_ttl_s`. Before that, the doctor could measure a 503 and change
+   nothing, leaving the circuit breaker to rediscover it with real requests.
+
+**If you arrive here after a gap, run the doctor before anything else.**
+Assume the table is stale until it says otherwise.
 
 ### 3.5 The event bus must be rebuilt after `fork()`
 
@@ -231,37 +285,73 @@ From a real 10-iteration run through the broker, 2026-08-26:
 
 Two things to take from this:
 
-1. **Ox Alpha is slow and unreliable under sustained load.** 40% success, 220s
-   average. It is still the operator's chosen primary and the spec's requirement,
-   and the retry/failover path is what makes it usable.
+1. **Ox Alpha was slow and unreliable under sustained load.** 40% success, 220s
+   average. It was the operator's chosen primary and the retry/failover path is
+   what made it usable. It has since been withdrawn by the provider entirely —
+   trap 3.11 — so this row is history, not a current measurement.
 2. **The failover chain works in production, not just in tests.** When Ox Alpha
    degraded, the router moved to `nemotron-3-ultra-free`, which returned 100%
-   success at half the latency.
+   success at half the latency. That model is now the primary, and re-probed at
+   4.04 s p50 on 2026-08-26.
 
-That second point is the most interesting open question in the project — see
-next steps.
+The open question the second point raises survives the withdrawal — it is just
+between different routes now. See next steps.
 
-### Free Zen models, probed live
+### Free Zen models, re-probed 2026-08-26
 
-| model | serves | tools | latency |
-|---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | yes | yes | 1,969 ms |
-| `nemotron-3-ultra-free` | yes | yes | 829 ms |
-| `nemotron-3.5-lightning-free` | yes | yes | 1,271 ms |
-| `laguna-s-2.1-free` | yes | yes | 1,855 ms |
-| `hy3-free` | yes | yes | 2,444 ms |
-| `deepseek-v4-flash-free` | **no** | — | 400 "Model is unavailable" |
-| `mimo-v2.5-free` | **no** | — | 429 `FreeUsageLimitError` |
+The table below **supersedes** an earlier one on this page that listed Ox Alpha
+as serving and marked `laguna-s-2.1-free` as `tools: yes`. Both entries were
+wrong, and wrong in instructive ways: Ox Alpha had been withdrawn, and Laguna's
+tool support was recorded from a single HTTP 200 that contained no tool call.
 
-`anomalyco/opencode#44300` (Ox Alpha failing on `tools`) **is resolved** — tools
-requests now return 200.
+Three repeats each of chat and tools, keyless. "tool calls" counts replies that
+actually contained a `tool_calls` entry.
 
-Be precise about what that did and did not require, because it is easy to
-overclaim: the **capability filter** self-corrects in both directions with no
-code change — if the bug returns, the next probe records `supports_tools=False`
-and Ox Alpha drops out of tool roles automatically. The **chain order** is a
-stated preference and does *not* self-correct; leading tool roles with Ox Alpha
-again was a deliberate edit once the evidence changed.
+| model | chat | chat p50 | tool calls | tools p50 | notes |
+|---|---|---|---|---|---|
+| `nemotron-3-ultra-free` | 3/3 | 4.04 s | 3/3 | 7.13 s | strongest; now the primary |
+| `hy3-free` | 3/3 | 2.34 s | 3/3 | 2.86 s | fastest *reliable* tools route |
+| `laguna-s-2.1-free` | 8/10 | 1.74 s | **1/3** | 2.27 s | fastest; 503s; chat only |
+| `nemotron-3.5-lightning-free` | 3/3 | 2.82 s | 3/3 | 10.41 s | ~120 reasoning tokens/reply |
+| `mimo-v2.5-free` | 0/3 | — | — | — | 429 `FreeUsageLimitError` |
+| `big-pickle` | 0/3 | — | — | — | 429 `FreeUsageLimitError` |
+| `muse-spark-1.2-contributor-free` | 0/1 | — | — | — | HTTP 500 |
+| `deepseek-v4-flash-free` | 0/1 | — | — | — | 400 "Model is unavailable" |
+| `x-preview-f-free` (Ox Alpha) | 0/1 | — | — | — | **withdrawn** — see trap 3.11 |
+
+`anomalyco/opencode#44300` (Ox Alpha failing on `tools`) was resolved before the
+model was withdrawn, so it is now moot. The lesson it left is not:
+
+- The **capability filter** self-corrects in both directions with no code
+  change. Laguna is filtered out of tool roles today by measurement, and two
+  clean probes would put it back.
+- The **chain order** is a stated preference and does *not* self-correct.
+  Rebuilding the chains after Ox Alpha's withdrawal was a deliberate edit.
+
+Two probe rules exist because of the errors in the old table, and removing
+either re-introduces them: a tools probe must observe a `tool_calls` entry, and
+it must do so on **every** attempt, not one.
+
+### Other free endpoints, checked 2026-08-26
+
+Whether `GET /models` answers without a credential — which is what makes a
+provider safe to add, since its ids can then be verified rather than remembered.
+
+| Provider | catalogue keyless? | shipped? |
+|---|---|---|
+| OpenCode Zen | yes, 63 models | yes — serves keyless too |
+| NVIDIA NIM | yes, 83 models | yes, ids checked, serving unverified |
+| OpenRouter | yes, 416 models, 25 at $0 | one `:free` route, serving unverified |
+| DeepInfra / SambaNova / Chutes | yes | no — no established free tier |
+| Groq / Cerebras / Google AI Studio | no (401/403/404) | no — but all three have real free tiers; key them |
+| Mistral / Together / Nebius / Scaleway / ArliAI / Cohere | no | no |
+| GitHub Models | **HTTP 410, retirement brownout** | no |
+
+Groq, Cerebras and Google AI Studio are deliberately *not* shipped as profiles:
+their catalogues cannot be read without a key, so their model ids would have to
+be written from memory — which is exactly how four dead routes got into the
+table. Base URLs and env var names are in `.env.example`; add a profile once you
+hold a key and can read `/models`.
 
 ---
 
@@ -569,7 +659,7 @@ you need the authoritative wording.
 
 ```
 branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 303 control plane + 250 OE-MAX = 990 passing
+tests     437 upstream + 362 control plane + 258 OE-MAX = 1057 passing
 engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
 verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials

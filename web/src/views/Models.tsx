@@ -4,6 +4,12 @@
  * Shows the route table, live health, and the provider doctor's findings.
  * Critically, it shows *why* a model is or is not serving a role — including
  * when the operator's preferred model is excluded for lacking a capability.
+ *
+ * The Catalogue column was added after 2026-08-26, when four of five configured
+ * routes turned out to be dead simultaneously and this page could not say so:
+ * the operator's preferred model had been withdrawn by the provider, and all
+ * the page showed was a health badge reading "unused". `absent` here means the
+ * provider no longer lists that model id.
  */
 
 import React, {
@@ -45,6 +51,22 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
     finally { setBusy(false); }
   };
 
+  // Catalogue standing, from the doctor's reconciliation against the provider's
+  // own /models listing. Neither value is a verdict on whether the route works:
+  // a listed model can still refuse, and an unlisted one can still serve — Ox
+  // Alpha did for weeks. The tooltip carries the doctor's full wording.
+  const catalogBadge = (m: Json) => {
+    const detail: string = m.catalog_detail ?? "";
+    if (m.catalog_status === "listed")
+      return <Badge tone="ok" title={detail || "Listed by the provider"}>listed</Badge>;
+    if (m.catalog_status === "absent")
+      return <Badge tone="failed" title={detail || "Not in the provider's catalogue"}>
+        absent</Badge>;
+    return <Badge tone="stopped"
+                  title={detail || "Not reconciled yet — run the provider doctor"}>
+      unknown</Badge>;
+  };
+
   const freeBadge = (s: string) => {
     if (s === "free_limited_time") return <Badge tone="warn" title="Free for a limited time per the provider's own documentation — not guaranteed to remain free">free (limited time)</Badge>;
     if (s === "free") return <Badge tone="ok">free</Badge>;
@@ -58,10 +80,11 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
       <Panel title="Model profiles" loading={p.loading && !p.data} error={p.error}
              actions={<Button size="xs" tone="primary" onClick={runDoctor} disabled={busy}>
                {busy ? "probing…" : "run provider doctor"}</Button>}
-             footer="Capabilities marked (verified) were measured by a live probe; others are declared defaults.">
+             footer="Capabilities marked (verified) were measured by a live probe; others are declared defaults. Catalogue is reconciled against the provider\u2019s own /models listing \u2014 \u201cabsent\u201d means the provider no longer lists that id, which is evidence rather than proof: an unlisted preview can still serve.">
         <Table>
           <thead>
-            <tr><Th>Profile</Th><Th>Provider</Th><Th>Model</Th><Th>Free status</Th>
+            <tr><Th>Profile</Th><Th>Provider</Th><Th>Model</Th><Th>Catalogue</Th>
+                <Th>Free status</Th>
                 <Th>Capabilities</Th><Th>Credential</Th><Th>Health</Th>
                 <Th>Reqs</Th><Th>p50</Th><Th>429</Th><Th></Th></tr>
           </thead>
@@ -75,14 +98,25 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
                     <Mono className={m.priority === 0 ? "text-accent" : "text-ink"}>
                       {m.id}
                     </Mono>
-                    {m.priority === 0 && (
+                    {m.priority === 0 && m.enabled && (
                       <Badge tone="accent" title="Operator's preferred default route">
                         preferred
+                      </Badge>
+                    )}
+                    {/* Rule 3: an unusable route is shown disabled with a
+                        reason, never dropped from the page. A withdrawn model
+                        carries no roles and can never be re-enabled usefully;
+                        an opt-in one (a local server) can. */}
+                    {!m.enabled && (
+                      <Badge tone={(m.roles ?? []).length === 0 ? "failed" : "stopped"}
+                             title={m.notes || "Disabled"}>
+                        {(m.roles ?? []).length === 0 ? "withdrawn" : "disabled"}
                       </Badge>
                     )}
                   </Td>
                   <Td><Mono className="text-ink-dim">{m.provider}</Mono></Td>
                   <Td><Mono className="text-ink-dim" title={m.api_base}>{m.model}</Mono></Td>
+                  <Td>{catalogBadge(m)}</Td>
                   <Td>{freeBadge(m.free_status)}</Td>
                   <Td>
                     <span className="font-mono text-2xs">
@@ -101,6 +135,9 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
                   <Td>
                     {h.circuit_open
                       ? <Badge tone="failed" title={h.last_error ?? ""}>circuit open</Badge>
+                      : m.last_probe_ok === false
+                        ? <Badge tone="failed" title={m.last_probe_detail ?? ""}>
+                            probe failed</Badge>
                       : h.total_requests
                         ? <Badge tone={h.success_rate >= 0.9 ? "ok" : "warn"}>
                             {(h.success_rate * 100).toFixed(0)}%

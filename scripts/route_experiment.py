@@ -10,6 +10,14 @@ duplicates, and the two questions were already measured coming apart:
     x-preview-f-free (Ox Alpha)   29% success   292 s/request
     nemotron-3-ultra-free        100% success   112 s/request
 
+Ox Alpha was withdrawn from OpenCode Zen on or before 2026-08-26 and is no
+longer a runnable arm; the pair worth comparing now is the strongest free route
+against the fastest one:
+
+    nemotron-3-ultra-free   chat 3/3   4.04 s p50   (strongest)
+    hy3-free                chat 3/3   2.34 s p50   (fastest reliable)
+    laguna-s-2.1-free       chat 8/10  1.74 s p50   (fastest, 2 x HTTP 503)
+
 Design notes that are not incidental:
 
 * **One base config, pinned per arm.** The arms differ in exactly one field —
@@ -33,7 +41,7 @@ Design notes that are not incidental:
 
 Usage:
 
-    scripts/route_experiment.py --routes x-preview-f-free,nemotron-3-ultra-free \\
+    scripts/route_experiment.py --routes nemotron-3-ultra-free,hy3-free \\
                                --iterations 12 --repeats 2
 """
 

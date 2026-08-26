@@ -66,10 +66,40 @@ def test_query_endpoints_return_empty_not_fabricated(client):
 
 
 def test_providers_endpoint_exposes_routes_and_health(client):
+    """
+    Rewritten 2026-08-26. This used to assert that `zen-ox-alpha-free` reported
+    `free_limited_time`, and it kept passing after the model was withdrawn from
+    OpenCode Zen — a check on our own table cannot notice the table is stale.
+    It now asserts the properties the Models page actually depends on.
+    """
     body = client.get("/api/providers").json()
     assert body["profiles"] and body["routes"]
-    ox = next(p for p in body["profiles"] if p["id"] == "zen-ox-alpha-free")
-    assert ox["free_status"] == "free_limited_time"
+
+    valid = {"free", "free_limited_time", "paid", "unknown"}
+    for p in body["profiles"]:
+        assert p["free_status"] in valid, p
+        # Cost must be unknown or a number, never a fabricated zero standing in
+        # for "we did not check".
+        for key in ("input_cost_per_mtok", "output_cost_per_mtok"):
+            assert p[key] is None or isinstance(p[key], (int, float)), p
+            if p[key] == 0.0:
+                assert p["cost_basis"], f"{p['id']} claims $0 with no stated basis"
+        # Catalogue reconciliation is surfaced so the operator can see a
+        # withdrawn model id without reading the doctor's raw output.
+        assert p["catalog_status"] in {"listed", "absent", "unknown"}, p
+
+
+def test_providers_endpoint_reports_a_withdrawn_route_rather_than_hiding_it(client):
+    """
+    Rule 3: an unsupported route is shown disabled with a reason, never dropped.
+    An operator whose preferred model vanished must be able to see what happened
+    to it on the Models page.
+    """
+    body = client.get("/api/providers").json()
+    withdrawn = [p for p in body["profiles"] if not p["enabled"] and not p["roles"]]
+    assert withdrawn, "no withdrawn route exposed"
+    for p in withdrawn:
+        assert p["notes"].strip(), f"{p['id']} is disabled without a reason"
 
 
 def test_classic_visualizer_is_reachable(client):

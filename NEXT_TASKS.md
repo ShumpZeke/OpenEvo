@@ -8,10 +8,41 @@ Read `HANDOFF.md` first — especially §3, the traps.
 
 ---
 
+## T0 — The provider table went stale; re-probe before trusting anything
+
+**Priority:** do this first, every time you arrive. **Effort:** one command.
+**Status:** fixed on 2026-08-26; the fix is a guard, not a guarantee.
+
+On 2026-08-26 **four of the five configured remote routes were dead at once**
+and the whole test suite passed, because it asserted things about our own table
+rather than about the provider. Ox Alpha had been withdrawn from OpenCode Zen;
+both NIM model ids were absent from NIM's catalogue; `deepseek-v4-flash` was
+configured keyless and is Zen's paid tier. Every role chain led with Ox Alpha.
+
+The table has been rebuilt on live measurement and the doctor now reconciles
+against each provider's `/models` listing, but model ids rot on the provider's
+schedule, not ours. So:
+
+```bash
+python3 scripts/check-models.py --catalog-only   # seconds, spends no completions
+python3 scripts/check-models.py                  # full: catalogue + chat + tools
+```
+
+Neither needs a server. Exit status is `2` if a configured model id is absent
+from its provider's catalogue (a configuration change you have to make) and `1`
+if a route merely failed a live probe (possibly an outage). With the broker up,
+`./scripts/verify-providers.sh` checks the broker's own chain as well.
+
+Read the **Catalogue** column. `absent` means the provider no longer lists that
+id — which is evidence and not proof, because an unlisted preview can still
+serve, and Ox Alpha did for weeks. Details: HANDOFF §3.11, DECISIONS D33–D36.
+
+---
+
 ## T1 — Fast-model routing experiment
 
 **Priority:** highest. **Effort:** small — the machinery is built.
-**Blocked by:** nothing. **Status:** run it and read the answer.
+**Blocked by:** nothing. **Status:** the blocker is gone; run it.
 
 ### Why
 
@@ -22,12 +53,22 @@ Measured on real runs, and the numbers move:
 | `x-preview-f-free` (Ox Alpha) | 40% | 220 s | first measurement |
 | `x-preview-f-free` (Ox Alpha) | 26% | 284 s | later, same week |
 | `nemotron-3-ultra-free` | 100% | 112 s | first measurement |
+| `nemotron-3-ultra-free` | 3/3 | 4.04 s | 2026-08-26, keyless probe |
+| `hy3-free` | 3/3 | 2.34 s | 2026-08-26, keyless probe |
+| `laguna-s-2.1-free` | 8/10 | 1.74 s | 2026-08-26, keyless probe |
 
 If a cheaper route produces comparable mutation quality, throughput roughly
 doubles. The objective divides by wall-clock and API requests, so this attacks
-the denominator directly. That Ox Alpha's own numbers moved by that much
-between measurements is itself the argument for re-running rather than
-trusting a table.
+the denominator directly. That the numbers moved this much between measurements
+is itself the argument for re-running rather than trusting a table.
+
+**The old blocker is gone.** This task was stalled because the Ox Alpha arm
+produced 2 requests in 32 minutes at 11% success. Ox Alpha no longer exists, and
+the pair worth comparing now is `nemotron-3-ultra-free` (strongest, 4.04 s)
+against `hy3-free` (2.3x faster, 100% on tools) — both healthy, both keyless,
+so an arm actually completes. Note the probe latencies above are single short
+completions, not mutation requests; treat them as a reason to run the
+experiment, not as its result.
 
 ### What is already built
 
@@ -51,7 +92,7 @@ The three things this used to need are done:
 ./scripts/start-broker.sh                        # terminal 1
 ./run.sh                                         # terminal 2
 ./scripts/route-experiment.sh \
-    --routes x-preview-f-free,nemotron-3-ultra-free \
+    --routes nemotron-3-ultra-free,hy3-free \
     --iterations 12 --repeats 3
 ```
 
@@ -76,10 +117,14 @@ route ever to clear the minimum — and was called off part way through the Ox
 Alpha arms, which had produced 2 requests in 32 minutes at 11% success. See
 BENCHMARKS.
 
-**So the blocker on T1 is not the harness, it is the route.** Before spending
-hours on this again, check Ox Alpha's live success rate
+**That blocker was the route, not the harness — and the route is gone.** Ox
+Alpha was withdrawn on or before 2026-08-26, so those recorded attempts can
+never be completed and the arm cannot be re-run. Start over with the two healthy
+routes above.
+
+Still check live success rates before committing hours
 (`./scripts/verify-providers.sh`, or the ROUTE QUALITY section of
-`./scripts/dashboard.sh`). Below ~25% it will now be demoted out of the chain
+`./scripts/dashboard.sh`). Below ~25% a route is demoted out of the chain
 automatically, and an arm pinned to it is a waiting game with no result at the
 end.
 
@@ -91,10 +136,18 @@ per arm, and the verdict is not "insufficient evidence".
 
 ### Careful
 
-The operator explicitly chose Ox Alpha as primary. **Do not change the default
-route on latency alone.** Bring evidence about quality, then propose it. If Ox
-Alpha is better per *request* but worse per *minute*, that is a genuine
-trade-off for the operator to decide, not for you to silently resolve.
+The operator's stated preference is the *strongest* free route first, which is
+why `nemotron-3-ultra-free` leads the completion chains even though two routes
+are faster. **Do not change the default route on latency alone.** Bring evidence
+about quality, then propose it. If Ultra is better per *request* but worse per
+*minute*, that is a genuine trade-off for the operator to decide, not for you to
+silently resolve.
+
+The same applies to `laguna-s-2.1-free`, which is the fastest route measured
+(1.74 s) and serves 8 requests in 10. It sits second in the latency-sensitive
+chains rather than first because one failure in five costs a retry. If the
+experiment shows its speed dominates that even after retries, say so with the
+numbers — do not just promote it.
 
 Read the three views before concluding anything. `improvement_per_request` is
 what matters under a rate contract, `improvement_per_second` when wall-clock is
@@ -275,10 +328,12 @@ Two further corrections came out of it:
 - `ModelProfile.requires_key` was added, because Zen serves Ox Alpha with no
   Authorization header and treating a missing key as disqualifying switched off
   a working primary route.
-- The role chains now lead with Ox Alpha for tool-requiring roles too, since
-  #44300 is resolved and tools are verified. Note the honest distinction: the
-  *capability filter* self-corrects in both directions automatically, but the
-  *chain order* is a stated preference and needed a deliberate edit.
+- The role chains led with Ox Alpha for tool-requiring roles too, since #44300
+  was resolved and tools verified. **Superseded 2026-08-26:** Ox Alpha was
+  withdrawn and the chains were rebuilt on measurement (T0). The honest
+  distinction it illustrated still holds: the *capability filter* self-corrects
+  in both directions automatically, but the *chain order* is a stated preference
+  and needs a deliberate edit.
 
 ## T5 — Sandbox executors (spec §9)
 

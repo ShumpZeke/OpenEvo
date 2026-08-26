@@ -26,7 +26,12 @@ checkpoint_interval: 6
 random_seed: 42
 
 llm:
-  primary_model: "x-preview-f-free"
+  # Was "x-preview-f-free" (Ox Alpha) until 2026-08-26, when OpenCode Zen
+  # withdrew it: absent from the catalogue, and a direct request answers
+  # HTTP 401 "Model x-preview-f-free is not supported". Re-pointed at the
+  # strongest free route that answers a live probe. Keep this model-matched
+  # with the MAX arm or the comparison measures the provider, not the search.
+  primary_model: "nemotron-3-ultra-free"
   primary_model_weight: 1.0
   api_base: "https://opencode.ai/zen/v1"
   # Zen was observed serving this model without an Authorization header. A real

@@ -542,3 +542,143 @@ candidate on a plateau, which is where a run spends most of its time.
 Flagged jumps are still recorded into the history. Excluding them would make a
 genuine breakthrough permanently suspicious — and every real improvement after
 it, since the distribution would never learn the new scale.
+
+---
+
+## D33 — Reconcile model ids against the provider's catalogue, and never gate on it
+
+**Decision.** The provider doctor fetches `GET {api_base}/models` on every pass
+and reports each configured id as `listed`, `absent` or `unknown`. It runs
+*before* the credential check. `absent` never disables a route.
+
+**Evidence.** On 2026-08-26 four of five configured remote routes were dead at
+once: `x-preview-f-free` withdrawn from OpenCode Zen, `deepseek-v4-flash`
+configured keyless when it is Zen's paid tier, and both NIM ids absent from
+NIM's catalogue. Every role chain led with Ox Alpha, so the shipped defaults
+routed every role to a model that no longer existed. What the doctor reported at
+the time was `HTTP 401: Model x-preview-f-free is not supported` — accurate, and
+it reads like an expired key.
+
+**Why before the credential check.** This repo holds no NIM key, so the doctor
+stopped at "NVIDIA_API_KEY not set" for both NIM routes. True and useless: no
+key was ever going to make a withdrawn id serve. Zen, NIM and OpenRouter all
+serve `/models` without a credential, so the check that would have caught it is
+also the cheapest one available.
+
+**Why it must not gate.** Two asymmetries, both observed here:
+
+- *Listed does not imply served.* Zen lists `deepseek-v4-flash-free` and answers
+  "Model is unavailable" for it.
+- *Absent does not imply unserved.* Ox Alpha was a stealth preview — served for
+  weeks while never appearing in the listing.
+
+Had `absent` disabled routes, the second case would have switched off a working
+primary. So the catalogue is evidence attached to the live probe's verdict, and
+the live probe remains the authority.
+
+**A fetch failure is `unknown`, never `absent`.** An unreadable body would
+otherwise become an empty model set, and an empty set makes every configured
+model read as withdrawn simultaneously — the worst available wrong answer.
+
+**Would change if.** A provider offered a deprecation signal in the listing
+itself (a `deprecated` or `sunset` field). Then `absent` could stay advisory
+while an explicit deprecation became actionable.
+
+---
+
+## D34 — A tools probe must observe a tool call, on every attempt
+
+**Decision.** `Capability.TOOLS` is recorded only when the model emits a
+`tool_calls` entry, on all of N attempts (N=2 by default). The probe prompt asks
+for the tool by name, and the probe budget is 512/1024 tokens rather than 16.
+
+**Evidence.** Three separate false results, all from the same rule
+(`bool(data.get("choices"))`):
+
+1. `nemotron-3-ultra-free` answered a 256-token tools probe with HTTP 200, a
+   null `finish_reason`, an empty message and no tool call. Recorded as tool
+   support verified. It was truncation — the model is fine at a realistic
+   budget.
+2. `laguna-s-2.1-free` emits a tool call on roughly **1 attempt in 3**, failing
+   the others with "Upstream request failed: Endpoint is unavailable". A single
+   probe promoted it into every agent role a third of the time. HANDOFF's own
+   measurement table recorded it as `tools: yes` for exactly this reason.
+3. The old prompt was "reply with the single word: ok" with a `tools` array
+   attached. A model has no reason to call anything, so a working model and a
+   broken one produce identical replies — the probe could only ever have
+   detected an endpoint that rejected the field outright.
+
+**Why all N and not a majority.** An agent role that fails one run in three
+fails the run that needed it, and it cannot retry its way out: the failure
+arrives mid-conversation with state already committed. A capability is either
+something you can build on or it is not.
+
+**Cost.** Two probes per tools-capable route per doctor pass. Measured at
+2–10 s each against the current table.
+
+**Would change if.** Routes acquired published capability metadata that could be
+trusted, or if the probe cost became material at a much larger table — in which
+case N could drop to 1 for routes with a long clean history, not for new ones.
+
+---
+
+## D35 — A failed probe suppresses a route, and the suppression expires
+
+**Decision.** `apply_reports` records the doctor's live verdict on the profile
+(`last_probe_ok`), and `ModelRouter.candidates` excludes a route whose most
+recent probe failed within `probe_ttl_s` (default 600 s), naming the reason. A
+probe that was *skipped* — no credential, rate limited, bot-blocked — leaves the
+verdict untouched.
+
+**Evidence.** The doctor measured `zen-laguna-s-2.1-free` returning HTTP 503 and
+the router went on selecting it for two roles, because `apply_reports` only ever
+*added* verified capabilities. The circuit breaker would have caught it after
+several real requests — rediscovering, at cost, what had just been established
+for free.
+
+**Why it expires.** A suppression that never lifts is indistinguishable from
+deleting the model: a provider blip at 09:00 would keep a healthy route off the
+table all day. After the TTL the route is unproven again rather than condemned,
+and competes on live traffic where the breaker can judge it.
+
+**Why skipped probes are excluded.** "No credential" and "rate limited" are not
+evidence about the route. Recording them as failures would suppress models
+nobody has shown to be broken — `mimo-v2.5-free` and `big-pickle` refuse every
+anonymous request and are in the catalogue. That distinction is the entire
+reason `ProbeResult` has a `SKIPPED` value.
+
+**The same rule caught a bug in this change.** `apply_reports` originally
+*replaced* a profile's capabilities with whatever the run had verified. With
+`probe_tools=False` that is chat alone, so a single `--no-tools` run recorded
+"tools verified absent" for every route and left every agent role with no route
+— reporting the exclusion as "verified by provider doctor", which was false.
+Reports now carry `probed_capabilities` alongside `verified_capabilities`, and
+`apply_reports` merges only what was probed. An unrun probe is not a result,
+whichever direction it would have pointed.
+
+---
+
+## D36 — Do not ship a model id that cannot be verified
+
+**Decision.** Groq, Cerebras and Google AI Studio all have real, documented,
+card-free tiers and all three are worth keying — and none is shipped as a
+profile. Their base URLs and env var names are documented in `.env.example` and
+PROVIDERS.md instead. NIM and OpenRouter *are* shipped, with ids taken from
+their live catalogues and marked as unverified for serving.
+
+**Why.** Their catalogues cannot be read without a key, so their model ids would
+have to be written from memory. Writing model ids from memory is precisely how
+four dead routes got into the default table: `deepseek-ai/deepseek-v4-pro` and
+`qwen/qwen2.5-coder-32b-instruct` are plausible, well-formed, and have never
+existed on NIM.
+
+A catalogue-checked id with no serving verification is a genuinely weaker claim
+than a probed one, and a genuinely stronger one than a remembered id. The
+distinction is worth keeping in the table rather than flattening.
+
+**Cost, stated plainly.** An operator with a Groq key has to add a profile by
+hand instead of setting an environment variable. That is the intended trade:
+they will read `/models` while doing it.
+
+**Would change if.** A provider's catalogue became keylessly readable, or the
+repo acquired a key for one — then the id can be verified and the profile ships.

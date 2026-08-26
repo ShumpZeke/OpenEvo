@@ -25,8 +25,12 @@ queue. This file is the short version of the rules that are load-bearing.
 5. **Credentials stay inside the broker process.** Candidates and evaluators get
    no keys. Redaction runs before persistence, not at render time.
 
-6. **Provider and model IDs are configuration, not constants.** Ox Alpha is a
-   stealth preview that may vanish.
+6. **Provider and model IDs are configuration, not constants.** Ox Alpha was a
+   stealth preview that may vanish — and on 2026-08-26 it did, taking three
+   other configured routes with it while the whole test suite stayed green.
+   Run the provider doctor before trusting the routing table: NEXT_TASKS T0,
+   HANDOFF §3.11. Never write a model id from memory into a profile; take it
+   from the provider's `/models` listing.
 
 ## If another agent is working here too
 
@@ -51,7 +55,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 303 control plane + 250 OE-MAX
+./test.sh     # 437 upstream + 362 control plane + 258 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -61,9 +65,16 @@ fork is broken, not merely the control plane.
 
 - `urllib` gets Cloudflare `403 error code: 1010` from OpenCode Zen; `httpx`
   works. (Fixed in the doctor — do not reintroduce it in new probing code.)
-- Ox Alpha spends ~8,000 tokens on *hidden reasoning*; `max_tokens`, the
-  provider timeout and the client timeout must be changed together.
-- A model in Zen's `/models` listing may still return "Model is unavailable".
+- Every route in the table is a reasoning model and can spend its whole budget
+  on *hidden reasoning* before the first visible token; `max_tokens`, the
+  provider timeout and the client timeout must be changed together. A too-small
+  budget produces an empty HTTP 200, which is easy to mistake for a healthy one.
+- A model in Zen's `/models` listing may still return "Model is unavailable" —
+  and a model absent from the listing may still serve. The catalogue is
+  evidence, never a gate.
+- A tools request returning HTTP 200 proves nothing. Check for a `tool_calls`
+  entry, and check it more than once: `laguna-s-2.1-free` emits one on roughly
+  1 attempt in 3.
 - The telemetry bus must be rebuilt after `fork()`, or all worker-process
   telemetry silently disappears.
 - The rate limiter's epsilon is not cosmetic — removing it makes `acquire()`

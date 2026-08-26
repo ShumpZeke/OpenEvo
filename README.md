@@ -69,9 +69,19 @@ Watch it live:
 ./run.sh                          # browser Control Center → 127.0.0.1:8000
 ```
 
-**No API key is required to try it.** OpenCode Zen was observed serving
-`x-preview-f-free` (Ox Alpha) without one — `./scripts/verify-providers.sh`
-shows what is actually reachable right now.
+**No API key is required to try it.** OpenCode Zen serves its free tier without
+one — verified on 2026-08-26 across `nemotron-3-ultra-free`, `hy3-free`,
+`laguna-s-2.1-free` and `nemotron-3.5-lightning-free`.
+
+Model ids change under you. Check before trusting the table:
+
+```bash
+python3 scripts/check-models.py --catalog-only   # seconds, no completions spent
+python3 scripts/check-models.py                  # catalogue + chat + tool calls
+```
+
+Neither needs a server running. `./scripts/verify-providers.sh` checks the
+broker's own chain once the broker is up.
 
 Windows: `.\bootstrap.ps1` then `.\run.ps1`.
 

@@ -7,8 +7,13 @@
 # chain, not the feature under test.
 #
 # nemotron rather than the alias because Ox Alpha was measured at 11% success
-# and ~300 s per request; arms pinned to it produce a waiting game with no
-# result. Re-point this at the alias, or at Ox Alpha, once it recovers.
+# and ~300 s per request. It is not coming back: OpenCode Zen withdrew
+# `x-preview-f-free` on or before 2026-08-26 — absent from the catalogue, and a
+# direct request answers HTTP 401 "Model x-preview-f-free is not supported".
+#
+# nemotron-3-ultra-free re-probed 2026-08-26: 3/3 chat at 4.04 s p50, 3/3 tools.
+# It is now both the strongest free route and a fast one, so this arm no longer
+# carries the caveat it was written with.
 max_iterations: 24
 checkpoint_interval: 6
 random_seed: 42

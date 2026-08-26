@@ -44,13 +44,20 @@ class Route:
 # Default chain. Ox Alpha through Zen leads; OpenRouter is the alternate Ox
 # route; NIM is the specialist/fallback pool. Free Zen routes sit between so a
 # NIM key is not required for the system to keep working.
+# Rebuilt 2026-08-26. The first two entries used to be Ox Alpha on Zen and its
+# OpenRouter alias; both model ids had been withdrawn, so every request began
+# with two guaranteed failures before reaching a route that worked.
+#
+# Ordered by measured reliability first and latency second. `laguna` is the
+# fastest route measured and sits last because it served 8 requests in 10 —
+# a chain position is a claim about who should absorb the load, and one failure
+# in five costs a retry that outweighs its 0.6s advantage over `hy3`.
 DEFAULT_CHAIN: List[Tuple[str, str]] = [
-    ("opencode_zen", "ox_alpha"),
-    ("openrouter", "ox_alpha"),
     ("opencode_zen", "nemotron_ultra"),
+    ("opencode_zen", "hy3"),
     ("opencode_zen", "nemotron_lightning"),
     ("opencode_zen", "laguna"),
-    ("opencode_zen", "hy3"),
+    ("openrouter", "nemotron_ultra_free"),
 ]
 
 

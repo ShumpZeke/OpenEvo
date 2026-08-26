@@ -147,6 +147,7 @@ class ModelRouter:
         role_chains: Optional[Dict[Role, List[str]]] = None,
         failure_threshold: int = 4,
         circuit_cooldown_s: float = 60.0,
+        probe_ttl_s: float = 600.0,
     ) -> None:
         self.profiles: Dict[str, ModelProfile] = {
             p.id: p for p in (profiles if profiles is not None else default_profiles())
@@ -155,6 +156,11 @@ class ModelRouter:
         self.health: Dict[str, HealthWindow] = {pid: HealthWindow() for pid in self.profiles}
         self.failure_threshold = failure_threshold
         self.circuit_cooldown_s = circuit_cooldown_s
+        # How long a provider-doctor verdict counts as current. A failed probe
+        # keeps a route out of selection for this long; after that the route is
+        # unproven again rather than condemned, and gets to compete on live
+        # traffic where the circuit breaker can judge it.
+        self.probe_ttl_s = probe_ttl_s
         self._lock = threading.Lock()
 
     # -- selection -----------------------------------------------------
@@ -187,6 +193,17 @@ class ModelRouter:
                 continue
             if not prof.usable():
                 excluded[pid] = f"missing credential {prof.secret_ref}"
+                continue
+            if prof.probe_is_fresh(self.probe_ttl_s) and prof.last_probe_ok is False:
+                # The doctor measured this route failing, recently. Selecting it
+                # anyway means spending real requests to rediscover a fact we
+                # already paid for. Expires with the TTL so a recovered route
+                # returns on its own.
+                age = time.time() - prof.last_probe_at
+                excluded[pid] = (
+                    f"provider doctor found this route failing {age:.0f}s ago: "
+                    f"{prof.last_probe_detail or 'no detail recorded'}"
+                )
                 continue
             missing = [c.value for c in required if not prof.supports(c)]
             if missing:
