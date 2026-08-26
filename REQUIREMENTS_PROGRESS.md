@@ -103,7 +103,7 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 | Requirement | Status | Notes |
 |---|---|---|
 | Keys never reach candidates | DONE | Broker holds them; the engine gets only a local token |
-| Isolated candidate execution | PARTIAL | `control_plane/sandbox/opencode.py` enforces the isolation boundary; container executors not built |
+| Isolated candidate execution | PARTIAL | `oe_max/execution/` — subprocess backend with real POSIX ceilings (CPU, address space, file size, process count, wall clock), a fresh working directory per run, an environment allowlist and process-group kill on timeout. Container backend implemented (`--network none`, read-only root, all capabilities dropped) but **unverified here**: docker is installed and its daemon is unreachable, so the probe correctly reports it unavailable. PARTIAL because the subprocess backend does not stop network access, filesystem reads, or importing packages installed in the interpreter — all three are declared in `describe_backends()` rather than papered over |
 | Suspicious-jump verification | DONE | `verification/suspicion.py` | Modified z-score on the run's own improvement history, median/MAD rather than mean/σ so one outlier cannot desensitise the detector against the next. Emits `candidate.suspicious` and triggers V1 |
 | Protect evaluator/hidden tests | DEFERRED | Needs the sandbox executors |
 

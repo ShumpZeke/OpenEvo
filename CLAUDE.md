@@ -51,7 +51,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 258 control plane + 186 OE-MAX
+./test.sh     # 437 upstream + 258 control plane + 210 OE-MAX
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
