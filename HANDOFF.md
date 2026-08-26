@@ -342,59 +342,53 @@ be a safety claim nobody made.
 
 ---
 
-## 5. What to do next, in priority order
+## 4e. Sandboxed evaluation and Seed Forge (opt-in)
 
-Ordered by expected value, with the reasoning attached so you can disagree with
-the ordering rather than guess at it.
+**`OE_MAX_SANDBOX_EVAL=1`** runs the task's evaluation function — and therefore
+the candidate — in a separate process under real ceilings instead of on a
+thread inside the run. Measured: the shipped seed scores 1.382 through the
+sandbox in 1.2 s; a candidate that allocates without bound is stopped in 0.9 s
+with the evaluator still holding 15 MB.
 
-### 1. Fast-model routing experiment — highest value
+`oe_max/execution/describe_backends()` states what each backend stops and what
+it does not. Read it before relying on it. The subprocess backend does **not**
+stop network access, filesystem reads, or `import oe_max` — it runs on the
+interpreter this project is installed into. Only the container backend closes
+those, and on this machine it is unavailable: `docker` is on PATH and its
+daemon is not reachable, which the probe reports rather than assuming.
 
-The measurement in §4 makes this urgent: Ox Alpha is 40% reliable at 220 s;
-`nemotron-3-ultra-free` was 100% at 112 s. If a cheaper route produces
-comparable mutation quality, throughput roughly doubles for free.
+**Seed Forge** (`oe_max/search/seed_forge.py`) builds a starting population from
+one seed with no model requests. On the shipped example: 7 valid distinct
+variants, scores 0.769–1.478 against the seed's 1.423, two of them better.
 
-**Do not just switch the default.** The operator explicitly wants Ox Alpha
-primary. Measure per-operator-class quality first, using the statistics
-`router.stats_by_route()` already collects, then propose the change with
-evidence.
-
-### 2. Multi-offspring (spec §7F)
-
-At ~220 s and ~8,000 tokens per request, getting 2–3 diverse candidates from one
-request is close to a linear throughput win. The latency measurement is what
-makes this the second-highest-value item.
-
-Start in `oe_max/search/`, ask for N labelled alternatives in one prompt, split
-them, and feed each through the existing G0/G1 gates. Benchmark before enabling
-by default — the spec is explicit about that.
-
-### 3. Stock vs MAX benchmark (spec §16)
-
-The harness is ready: `./scripts/run-evolution.sh --profile stock|max`. Both
-arms use the **same model** and differ only in whether they go through the
-broker. Needs ≥5 seeds. Measure area under the best-so-far curve against
-*requests*, not wall-clock.
-
-Expect the baseline to be unusually penalised on this route because it lacks
-truncation escalation. That is a real difference but it is provider handling,
-not search quality — separate the two when you write it up.
-
-### 4. Sandbox executors
-
-`control_plane/sandbox/opencode.py` enforces the isolation boundary and is
-tested (9 tests, including that writes into operator-owned paths are refused).
-What is missing is the thing that *runs candidates inside it* — container and
-worktree backends with CPU/RAM/pids limits and a wall timeout.
-
-Docker is available on this machine. This is the largest remaining subsystem and
-the one that unlocks the anti-reward-hacking work (spec §9).
-
-### 5. Verification stages V1/V2 (spec §8)
-
-Property, metamorphic, differential and hidden tests, then symbolic/SMT and the
-independent critic. Depends on the sandbox for anything untrusted.
+Read that result carefully. The variants that won did so by running the search
+*harder* — trading local compute for score, not finding a better algorithm.
+Nothing seeds a run from the forge yet.
 
 ---
+
+## 5. What to do next
+
+The queue with rationale lives in **[NEXT_TASKS.md](NEXT_TASKS.md)** — kept
+there rather than duplicated here, because two lists diverge and then nobody
+knows which one is current.
+
+The short version, as of this handoff:
+
+| | |
+|---|---|
+| **T1** fast-model routing | machinery done, one thin result recorded. Re-run with `--repeats 3` |
+| **T2b** run the ablations | four features are built, gated and unmeasured. `scripts/ablation.sh` settles them — **not against the local stub**, see the task |
+| **T3** stock vs MAX, ≥5 seeds | harness ready; expect the baseline to be penalised for lacking truncation escalation, and separate that from search quality when writing it up |
+| **T6** V2 verification | V1 is done; V2 (symbolic/SMT/independent critic) is not |
+
+Two things that are *built but not in the loop*, which is the trap this project
+keeps falling into and the first thing worth checking before building anything
+new:
+
+- **the operator bandit.** `search/bandit.py` is tested and is not what picks
+  operators; selection is uniform random until per-operator reward exists.
+- **Seed Forge.** It produces a population and nothing starts a run from it.
 
 ## 6. Blocked, and exactly how to unblock
 
@@ -415,6 +409,14 @@ cp .env.example .env      # add OPENROUTER_API_KEY and/or NVIDIA_API_KEY
 NIM's model list is deliberately **empty** in `registry.py` — it must be
 discovered live, never populated from remembered IDs. The spec is explicit and
 the `deepseek-v4-flash-free` finding shows why.
+
+**The container execution backend is unverified for the same shape of reason.**
+`docker` is on PATH here and its daemon is not reachable, so
+`oe_max/execution` correctly reports the backend unavailable with the daemon's
+own error. The `--network none` / read-only-root / dropped-capabilities path is
+implemented and has never run. On a machine with a working runtime,
+`available_backends()` will include `container` and `backend="auto"` will
+prefer it — verify that before claiming candidates are network-isolated.
 
 The NIM limiter enforces ≤44 attempt-starts per rolling 60 s. That invariant is
 proven by 17 property tests on a virtual clock, but it has never run against the
@@ -450,9 +452,10 @@ These are not style preferences; each is load-bearing.
 |---|---|
 | `README.md` | What this is, how to run it |
 | `ARCHITECTURE.md` | How the pieces fit and why |
-| `DECISIONS.md` | 24 decisions with evidence and what would change them |
+| `DECISIONS.md` | 32 decisions with evidence and what would change them |
 | `BUILD_LOG.md` | What was built, in order, and what measurements changed |
 | `BENCHMARKS.md` | Live numbers from the real primary route |
+| `NEXT_TASKS.md` | **The work queue**, with rationale and the traps per task |
 | `REQUIREMENTS_PROGRESS.md` | Every spec requirement → status, gaps, blockers |
 | `FEATURE_COVERAGE_MATRIX.md` | Acceptance criteria scored honestly |
 | `PATCH_SURFACE.md` | Every upstream file touched (none) |
