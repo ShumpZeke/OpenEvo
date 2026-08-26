@@ -150,7 +150,7 @@ tests/              upstream suite (untouched) + tests/evolution
 | Suite | Result |
 |---|---|
 | Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
-| Control plane | **286 passed** |
+| Control plane | **294 passed** |
 | OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **250 passed** |
 | Web typecheck | clean |
 

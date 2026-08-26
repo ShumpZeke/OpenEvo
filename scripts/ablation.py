@@ -77,23 +77,47 @@ ARMS: Dict[str, Dict[str, Any]] = {
                 "deduplication?",
     },
     "seed_forge": {
-        "env": {"OE_MAX_SEED_FORGE": "3",
-                "EVOLUTION_EVALUATOR_PATH": "examples/function_minimization/evaluator.py"},
+        "env": {"OE_MAX_SEED_FORGE": "3"},
+        "needs_evaluator": True,
         "asks": "does starting from a forged population beat starting from one "
                 "program?",
         "note": "the variants cost evaluation time but no model requests, so "
                 "read this arm on area-under-curve per *request* — measured "
                 "against wall-clock it is paying for an advantage it did not "
-                "earn. EVOLUTION_EVALUATOR_PATH must match --task.",
+                "earn.",
     },
     "verify": {
         "env": {"OE_MAX_VERIFY": "1"},
+        "needs_evaluator": True,
         "asks": "what does verification cost, and does it change the outcome?",
         "note": "verification only observes — it never removes a candidate — "
                 "so a difference in outcome here is variance, not effect. The "
                 "number worth reading from this arm is the time it added.",
     },
 }
+
+
+def arm_env(name: str, task: str) -> Dict[str, str]:
+    """
+    The environment for one arm, with task-derived paths filled in.
+
+    Derived rather than hardcoded because both `seed_forge` and `verify` need
+    to know where the evaluator is, and a hardcoded path silently degrades when
+    `--task` changes: seeding skips entirely, and verification quietly falls
+    back to generic checks only — an arm that looks like it ran and tested
+    almost nothing.
+    """
+    env = dict(ARMS[name]["env"])
+    if ARMS[name].get("needs_evaluator"):
+        env["EVOLUTION_EVALUATOR_PATH"] = os.path.join(
+            "examples", task, "evaluator.py")
+        # The task's entry point, not the default: function_minimization
+        # evolves `search_algorithm`, and verifying `run_search` would check a
+        # wrapper rather than the thing that changed.
+        env.setdefault("OE_MAX_VERIFY_ENTRY_POINT",
+                       os.environ.get("OE_MAX_VERIFY_ENTRY_POINT",
+                                      "search_algorithm"))
+    return env
 
 
 def _get(url: str, timeout: float = 30.0) -> Any:
@@ -164,7 +188,7 @@ def main() -> int:
             print(f"{name}\n    asks: {arm['asks']}")
             if arm.get("note"):
                 print(f"    note: {arm['note']}")
-            print(f"    env : {arm['env']}")
+            print(f"    env : {arm_env(name, 'function_minimization')}")
         return 0
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
@@ -196,7 +220,7 @@ def main() -> int:
         results.append(_run(f"baseline-{rep + 1}", {}, args))
         checkpoint()
         for arm in arms:
-            results.append(_run(f"{arm}-{rep + 1}", dict(ARMS[arm]["env"]), args))
+            results.append(_run(f"{arm}-{rep + 1}", arm_env(arm, args.task), args))
             checkpoint()
 
     checkpoint(complete=True)
