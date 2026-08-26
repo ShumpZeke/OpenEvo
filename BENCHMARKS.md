@@ -369,6 +369,64 @@ ox alpha   → degraded: succeeding 11% of the last 19 attempts (needs 25%)
 nemotron   → healthy
 ```
 
+## First ablation on a real provider
+
+One repeat per arm, 12 iterations, pinned to `nemotron-3-ultra-free` through
+the broker. `scripts/ablation.sh`.
+
+| arm | requests | raw / request | **distinct / request** | duplicates | mean latency | AUC vs baseline |
+|---|---|---|---|---|---|---|
+| baseline | 12 | 1.00 | 1.00 | 0% | 118 s | — |
+| operators | 12 | 1.00 | 1.00 | 0% | 114 s | **1.071x** |
+| multi_offspring | 11 | 3.00 | **2.73** | 9% | 289 s | **1.092x** |
+| seed_forge | 5 | 1.00 | 1.00 | 0% | 583 s | insufficient |
+
+### The local measurement was wrong about multi-offspring
+
+Against the local stub the feature looked like a 1.29x gain, with 69% of the
+extra output duplicated. Against a real model it is **2.73 distinct candidates
+per request against 1.00, with 9% duplicates** — the stub's duplicate rate was
+its fixed pool of five mutations and nothing to do with the feature. That
+caveat was written down at the time; this is it being cashed.
+
+### And per second it nearly vanishes
+
+Asking for three alternatives made each request 2.5x slower, so:
+
+| arm | distinct per request | distinct per 1000 s |
+|---|---|---|
+| baseline | 1.00 | 8.48 |
+| operators | 1.00 | 8.80 |
+| multi_offspring | **2.73** | **9.42** |
+
+A 2.7x gain per request is a **1.11x** gain per second. Which number matters
+depends on what is scarce — under a rate contract the first, against a deadline
+the second — and this is the same per-request/per-second inversion the three
+scarcity views were built for, now showing up for a *feature* rather than a
+route.
+
+### What this run cannot tell you
+
+- **One repeat per arm.** The verdicts say "over 1 and 1 scored runs".
+- **Whether the 2.5x slowdown is the feature or the provider.** nemotron
+  degraded from 77% to 48% success during the experiment, with its p50 latency
+  doubling, and the arms ran sequentially. The comparison now carries that
+  caveat automatically; separating the two needs **interleaved repeats**.
+- **Anything about seed_forge.** Its arm hit the 40-minute cap after 5 requests
+  at 583 s each — it ran through the worst of the drift.
+
+The `operators` arm is the only clean comparison in the set: 114 s against
+118 s, same request count, same conditions. Its 1.071x on area-under-curve is
+modest and real.
+
+### A note on measuring drift
+
+Run-level success rate reads **100% for every arm** while the broker's own
+health showed 48%. That is not a contradiction: the broker retries, so the
+engine records a success for a request the provider failed several times first.
+The cost lands entirely in latency, which is why latency — not success rate —
+is the drift signal that survives the retry layer.
+
 ## What to measure next
 
 Ordered by expected value given the measurements above:

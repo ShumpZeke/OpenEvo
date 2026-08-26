@@ -190,12 +190,34 @@ that way — pure variance over eight requests. Only `multi_offspring` is
 answerable against the stub, because the provider does honour a request for N
 alternatives.
 
+### What one round already showed
+
+Recorded in BENCHMARKS: `multi_offspring` gives **2.73 distinct candidates per
+request against 1.00** on a real provider — and only **1.11x per second**,
+because each request became 2.5x slower. `operators` gives 1.071x on
+area-under-curve under matched conditions. `seed_forge` timed out with 5
+requests and showed nothing.
+
+One repeat per arm, so none of it is settled.
+
+### Interleave the repeats
+
+The provider drifts *during* the experiment — nemotron went 77% → 48% success
+with its latency doubling, in one afternoon. Running baseline, arm, baseline,
+arm spreads that across both sides instead of concentrating it in whichever ran
+second. The harness caveats the comparison when it detects drift, but a caveat
+is not a substitute for a design that avoids it.
+
+Watch latency, not success rate, when judging conditions: the broker retries,
+so a run's recorded success rate reads 100% while the provider is at 48%. The
+cost lands in latency.
+
 ### Done when
 
-Each arm has ≥3 repeats against the broker and a verdict that is not
-"insufficient evidence" — which needs at least 10 mutation requests per arm.
-Then move the matrix rows from PARTIAL to DONE *with the numbers*, or to a
-stated negative result, which is equally worth having.
+Each arm has ≥3 interleaved repeats against the broker and a verdict that is
+not "insufficient evidence" and carries no drift caveat. Then move the matrix
+rows to DONE *with the numbers*, or to a stated negative result, which is
+equally worth having.
 
 ### Careful
 

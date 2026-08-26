@@ -132,20 +132,39 @@ def provider_conditions(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]
 # between them is worth more caveat than conclusion.
 DRIFT_TOLERANCE = 0.15
 
+# And how far their mean latencies may diverge. This is the signal that
+# actually fires, and the reason is worth knowing: the broker retries, so the
+# engine records a *success* for a request the provider failed several times
+# first. Run-level success rate therefore reads 100% while the broker's own
+# health shows 48% — measured, on the ablation that motivated this. The cost of
+# those retries lands entirely in latency, which is why latency is the drift
+# signal that survives the retry layer.
+LATENCY_DRIFT_RATIO = 1.5
+
 
 def drift_warning(a: Dict[str, Any], b: Dict[str, Any],
                   a_name: str, b_name: str) -> Optional[str]:
     """A sentence when the two arms did not face the same provider."""
     ra, rb = a.get("success_rate"), b.get("success_rate")
-    if ra is None or rb is None:
-        return None
-    if abs(ra - rb) < DRIFT_TOLERANCE:
-        return None
-    worse, better = ((b_name, a_name) if rb < ra else (a_name, b_name))
-    return (f"the provider was not the same for both arms: {a_name} saw "
-            f"{ra:.0%} success and {b_name} saw {rb:.0%}. {worse} ran through "
-            f"worse conditions than {better}, so some of this difference is "
-            f"the provider, not the feature.")
+    if ra is not None and rb is not None and abs(ra - rb) >= DRIFT_TOLERANCE:
+        worse, better = ((b_name, a_name) if rb < ra else (a_name, b_name))
+        return (f"the provider was not the same for both arms: {a_name} saw "
+                f"{ra:.0%} success and {b_name} saw {rb:.0%}. {worse} ran "
+                f"through worse conditions than {better}, so some of this "
+                f"difference is the provider, not the feature.")
+
+    la, lb = a.get("mean_latency_s"), b.get("mean_latency_s")
+    if la and lb:
+        ratio = max(la, lb) / min(la, lb)
+        if ratio >= LATENCY_DRIFT_RATIO:
+            slower = b_name if lb > la else a_name
+            return (f"the arms did not face the same provider: mean request "
+                    f"latency was {la:.0f}s for {a_name} and {lb:.0f}s for "
+                    f"{b_name} ({ratio:.1f}x). {slower} was slower — either the "
+                    f"provider drifted between arms, or the feature itself "
+                    f"makes requests more expensive, and this number cannot "
+                    f"tell you which.")
+    return None
 
 
 # Below this many requests per arm the comparison is noise with a decimal point.

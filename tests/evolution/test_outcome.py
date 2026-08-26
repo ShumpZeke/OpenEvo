@@ -228,3 +228,44 @@ def test_a_run_with_no_requests_has_no_conditions_rather_than_zero(store):
     """Zero success would read as "the provider failed", not "nothing was asked"."""
     c = provider_conditions(store.reader(), "nothing")
     assert c["success_rate"] is None and c["mean_latency_s"] is None
+
+
+def test_latency_drift_is_caught_when_success_rate_hides_it(store):
+    """
+    The signal that actually fires. The broker retries, so the engine records a
+    *success* for a request the provider failed several times first — run-level
+    success rate reads 100% while the broker's own health shows 48%. The cost
+    of those retries lands entirely in latency.
+    """
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    for run_id, latency in (("fast", 118_000.0), ("slow", 583_000.0)):
+        for i in range(11):
+            store.ingest([Event(
+                type=EventType.MODEL_REQUEST_COMPLETED, component=Component.LLM,
+                run_id=run_id, duration_ms=latency, summary="completed",
+                metadata={"request_id": f"{run_id}_{i}", "provider": "p",
+                          "model": "m", "role": "mutation"})])
+        for i in range(10):
+            _candidate(store, run_id, f"{run_id}_c{i}", 0.5)
+
+    out = compare(store.reader(), ["fast"], ["slow"], treatment_name="arm")
+    assert out["drift"]
+    assert "did not face the same provider" in out["verdict"]
+    assert "cannot tell you which" in out["verdict"]
+
+
+def test_similar_latencies_raise_no_caveat(store):
+    from control_plane.telemetry.events import Component, Event, EventType
+
+    for run_id, latency in (("a", 118_000.0), ("b", 113_700.0)):
+        for i in range(11):
+            store.ingest([Event(
+                type=EventType.MODEL_REQUEST_COMPLETED, component=Component.LLM,
+                run_id=run_id, duration_ms=latency, summary="completed",
+                metadata={"request_id": f"{run_id}_{i}", "provider": "p",
+                          "model": "m", "role": "mutation"})])
+        for i in range(10):
+            _candidate(store, run_id, f"{run_id}_c{i}", 0.5)
+
+    assert compare(store.reader(), ["a"], ["b"])["drift"] is None
