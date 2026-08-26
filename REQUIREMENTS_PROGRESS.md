@@ -146,7 +146,7 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 | Requirement | Status |
 |---|---|
 | Stock vs MAX comparison | PARTIAL — harness and profiles exist (`run-evolution.sh --profile stock\|max`); a full multi-seed comparison has not been run |
-| Ablations (10 listed) | DEFERRED — the bandit ablation is a one-line substitution; the rest need the unbuilt subsystems |
+| Ablations (10 listed) | PARTIAL — `scripts/ablation.sh` runs each optional behaviour on and off against a shared baseline and reports area under the best-so-far curve *per request*. Four arms exist today (operators, island policies, multi-offspring, verification); the remaining spec arms need the unbuilt subsystems, and the bandit arm needs the bandit to be in the loop |
 | Multiple seeds | DEFERRED |
 
 See `BENCHMARKS.md` for what *was* measured.
