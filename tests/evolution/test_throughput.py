@@ -144,3 +144,44 @@ def test_pooling_sums_the_arms(store):
     out = compare(store.reader(), ["run_a1", "run_a2"], ["run_a1"])
     assert out["baseline"]["mutation_requests"] == 12
     assert out["baseline"]["generated_candidates"] == 12
+
+
+def test_forged_variants_do_not_count_towards_yield_per_request(store):
+    """
+    They have a parent, so they look like offspring — and they cost no model
+    request at all. Counting them inflates candidates-per-request for exactly
+    the arm that adds them, so the seed-forge ablation would have reported a
+    gain it did not earn. Caught by running that arm and reading the number.
+    """
+    _request(store, "run_1", "req_1")
+    _candidate(store, "run_1", "c1", "x = 1")
+    for i in range(3):
+        store.ingest([Event(
+            type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+            run_id="run_1", candidate_id=f"f{i}", summary="forged",
+            output={"code": f"forged = {i}"},
+            metadata={"parent_id": "seed", "seed_forge": True,
+                      "forge_origin": "scale_effort"})])
+
+    m = measure(store.reader(), "run_1")
+    assert m["candidates_per_request"] == 1.0
+    assert m["forged"] == 3
+    assert m["candidates"] == 4, "they are still in the population"
+
+
+def test_forged_variants_still_count_towards_the_outcome(store):
+    """
+    They are real population members and can win. Excluding them from the
+    best-so-far curve would hide the effect the feature is claimed to have.
+    """
+    from control_plane.analysis.outcome import measure as outcome
+
+    _request(store, "run_1", "req_1")
+    _candidate(store, "run_1", "c1", "x = 1")
+    store.ingest([Event(
+        type=EventType.CANDIDATE_CREATED, component=Component.DATABASE,
+        run_id="run_1", candidate_id="f0", summary="forged",
+        output={"code": "forged"}, metrics={"combined_score": 0.99},
+        metadata={"parent_id": "seed", "seed_forge": True})])
+
+    assert outcome(store.reader(), "run_1")["final_best"] == 0.99

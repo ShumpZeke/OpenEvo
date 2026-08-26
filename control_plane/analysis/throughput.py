@@ -44,7 +44,9 @@ def measure(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
         "       SUM(CASE WHEN json_extract(metadata, '$.multi_offspring') = 1 "
         "                THEN 1 ELSE 0 END) AS extra_offspring, "
         "       SUM(CASE WHEN json_extract(metadata, '$.migrant') = 1 "
-        "                THEN 1 ELSE 0 END) AS migrants "
+        "                THEN 1 ELSE 0 END) AS migrants, "
+        "       SUM(CASE WHEN json_extract(metadata, '$.seed_forge') = 1 "
+        "                THEN 1 ELSE 0 END) AS forged "
         "  FROM candidates WHERE run_id = ?", (run_id,)).fetchone()
 
     # Migrants are copies of candidates already counted, and the seed program
@@ -59,6 +61,7 @@ def measure(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
     total = int(row["total"] or 0)
     extra = int(row["extra_offspring"] or 0)
     migrants = int(row["migrants"] or 0)
+    forged = int(row["forged"] or 0)
 
     def per_request(n: int) -> Optional[float]:
         return round(n / requests, 3) if requests else None
@@ -70,6 +73,10 @@ def measure(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
         "distinct_generated": distinct,
         "extra_offspring": extra,
         "migrants": migrants,
+        # Reported, not counted: forged variants are real population members
+        # (and `outcome` includes them) but they cost no request, so they have
+        # no business in a per-request yield.
+        "forged": forged,
         "rejected_duplicates": rejected,
         # The gap between these two is the whole story: raw yield that is not
         # distinct is throughput that is not real.
@@ -80,11 +87,24 @@ def measure(conn: sqlite3.Connection, run_id: str) -> Dict[str, Any]:
 
 
 def _generated(conn: sqlite3.Connection, run_id: str) -> tuple:
-    """(generated candidates, how many of them are distinct code)."""
+    """
+    (candidates a model request produced, how many of them are distinct code).
+
+    Three kinds are excluded, and each for its own reason:
+
+    * the **seed**, which no request produced;
+    * **migrants**, which are copies of candidates already counted;
+    * **forged** variants, which have a parent and so look like offspring, but
+      cost no model request at all. Counting them inflates
+      candidates-per-request for exactly the arm that adds them — the seed-forge
+      ablation would have reported a yield gain it did not earn. Caught by
+      running that arm and reading the number.
+    """
     row = conn.execute(
         "SELECT COUNT(*) AS n, COUNT(DISTINCT code_hash) AS d FROM candidates "
         " WHERE run_id = ? AND parent_id IS NOT NULL "
-        "   AND COALESCE(json_extract(metadata, '$.migrant'), 0) != 1",
+        "   AND COALESCE(json_extract(metadata, '$.migrant'), 0) != 1"
+        "   AND COALESCE(json_extract(metadata, '$.seed_forge'), 0) != 1",
         (run_id,)).fetchone()
     return int(row["n"] or 0), int(row["d"] or 0)
 
@@ -102,7 +122,7 @@ def compare(conn: sqlite3.Connection, baseline: List[str],
         parts = [measure(conn, r) for r in run_ids]
         totals: Dict[str, Any] = {"runs": run_ids}
         for key in ("mutation_requests", "generated_candidates", "distinct_generated",
-                    "extra_offspring", "rejected_duplicates", "candidates"):
+                    "extra_offspring", "forged", "rejected_duplicates", "candidates"):
             totals[key] = sum(int(p[key] or 0) for p in parts)
         reqs = totals["mutation_requests"]
         # Distinctness is summed per run rather than recomputed across runs:
