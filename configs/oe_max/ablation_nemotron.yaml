@@ -1,0 +1,47 @@
+# Ablation arms, pinned to one route.
+#
+# Derived from evolution.yaml with a single field changed: `llm.primary_model`
+# names a concrete model, which makes the broker pin that route instead of
+# walking the failover chain. Pinning matters here for the same reason it does
+# in a route A/B — an arm that silently failed over would be measuring the
+# chain, not the feature under test.
+#
+# nemotron rather than the alias because Ox Alpha was measured at 11% success
+# and ~300 s per request; arms pinned to it produce a waiting game with no
+# result. Re-point this at the alias, or at Ox Alpha, once it recovers.
+max_iterations: 24
+checkpoint_interval: 6
+random_seed: 42
+llm:
+  primary_model: nemotron-3-ultra-free
+  primary_model_weight: 1.0
+  api_base: http://127.0.0.1:8787/v1
+  api_key: oe-max-local
+  temperature: 0.8
+  max_tokens: 16000
+  timeout: 900
+prompt:
+  system_message: 'You are an expert algorithm designer improving a function-minimization
+
+    routine. Find the global minimum of
+
+    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20
+
+    Escape local minima. Return a SEARCH/REPLACE diff.
+
+    '
+database:
+  population_size: 60
+  archive_size: 25
+  num_islands: 4
+  migration_interval: 6
+  migration_rate: 0.1
+  feature_dimensions:
+  - complexity
+  - diversity
+  feature_bins: 8
+evaluator:
+  timeout: 90
+  parallel_evaluations: 2
+diff_based_evolution: true
+max_code_length: 24000
