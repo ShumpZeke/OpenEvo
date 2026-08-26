@@ -35,8 +35,13 @@ into it:
                     │  failover · owns all credentials │
                     └────────────────┬─────────────────┘
                                      ▼
-                    OpenCode Zen · OpenRouter · NVIDIA NIM
+       OpenCode Zen · NVIDIA NIM · +13 catalogue providers, key-gated
 ```
+
+Routing is **per role**, not one chain for everything — `oe-max-reasoner`,
+`oe-max-coder`, `oe-max-judge`, `oe-max-fast`, plus `oe-max-primary` which
+still means the reasoner. See `oe_max/roles.py` for why the free routes differ
+in kind and not merely in quality.
 
 **The engine is byte-identical to upstream.** `diff -rq` proves it, and 437
 upstream tests pass. Telemetry is installed by wrapping public methods at
@@ -62,10 +67,11 @@ Watch it:
 ./scripts/verify-providers.sh      # what is actually reachable right now
 ```
 
-**No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
-one. That was verified live, repeatedly.
+**No API key needed.** OpenCode Zen serves four free models without one —
+verified again 2026-08-26. It is no longer Ox Alpha: that model was withdrawn
+(§3.11). The primary is now `nemotron-3-ultra-free`.
 
-Tests: `./test.sh` → 437 upstream + 303 control plane + 250 OE-MAX.
+Tests: `./test.sh` → 437 upstream + 307 control plane + 275 OE-MAX.
 
 ---
 
@@ -89,11 +95,18 @@ could not tell.
 Keep the trap in mind anyway: any new probing code you add must not reach for
 `urllib`.
 
-### 3.2 Ox Alpha spends its entire token budget on hidden reasoning
+### 3.2 A reasoning model can spend its entire token budget on hidden reasoning
 
-Measured: **7,986–7,997 reasoning tokens out of an 8,000 budget.** The visible
-diff gets truncated and OpenEvolve logs `No valid diffs found` — five of eight
-iterations produced nothing from ~130-second requests.
+Measured on Ox Alpha, the former primary: **7,986–7,997 reasoning tokens out of
+an 8,000 budget.** The visible diff gets truncated and OpenEvolve logs `No valid
+diffs found` — five of eight iterations produced nothing from ~130-second
+requests.
+
+**The trap outlived that model.** Its replacement reasons too:
+`nemotron-3-ultra-free` spent 39 completion tokens thinking about a two-word
+answer, and `nemotron-3.5-lightning-free` truncated at 64 of 64 tokens, all of
+them reasoning. Only `laguna-s-2.1-free` reports zero — which is exactly why it
+leads the judge and fast chains rather than the reasoning ones.
 
 Handled: the broker classifies `finish_reason=length` as `TRUNCATED` and retries
 with a **doubled** budget (an identical retry reproduces an identical
@@ -122,9 +135,16 @@ like a regression.
 ### 3.4 A listed model is not a working model
 
 Zen's `/models` lists `deepseek-v4-flash-free`; calling it returns HTTP 400
-"Model is unavailable". `mimo-v2.5-free` returns 429 `FreeUsageLimitError`.
+"Model is unavailable" — still true on 2026-08-26, a year-long liar.
+`mimo-v2.5-free` returns 429 `FreeUsageLimitError`, and the newly-listed
+`muse-spark-1.2-contributor-free` returns HTTP 500. Three of Zen's eight listed
+free models do not serve.
+
 Discovery is therefore two-stage — list, then smoke-test — in
 `oe_max/providers/registry.py`. Do not "simplify" it back to one stage.
+
+And read §3.11 for the converse, which is the half that was missing: an
+*unlisted* model is not a model either.
 
 ### 3.5 The event bus must be rebuilt after `fork()`
 
@@ -218,52 +238,95 @@ Two properties worth preserving if you touch it:
   policy; silently redirecting a pinned request would make an A/B experiment
   measure something other than what it named.
 
+### 3.11 A configured model can simply stop existing
+
+This is the trap that cost the most, because nothing failed loudly.
+
+`x-preview-f-free` (Ox Alpha) was the configured primary in both routing
+layers. On 2026-08-26 it was gone from OpenCode Zen: absent from `/models`, and
+answering `ModelError: Model x-preview-f-free is not supported`. Note that this
+arrives as **HTTP 401**, so it reads like a credential problem at a glance —
+the body is what distinguishes it, since a paid Zen model returns `AuthError:
+Missing API key` instead.
+
+Two NIM fallbacks turned out never to have existed at all:
+`deepseek-ai/deepseek-v4-pro` and `qwen/qwen2.5-coder-32b-instruct` are not in
+NVIDIA's catalogue, and NIM hosts no Qwen model. The "strong fallback" could
+not have served a single request.
+
+**What was missing was the converse of an existing check.** Two-stage discovery
+asked "is a listed model serveable?" and never asked "is a configured model
+still listed?". `Registry.reconcile()` now asks it on every discovery and
+disables what is no longer there. Listings are unauthenticated on both Zen and
+NIM, so this costs one GET and works before any key exists — run against the
+real endpoints it rediscovered all three findings above on its own.
+
+The general shape: **a model id written from memory is a claim that decays.**
+The catalogue (`configs/oe_max/providers.yaml`) therefore names patterns and
+materialises concrete ids from each provider's own listing.
+
+### 3.12 An exhausted free allowance is not a rate limit
+
+Both are HTTP 429, and Zen's free-limit body even says *"Rate limit exceeded.
+Please try again later."* Only the error **type** (`FreeUsageLimitError`)
+distinguishes them.
+
+Retrying cannot refill a pool, so treating them alike spent the entire retry
+budget collecting the same error four times before failing over.
+`Outcome.FREE_LIMIT_EXHAUSTED` is not retryable and parks the route for 15
+minutes (`RouteHealth.park`). It deliberately does **not** trip the circuit:
+the provider is up, our allowance is gone, and an outage cooldown would just
+re-probe into the same refusal.
+
+If you add health reporting, remember a parked route's breaker reads
+`closed, 0s remaining` — reporting that says the route is fine while it is
+being skipped.
+
 ---
 
 ## 4. Live measurements — what the providers actually do
 
-From a real 10-iteration run through the broker, 2026-08-26:
+From an 8-iteration run through the broker, 2026-08-26, after Ox Alpha was
+replaced:
 
 | Route | Requests | Success | Avg latency | Errors |
 |---|---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | 15 | **40%** | 220 s | 6 transport, 1 unavailable, 1 server, 1 truncated |
-| `nemotron-3-ultra-free` | 1 | **100%** | 112 s | none |
+| `nemotron-3-ultra-free` (primary) | 4 | **50%** | 62 s | 2 × `[502] Upstream error from Nvidia: Service temporarily overloaded` |
+| `mimo-v2.5-free` | 1 | 0% | 0.7 s | 1 × `free_limit_exhausted`, parked 900 s |
+
+The run itself succeeded: 7 programs, all four islands populated, and a new
+best at iteration 5 (combined_score 1.461, from 0.761 at iteration 1).
 
 Two things to take from this:
 
-1. **Ox Alpha is slow and unreliable under sustained load.** 40% success, 220s
-   average. It is still the operator's chosen primary and the spec's requirement,
-   and the retry/failover path is what makes it usable.
-2. **The failover chain works in production, not just in tests.** When Ox Alpha
-   degraded, the router moved to `nemotron-3-ultra-free`, which returned 100%
-   success at half the latency.
+1. **The free primary is flaky under sustained load.** 50% success and a 62 s
+   average, with the failures coming from the upstream Zen fronts rather than
+   from Zen itself. This is the normal condition for free routes, not an
+   incident, and it is why the retry/failover path exists.
+2. **The route that was withdrawn is the reason to distrust any table here.**
+   The previous version of this section reported Ox Alpha at 40% success over
+   15 requests. That model no longer exists. Treat every row as perishable and
+   re-probe rather than plan around it.
 
-That second point is the most interesting open question in the project — see
-next steps.
+### Free Zen models, probed live 2026-08-26
 
-### Free Zen models, probed live
+Keyless, with a tools probe on each.
 
-| model | serves | tools | latency |
-|---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | yes | yes | 1,969 ms |
-| `nemotron-3-ultra-free` | yes | yes | 829 ms |
-| `nemotron-3.5-lightning-free` | yes | yes | 1,271 ms |
-| `laguna-s-2.1-free` | yes | yes | 1,855 ms |
-| `hy3-free` | yes | yes | 2,444 ms |
-| `deepseek-v4-flash-free` | **no** | — | 400 "Model is unavailable" |
-| `mimo-v2.5-free` | **no** | — | 429 `FreeUsageLimitError` |
+| model | serves | tools | latency | reasoning tokens |
+|---|---|---|---|---|
+| `nemotron-3-ultra-free` | yes | yes | 3.3 s | 39 |
+| `hy3-free` | yes | yes | 2.1 s | 43 |
+| `laguna-s-2.1-free` | yes | yes | 1.6 s | **0** |
+| `nemotron-3.5-lightning-free` | yes | yes | 7.6 s | 64/64, truncated |
+| `x-preview-f-free` (Ox Alpha) | **no** | — | — | `ModelError: not supported` |
+| `deepseek-v4-flash-free` | **no** | — | — | 400 "Model is unavailable" |
+| `mimo-v2.5-free` | **no** | — | — | 429 `FreeUsageLimitError` |
+| `muse-spark-1.2-contributor-free` | **no** | — | — | 500 internal error |
 
-`anomalyco/opencode#44300` (Ox Alpha failing on `tools`) **is resolved** — tools
-requests now return 200.
-
-Be precise about what that did and did not require, because it is easy to
-overclaim: the **capability filter** self-corrects in both directions with no
-code change — if the bug returns, the next probe records `supports_tools=False`
-and Ox Alpha drops out of tool roles automatically. The **chain order** is a
-stated preference and does *not* self-correct; leading tool roles with Ox Alpha
-again was a deliberate edit once the evidence changed.
-
----
+The zero in that column is the whole argument for role-based routing. Ranking
+two candidates does not need hidden reasoning, and buying it costs latency and
+truncation risk — measured end to end through the broker, the judge route
+answers in 859 ms where the reasoner takes 8,158 ms.
 
 ## 4b. Operator-labelled mutations (opt-in)
 
@@ -487,8 +550,10 @@ new:
 
 ## 6. Blocked, and exactly how to unblock
 
-**NVIDIA NIM and OpenRouter are UNVERIFIED.** No `NVIDIA_API_KEY` or
-`OPENROUTER_API_KEY` was available. The adapters, the global rate limiter, the
+**NVIDIA NIM, OpenRouter and all 13 catalogue providers are UNVERIFIED for
+inference.** No credential for any of them has ever been present here. Endpoint
+liveness IS verified for all of them, and NIM's model ids are catalogue-verified
+against its public listing — but not one inference call has been made. The adapters, the global rate limiter, the
 retry/circuit-breaker path and the routing logic are all implemented and tested
 offline against a scripted provider — but the HTTP round-trip to those two
 endpoints has never run.
@@ -501,9 +566,16 @@ cp .env.example .env      # add OPENROUTER_API_KEY and/or NVIDIA_API_KEY
 ./scripts/verify-providers.sh
 ```
 
-NIM's model list is deliberately **empty** in `registry.py` — it must be
-discovered live, never populated from remembered IDs. The spec is explicit and
-the `deepseek-v4-flash-free` finding shows why.
+NIM's model list used to be deliberately **empty** in `registry.py`, on the
+principle that ids must be discovered live rather than remembered. The
+principle is right; the empty table was the wrong way to honour it, because it
+meant no chain could name a NIM route and the provider was unreachable except
+by pinning a string nobody had verified.
+
+`reconcile()` is the better guarantee. The ids are now named — every one read
+out of NVIDIA's public catalogue — and any that stops appearing there is
+disabled by the next discovery. Config states the preference; the live listing
+remains the authority.
 
 **The container execution backend is unverified for the same shape of reason.**
 `docker` is on PATH here and its daemon is not reachable, so

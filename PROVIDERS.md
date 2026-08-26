@@ -1,121 +1,222 @@
 # Providers
 
-## Policy
+Last full re-probe: **2026-08-26**, from this repository.
 
-Default preference, per SOURCE_OF_TRUTH section 16.1:
+## How to read the claims in this document
 
-```
-1. OpenCode Zen / Ox Alpha Free    ← PRIMARY / PREFERRED
-2. NVIDIA NIM strong model         ← PRIMARY FALLBACK
-3. other free/cheap Zen models
-4. other OpenAI-compatible endpoints
-5. local compatible endpoint
-```
+Four words, used strictly. They are not synonyms, and the difference between
+the first and the last is the difference between knowing and guessing.
 
-Routing is **capability-aware as well as health-aware**. That distinction is
-load-bearing here, not decoration — see below.
+| Word | Means |
+|---|---|
+| **VERIFIED** | We made the call and saw the result, on the date given. |
+| **CATALOGUE-VERIFIED** | The id came from the provider's own live listing. We have not called it. |
+| **DOCUMENTED** | Official documentation says so. We have not tested it. |
+| **UNVERIFIED** | Neither. Recorded because it may be worth checking, not because it is true. |
 
-## Verified facts (2026-08-25)
+Nothing in this repository holds a credential for any provider except OpenCode
+Zen, which serves some models without one. **Every free-tier claim below is
+therefore DOCUMENTED or UNVERIFIED, never VERIFIED**, and no code path may
+upgrade one.
 
-Both checked against current official sources rather than assumed.
+---
 
-**Ox Alpha Free**
-- model id `x-preview-f-free` (alias `ox-alpha-free` on the Go route)
-- endpoint `https://opencode.ai/zen/v1`, OpenAI-compatible
-- 1,048,576-token context, up to 131,072 completion tokens
-- listed at $0 input/output/cached
-- documented as *"free on OpenCode for a limited time"* — **not permanent**
+## What changed on 2026-08-26, and why it matters
 
-**Tool calling is currently broken on it.**
-[anomalyco/opencode#44300](https://github.com/anomalyco/opencode/issues/44300),
-open: any request containing a `tools` array returns *"Upstream request failed:
-Endpoint is unavailable."* Plain chat completions succeed in about 3 seconds.
-`nemotron-3-ultra-free` and `deepseek-v4-flash` handle tools correctly on the
-same route, so this is model-specific, not infrastructure.
+The configured primary route had stopped existing, and nothing noticed.
 
-## What that implies for routing
+**Ox Alpha (`x-preview-f-free`) is withdrawn from OpenCode Zen.** VERIFIED:
 
-OpenEvolve's mutation and reasoning calls are plain completions, so Ox Alpha is
-used there — which is the majority of model traffic in a run. Agent roles
-(orchestrator, deep coding, planning, review, architecture, explore) require
-function calling, so they route to a verified tools-capable model instead.
+- absent from `GET /zen/v1/models` (63 models listed, not among them)
+- `POST /chat/completions` returns
+  `{"type":"ModelError","message":"Model x-preview-f-free is not supported"}`
 
-Encoding "Ox Alpha for everything" would honour the stated preference and then
-fail every agent run.
+That is removal, not gating. A paid Zen model on the same endpoint answers
+`{"type":"AuthError","message":"Missing API key."}` instead, so the two are
+distinguishable and this one is not a credential problem.
 
-| Role | Requires | Default route |
+It headed every chain in both routing layers. Every request spent attempts on
+a model the provider had stopped acknowledging.
+
+**Two NVIDIA NIM fallbacks were never real.** VERIFIED: neither
+`deepseek-ai/deepseek-v4-pro` nor `qwen/qwen2.5-coder-32b-instruct` appears in
+NVIDIA's catalogue. NIM hosts **no Qwen model at all**. The catalogue is public
+— `GET https://integrate.api.nvidia.com/v1/models` needs no credential — so a
+single unauthenticated request would have caught this at any point.
+
+The lesson is in the tooling now, not only in this file: `Registry.reconcile()`
+crosses the live listing against what is configured on every discovery and
+disables what is no longer listed. Run against the real endpoints it
+rediscovered all three of the above on its own.
+
+---
+
+## Verified working today
+
+Measured through `POST https://opencode.ai/zen/v1/chat/completions` with **no
+Authorization header**, 2026-08-26. All four also pass a tools probe.
+
+| Model | Latency | Reasoning tokens | Note |
+|---|---|---|---|
+| `nemotron-3-ultra-free` | 3.3 s | 39 | Strongest keyless route. **Primary.** |
+| `hy3-free` | 2.1 s | 43 | |
+| `laguna-s-2.1-free` | 1.6 s | **0** | Only free Zen route with no hidden reasoning; reports a prompt-cache hit. |
+| `nemotron-3.5-lightning-free` | 7.6 s | 64/64 → truncated | Named "lightning", measured slowest. Needs a large `max_tokens`. |
+
+Those four differ **in kind**, not only in quality. A model that spends its
+budget thinking is what you want proposing a mutation and precisely what you do
+not want ranking two candidates — there the reasoning buys latency and
+truncation risk and nothing else. That is why routing is per role.
+
+Measured end to end through the broker, the gap is wider than the raw probe
+suggests: the judge route answered in **859 ms** where the reasoner took
+**8,158 ms**.
+
+### Under sustained load
+
+VERIFIED during an 8-iteration evolution run on 2026-08-26: the primary
+returned **50% success over 4 requests**, the failures being
+`[502] Upstream error from Nvidia: Service temporarily overloaded`, at a 62 s
+average. Free routes are flaky under real load; the failover chain is not
+decoration.
+
+---
+
+## Role routing
+
+Roles are addressed by broker alias, so the engine picks one by naming a model
+and needs no code change.
+
+| Alias | Role | Chain head | Why |
+|---|---|---|---|
+| `oe-max-primary` | reasoner | `opencode_zen/nemotron_ultra` | What every shipped config names; kept pointing at mutation generation so existing measurements stay comparable. |
+| `oe-max-reasoner` | reasoner | `opencode_zen/nemotron_ultra` | Hard reasoning. |
+| `oe-max-coder` | coder | `opencode_zen/nemotron_ultra` | Leads keyless; NIM's Kimi K3 and Codestral rank behind it, being key-gated. |
+| `oe-max-judge` | judge | `opencode_zen/laguna` | Zero reasoning tokens. Ranking does not need hidden thought. |
+| `oe-max-fast` | fast | `opencode_zen/laguna` | Latency-bound work. |
+
+**Preference is an ordering, never a filter.** Each role chain is its
+preference followed by every other configured route, so no role can be starved
+while usable capacity sits idle. Key-gated routes sit behind keyless ones
+everywhere, so the shipped configuration works with no credentials at all and
+improves when credentials are added.
+
+---
+
+## NVIDIA NIM
+
+CATALOGUE-VERIFIED 2026-08-26: 83 models, read from the public listing.
+Inference **UNVERIFIED** — no `NVIDIA_API_KEY` exists here, so not one call has
+been made. `available` stays `None`, never `True`.
+
+Strongest hosted models relevant to this project:
+
+| Model id | Role |
+|---|---|
+| `nvidia/nemotron-3-ultra-550b-a55b` | flagship reasoner |
+| `openai/gpt-oss-120b` | strong open-weight reasoner |
+| `moonshotai/kimi-k3` | agentic / coding |
+| `deepseek-ai/deepseek-v4-flash-0731` | strong general |
+| `nvidia/nemotron-3-super-120b-a12b` | mid |
+| `minimaxai/minimax-m3` | mid |
+| `mistralai/codestral-22b-instruct-v0.1` | code-specialised |
+| `nvidia/nemotron-3.5-lightning-30b-a3b`, `nvidia/nemotron-nano-3-30b-a3b` | fast tier |
+
+Absent, and worth knowing: **no Qwen models**, **no GLM models**. Note the
+date-suffix convention — `deepseek-v4-flash-0731`, not `deepseek-v4-flash`.
+
+To use it: set `NVIDIA_API_KEY`, then `POST /v1/oe-max/verify` on the broker.
+Discovery reconciles the configured ids against the live catalogue and smoke-
+tests what survives. The 48 RPM contract is enforced by the shared limiter at
+44/60s; watch the dashboard's rolling-window gauge on the first real run, since
+that invariant has 17 property tests and has never met the real endpoint.
+
+---
+
+## Adding a provider
+
+`configs/oe_max/providers.yaml`. Fifteen providers ship, key-gated, so the ones
+without credentials are inert and cost nothing.
+
+**The catalogue never names a model.** It names *patterns of interest*, and
+concrete ids are materialised from each provider's own live listing at
+discovery time. This project has been bitten three times by ids written from
+memory, and a pattern that matches nothing yields no routes and no error —
+which is correct for an unsatisfied preference. The trade is deliberate: a
+mistyped pattern fails silently where a mistyped id would not, but a silent
+absence costs one unused provider while a confident wrong id costs every
+request routed to it.
+
+Endpoint liveness for all fifteen was VERIFIED on 2026-08-26. Six list their
+catalogues without a credential: OpenCode Zen (63), NVIDIA NIM (83),
+Hugging Face router (135), ModelScope (47), Chutes (14), SambaNova (7).
+
+| Provider | Env var | Free tier | Confidence |
+|---|---|---|---|
+| `groq` | `GROQ_API_KEY` | Free plan, no card. Per-model, small: gpt-oss-120b at 30 RPM / 1K RPD / 8K TPM / 200K TPD. Org-wide, so extra keys do not help. | DOCUMENTED |
+| `cerebras` | `CEREBRAS_API_KEY` | Reported ~1M tokens/day, ~30 RPM, resets 00:00 UTC, **~8K context cap**. | UNVERIFIED |
+| `gemini` | `GEMINI_API_KEY` | Free tier with per-model limits. **Free-tier prompts may be used to improve Google's products** — material for private code. | DOCUMENTED |
+| `mistral` | `MISTRAL_API_KEY` | "Experiment" tier, phone verification. Devstral/Codestral relevant. | DOCUMENTED |
+| `huggingface` | `HF_TOKEN` | Small monthly credit; routes to third parties, so terms depend on who serves. | DOCUMENTED |
+| `sambanova` | `SAMBANOVA_API_KEY` | Credits, not a recurring allowance. | UNVERIFIED |
+| `modelscope` | `MODELSCOPE_API_KEY` | Reported daily free calls. CN region — 1.8 s just to list from here. | UNVERIFIED |
+| `chutes` | `CHUTES_API_KEY` | Free access reported, and reported withdrawn. | UNVERIFIED |
+| `zai_glm` | `ZAI_API_KEY` | Has previously offered a free GLM flash model. | UNVERIFIED |
+| `dashscope_qwen` | `DASHSCOPE_API_KEY` | Time-limited allowance per model on activation. | UNVERIFIED |
+| `siliconflow` | `SILICONFLOW_API_KEY` | Has previously carried free-tagged models. | UNVERIFIED |
+| `nebius` | `NEBIUS_API_KEY` | Signup credits. | UNVERIFIED |
+| `deepseek` | `DEEPSEEK_API_KEY` | **None.** Listed for being cheap and strong. | DOCUMENTED |
+| `moonshot` | `MOONSHOT_API_KEY` | **None.** Kimi is strong at agentic coding. | DOCUMENTED |
+| `minimax` | `MINIMAX_API_KEY` | **None.** | DOCUMENTED |
+
+---
+
+## Rejected / dead / misleading
+
+Recorded so nobody spends another afternoon rediscovering them. Remove an entry
+only with evidence it works again. The machine-readable copy is the `retired:`
+block of `configs/oe_max/providers.yaml`.
+
+| Endpoint | Finding | Verified |
 |---|---|---|
-| mutation | chat | `zen-ox-alpha-free` |
-| evaluator | chat | `zen-ox-alpha-free` |
-| research | chat | `zen-deepseek-v4-flash` |
-| parallel_worker | chat | `zen-deepseek-v4-flash` |
-| orchestrator | chat + **tools** | `zen-nemotron-3-ultra-free` |
-| deep_coding | chat + **tools** | `zen-nemotron-3-ultra-free` |
-| planning | chat + **tools** | `zen-nemotron-3-ultra-free` |
-| review | chat + **tools** | `zen-nemotron-3-ultra-free` |
-| architecture | chat + **tools** | `zen-nemotron-3-ultra-free` |
-| explore | chat + **tools** | `zen-deepseek-v4-flash` |
-| emergency | chat | `nim-deepseek-v4-pro` |
+| **GitHub Models** | HTTP **410**, `github_models_retirement_brownout` — "temporarily unavailable as part of a scheduled retirement brownout". A brownout is the rehearsal for a shutdown, not an outage to wait out. Widely recommended as a free endpoint; it is not one. | 2026-08-26 |
+| **Targon** | HTTP **410 Gone**, empty body. | 2026-08-26 |
+| **Zen `x-preview-f-free`** (Ox Alpha) | Withdrawn. `ModelError: Model ... is not supported`. Was the configured primary. | 2026-08-26 |
+| **Zen `deepseek-v4-flash-free`** | Listed but unserveable: HTTP 400 "Model is unavailable", unchanged since 2026-08-25. The original evidence that a listing is not a working model. | 2026-08-26 |
+| **Zen `mimo-v2.5-free`** | HTTP 429 `FreeUsageLimitError` on every attempt. A shared free pool that is empty, not a per-account rate limit. | 2026-08-26 |
+| **Zen `muse-spark-1.2-contributor-free`** | Newly listed, returns HTTP 500. The name suggests contributor-gating. | 2026-08-26 |
+| **NIM `deepseek-ai/deepseek-v4-pro`** | Not in NVIDIA's catalogue, and appears never to have been. Was configured as the strong fallback. | 2026-08-26 |
+| **NIM `qwen/qwen2.5-coder-32b-instruct`** | Not in NVIDIA's catalogue. NIM hosts no Qwen model. | 2026-08-26 |
 
-The Models page shows the exclusion reason on every role, including the issue
-reference, so the operator is never left wondering why their preferred model is
-not serving a role.
+### An exhausted allowance is not a rate limit
 
-## Self-correcting
+Both arrive as HTTP 429, and Zen's free-limit message even reads *"Rate limit
+exceeded. Please try again later."* — advice that is wrong in this case. Only
+the error **type** distinguishes them.
 
-The provider doctor (`providers/doctor.py`) probes each enabled profile live:
-credential presence, a real chat completion, a real tools request, latency and
-HTTP status. Results are written into `verified_capabilities`.
+Retrying cannot refill a pool, so the old behaviour spent the whole retry
+budget collecting the identical error four times before failing over. A 429
+whose body names an exhausted allowance is now `Outcome.FREE_LIMIT_EXHAUSTED`:
+not retryable, fails over immediately, and parks the route for 15 minutes.
 
-The moment Ox Alpha's tool support is fixed upstream, the next doctor run
-records `TOOLS` as verified and the router can promote it into agent roles with
-**no code change**. Nothing about the issue is hardcoded as permanent.
+VERIFIED through the broker: a pinned request to `mimo-v2.5-free` returns
+`free_limit_exhausted` at **attempt 1 of a possible 4**, parks the route for
+900 s, and leaves the circuit **closed** — the provider is not blamed for our
+own spent allowance.
 
-A probe that cannot run — no credential, no network — is reported `SKIPPED` with
-the reason. It is never reported as a pass, and never as a failure of the model.
+---
 
-## Free status
+## Caveats worth keeping
 
-Three-valued and defaulting to `UNKNOWN`:
-
-| Value | Meaning | UI |
-|---|---|---|
-| `FREE_LIMITED_TIME` | provider documents free-for-now | amber "free (limited time)" with caveat |
-| `FREE` | genuinely free (e.g. local hardware) | green "free" |
-| `PAID` | billed | "paid" |
-| `UNKNOWN` | not probed | grey "unknown" |
-
-A two-valued flag would make an unprobed model read as free. Acceptance
-criterion 27 forbids presenting Ox Alpha as permanently or unlimitedly free, and
-`test_free_status_is_never_claimed_permanent` checks the shipped text for
-claims of unlimited access.
-
-## Health and failover
-
-Per model, over a rolling window: success rate, p50 latency, 429 pressure,
-consecutive failures, in-flight count.
-
-Selection filters, then sorts:
-
-- **Filter** — enabled, credential present, required capabilities satisfied,
-  circuit closed, under its concurrency limit.
-- **Sort** — position in the role's chain, then live health, then priority.
-
-429s are weighted more heavily than plain failures: a rate limit says the route
-will keep refusing, not that one call was unlucky. After N consecutive failures
-the circuit opens with exponential backoff (capped), traffic sheds to the next
-route in the chain, and the model is retried after cooldown. Circuits can be
-reset from the Models page.
-
-An unused model scores optimistically, so a fresh fallback can win a route and
-prove itself rather than being locked out by having no history.
-
-When nothing can serve a role, `NoRouteAvailable` carries the reason for each
-excluded model — `missing credential NVIDIA_API_KEY`, `lacks capability: tools`,
-`circuit open for 47s` — rather than a bare failure.
-
-## Cost
-
-`input_cost_per_mtok` / `output_cost_per_mtok` are `None` when unknown, and the
-UI renders unknown. A fabricated `0.0` would understate real spend, which is
-worse than admitting the number is not known.
+- **Zen serves some models with no credential.** Requiring a key would disable
+  the working primary. `requires_key=False` is deliberate on that provider —
+  but it is per-provider, not per-model: Zen's `deepseek-v4-flash` is paid and
+  returns 401 without a key, and was mistakenly configured keyless.
+- **A listed model is not a working model.** Two-stage discovery exists for
+  this. Do not simplify it back to one stage.
+- **An unlisted model is not a model.** That is the converse, and it is what
+  `reconcile()` adds. Ox Alpha's withdrawal was visible in a listing for free.
+- **Free status is three-valued and the third value is UNKNOWN.** The UI must
+  not render an unprobed route as free.
+- **`urllib` is Cloudflare-blocked by Zen** (`403 error code: 1010`); `httpx`
+  and `curl` are not. Do not reach for `urllib` in new probing code.
