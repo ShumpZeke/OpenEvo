@@ -88,9 +88,31 @@ def _normalize_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", key.lower())
 
 
-def is_secret_key(key: str) -> bool:
+def is_secret_key(key: str, value: Any = None) -> bool:
+    """
+    Whether a key's value must be redacted.
+
+    `value` is optional and, when given, is used only to *spare* a value that
+    could not possibly be a credential — never to redact one that the key alone
+    would have allowed. Redaction stays key-driven; this only narrows the false
+    positives.
+
+    The false positive that motivated this: `reasoning_tokens`, a count, was
+    redacted because "token" is a secret key part. The measurement it carries —
+    Ox Alpha spending 7,986 of an 8,000-token budget on hidden reasoning — is
+    the single most important cost signal in this system, and it was arriving
+    as «redacted». The explicit exceptions list could not keep up: every new
+    count key (`cached_tokens`, `reasoning_tokens`, `cache_write_tokens`) had
+    to be remembered, and forgetting one destroyed data silently.
+    """
     norm = _normalize_key(key)
     if norm in SECRET_KEY_EXCEPTIONS:
+        return False
+    if norm.endswith("tokens") and isinstance(value, (int, float)) \
+            and not isinstance(value, bool):
+        # A numeric "…tokens" key is a count. Restricted to that suffix rather
+        # than applied to every numeric value, so a numeric `password` or
+        # `api_key` is still redacted.
         return False
     return any(part in norm for part in SECRET_KEY_PARTS)
 
@@ -146,7 +168,7 @@ class Redactor:
         if isinstance(obj, dict):
             out: Dict[Any, Any] = {}
             for k, v in obj.items():
-                if isinstance(k, str) and is_secret_key(k):
+                if isinstance(k, str) and is_secret_key(k, v):
                     # Preserve presence and type without leaking the value.
                     out[k] = REDACTED
                 else:

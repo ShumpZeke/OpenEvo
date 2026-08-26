@@ -75,6 +75,13 @@ export const api = {
     req<{ model_requests: Json[]; total: number }>(
       `/api/query/runs/${id}/model-requests${qs(p)}`),
 
+  routeQuality: (id: string, p: Json = {}) =>
+    req<{
+      run_id?: string; runs?: string[];
+      coverage: Json; routes: Record<string, Json>;
+      comparison: Json; by_operator: Record<string, Json[]>;
+    }>(`/api/query/runs/${id}/route-quality${qs(p)}`),
+
   evaluations: (id: string, p: Json = {}) =>
     req<{ evaluations: Json[]; total: number }>(
       `/api/query/runs/${id}/evaluations${qs(p)}`),

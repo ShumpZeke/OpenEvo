@@ -28,6 +28,11 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   const reqs = useAsync(
     () => (runId ? api.modelRequests(runId, { limit: 150 }) : Promise.resolve(null)),
     [runId, liveTick]);
+  // Quality per route, which is a different question from health per route: a
+  // route can be perfectly reliable and return nothing but duplicates.
+  const quality = useAsync(
+    () => (runId ? api.routeQuality(runId) : Promise.resolve(null)),
+    [runId, liveTick]);
 
   const profiles: Json[] = p.data?.profiles ?? [];
   const health: Record<string, Json> = p.data?.health ?? {};
@@ -48,7 +53,8 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   };
 
   return (
-    <div className="h-full grid grid-rows-[auto_auto_1fr] gap-2 min-h-0">
+    <div className="h-full grid grid-rows-[auto_auto_auto_1fr] gap-2 min-h-0
+                    overflow-y-auto">
       <Panel title="Model profiles" loading={p.loading && !p.data} error={p.error}
              actions={<Button size="xs" tone="primary" onClick={runDoctor} disabled={busy}>
                {busy ? "probing…" : "run provider doctor"}</Button>}
@@ -153,6 +159,8 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
         </Table>
       </Panel>
 
+      <RouteQuality state={quality} runId={runId} />
+
       <Panel title={`Model requests${runId ? "" : " (select a run)"}`}
              loading={reqs.loading} error={reqs.error}
              empty={(reqs.data?.model_requests ?? []).length === 0}
@@ -183,5 +191,107 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
         </Table>
       </Panel>
     </div>
+  );
+};
+
+
+/**
+ * Mutation quality per route.
+ *
+ * The route table above answers "did the route respond?". This answers "did it
+ * produce better mutations, and at what cost?" — a different question, and the
+ * two were measured coming apart: Ox Alpha at 26% success and a 284 s p50
+ * against a fallback at 100% and 112 s. Reliability alone would say "switch".
+ *
+ * Every number here comes from the run's own telemetry. Where a route has too
+ * few attempts to rank, it is listed as excluded with the reason rather than
+ * ranked low, and the verdict says plainly when the evidence is too thin to act
+ * on — a confident recommendation from four samples would be worse than none.
+ */
+const pct = (v: unknown): string =>
+  typeof v === "number" ? `${(v * 100).toFixed(0)}%` : "—";
+
+const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, runId }) => {
+  const data = state.data;
+  const routes: Json[] = Object.values(data?.routes ?? {});
+  const comparison: Json = data?.comparison ?? {};
+  const coverage: Json = data?.coverage ?? {};
+  const excluded: Record<string, string> = comparison.excluded_insufficient_data ?? {};
+
+  return (
+    <Panel
+      title={`Route quality${runId ? "" : " (select a run)"}`}
+      loading={state.loading && !data}
+      error={state.error}
+      empty={routes.length === 0}
+      emptyLabel={
+        coverage.candidates && !coverage.attributed
+          ? "This run has no generation provenance — no route comparison is possible."
+          : "No mutation attempts recorded for this run."
+      }
+      footer={
+        <span>
+          Every mutation request is charged as an attempt, including ones that
+          returned nothing — a route that spends minutes and produces no usable
+          diff must not look free.
+          {coverage.note ? ` ${coverage.note}.` : ""}
+        </span>
+      }
+    >
+      <Table>
+        <thead>
+          <tr><Th>Route</Th><Th>Attempts</Th><Th>Failed</Th><Th>Unparseable</Th>
+              <Th>Duplicates</Th><Th>Valid</Th><Th>Improved</Th><Th>Mean latency</Th>
+              <Th>Reasoning</Th><Th>Impr / request</Th><Th>Impr / second</Th></tr>
+        </thead>
+        <tbody>
+          {routes.map((r: Json) => (
+            <Row key={r.route}>
+              <Td><Mono className="text-ink">{r.route}</Mono></Td>
+              <Td className="tabular">{fmtNum(r.attempts)}</Td>
+              <Td className="tabular">{fmtNum(r.failures)}</Td>
+              <Td className="tabular">{fmtNum(r.unparseable)}</Td>
+              <Td className="tabular">{fmtNum(r.duplicates)}</Td>
+              <Td className="tabular">{pct(r.validity_rate)}</Td>
+              <Td className="tabular">{pct(r.improvement_rate)}</Td>
+              <Td className="tabular">
+                {typeof r.mean_latency_s === "number" ? `${r.mean_latency_s.toFixed(1)}s` : "—"}
+              </Td>
+              <Td className="tabular" title="Share of the completion budget spent on hidden reasoning">
+                {pct(r.reasoning_share)}
+              </Td>
+              <Td className="tabular">
+                {typeof r.improvement_per_request === "number"
+                  ? r.improvement_per_request.toFixed(4) : "—"}
+              </Td>
+              <Td className="tabular">
+                {typeof r.improvement_per_second === "number"
+                  ? r.improvement_per_second.toExponential(2) : "—"}
+              </Td>
+            </Row>
+          ))}
+        </tbody>
+      </Table>
+
+      {(comparison.verdict || Object.keys(excluded).length > 0) && (
+        <div className="px-3 py-2 border-t border-line space-y-1">
+          {comparison.verdict && (
+            <div className="text-2xs text-ink-dim">
+              <span className="uppercase tracking-wide text-ink-faint">verdict — </span>
+              {comparison.verdict}
+            </div>
+          )}
+          {Object.entries(excluded).map(([route, why]) => (
+            <div key={route} className="text-2xs">
+              <Badge tone="stopped" title="Too few attempts to rank — excluded rather than ranked low">
+                excluded
+              </Badge>{" "}
+              <span className="font-mono text-ink-dim">{route}</span>
+              <span className="text-ink-faint"> — {why}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 };

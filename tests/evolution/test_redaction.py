@@ -1,6 +1,7 @@
 """Redaction must run before persistence and must not be defeatable by key naming."""
 import pytest
 from control_plane.telemetry.redaction import (
+    default_redactor,
     REDACTED, Redactor, is_secret_key, redact,
 )
 from control_plane.telemetry.events import Component, Event, EventType
@@ -87,3 +88,47 @@ def test_recursion_is_bounded():
         cur["next"] = {}
         cur = cur["next"]
     redact(d)  # must not raise RecursionError
+
+
+# ---------------------------------------------------------------------------
+# Token counts are not tokens
+#
+# "token" is a secret key part, so `reasoning_tokens` — a count — was arriving
+# as «redacted». The measurement it carries (Ox Alpha spending 7,986 of an
+# 8,000-token budget on hidden reasoning) is the most important cost signal in
+# the system, and losing it silently is a data-destroying false positive.
+# ---------------------------------------------------------------------------
+
+def test_numeric_token_counts_survive_redaction():
+    out = default_redactor().redact({
+        "reasoning_tokens": 7990,
+        "cached_tokens": 0,
+        "cache_write_tokens": 12,
+        "total_tokens": 8000,
+    })
+    assert out == {"reasoning_tokens": 7990, "cached_tokens": 0,
+                   "cache_write_tokens": 12, "total_tokens": 8000}
+
+
+def test_a_string_valued_token_key_is_still_redacted():
+    """The exemption is for counts. A credential-shaped value is not a count."""
+    out = default_redactor().redact({
+        "refresh_tokens": "rt_abcdefghijklmnop",
+        "access_token": "sk-abcdefghijklmnopqrst",
+    })
+    assert out["refresh_tokens"] == REDACTED
+    assert out["access_token"] == REDACTED
+
+
+def test_a_numeric_secret_that_is_not_a_count_is_still_redacted():
+    """Only the `…tokens` suffix is exempted, not every numeric value."""
+    out = default_redactor().redact({"password": 12345, "api_key": 99,
+                                     "authorization": 1})
+    assert out == {"password": REDACTED, "api_key": REDACTED,
+                   "authorization": REDACTED}
+
+
+def test_a_boolean_is_not_treated_as_a_count():
+    """`bool` is an `int` in Python; a flag named …tokens is not a measurement."""
+    out = default_redactor().redact({"has_tokens": True})
+    assert out["has_tokens"] == REDACTED
