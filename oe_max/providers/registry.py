@@ -55,6 +55,20 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
 
+# Outcomes where the provider has told us something durable about the model:
+# it does not exist, we may not call it, or our allowance for it is gone.
+# Anything else — a 502, a timeout, a dropped connection — is the network or
+# the provider having a bad minute, and says nothing about the model.
+_DEFINITIVE = frozenset({
+    Outcome.BAD_REQUEST,            # Zen's "Model is unavailable"
+    Outcome.FREE_LIMIT_EXHAUSTED,   # unusable now, and not by accident
+})
+
+# A withdrawn model on Zen arrives as 401 with a ModelError body, which is
+# indistinguishable from a credential problem by status alone.
+_WITHDRAWN_MARKERS = ("modelerror", "not supported", "does not exist", "not found")
+
+
 @dataclass
 class ProbeResult:
     provider: str
@@ -64,9 +78,25 @@ class ProbeResult:
     latency_ms: Optional[float]
     status: Optional[int]
     detail: str = ""
+    # Whether this probe is evidence about the *model*, or just a bad minute.
+    # Without the distinction one transient 502 silently removes a working
+    # route from every chain until somebody re-runs verification — observed
+    # live on 2026-08-26, when `laguna-s-2.1-free` failed a single probe
+    # between two successful runs and would have taken the judge and fast
+    # roles down with it.
+    conclusive: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
+
+
+def _is_conclusive(outcome: Outcome, body: str) -> bool:
+    if outcome in _DEFINITIVE:
+        return True
+    if outcome is Outcome.AUTH_FAILED:
+        low = (body or "").lower()
+        return any(m in low for m in _WITHDRAWN_MARKERS)
+    return False
 
 
 def build_default_registry(
@@ -407,8 +437,11 @@ class Registry:
             max_tokens=200, temperature=0,
         )
         if not r.ok:
-            return ProbeResult(provider.name, model_id, False, None,
-                               r.latency_ms, r.status_code, (r.error or "")[:200])
+            return ProbeResult(
+                provider.name, model_id, False, None, r.latency_ms,
+                r.status_code, (r.error or "")[:200],
+                conclusive=_is_conclusive(r.outcome, r.error or ""),
+            )
 
         supports_tools: Optional[bool] = None
         if check_tools:
@@ -420,7 +453,18 @@ class Registry:
                     "name": "noop", "description": "probe",
                     "parameters": {"type": "object", "properties": {}}}}],
             )
-            supports_tools = t.ok
+            # The capability filter is meant to self-correct in both
+            # directions: if tool support breaks, the next probe records False
+            # and the model leaves tool-requiring roles with no code change.
+            # That only works if a *transient* failure does not also record
+            # False — otherwise one bad minute demotes a tools-capable model
+            # and nothing puts it back until the next verification.
+            if t.ok:
+                supports_tools = True
+            elif _is_conclusive(t.outcome, t.error or ""):
+                supports_tools = False
+            else:
+                supports_tools = None   # inconclusive; keep what we knew
 
         return ProbeResult(provider.name, model_id, True, supports_tools,
                            r.latency_ms, r.status_code, "ok")
@@ -439,10 +483,18 @@ class Registry:
                 continue
             for spec in p.models.values():
                 res = await self.probe_model(client, p, spec.id, check_tools=check_tools)
-                # Belief is replaced by measurement.
-                spec.available = res.reachable
-                spec.supports_tools = res.supports_tools
-                spec.observed_latency_ms = res.latency_ms
+                # Belief is replaced by measurement — but only by measurement
+                # that means something. An inconclusive failure leaves the
+                # previous belief alone rather than overwriting it with the
+                # network's opinion of the last two seconds.
+                if res.reachable:
+                    spec.available = True
+                elif res.conclusive:
+                    spec.available = False
+                if res.supports_tools is not None:
+                    spec.supports_tools = res.supports_tools
+                if res.latency_ms is not None:
+                    spec.observed_latency_ms = res.latency_ms
                 results.append(res)
         self.probes = results
         return results
