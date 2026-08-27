@@ -629,6 +629,44 @@ repeats separate the two.
 
 ---
 
+## 4h. Project memory
+
+```bash
+./scripts/memory.sh                              # the digest
+./scripts/memory.sh note "..." --kind decision   # journal it
+./scripts/memory.sh search hy3
+```
+
+Also `GET /api/memory` and the Control Center's **Memory** view, all reading
+the same workspace so the terminal and the browser cannot disagree.
+
+**The line it draws is the point.** Run history, scores, checkpoints and
+resume commands are DERIVED at read time from the projections the event log
+already produced — nothing is cached into a summary table. That is the same
+rule the storage layer is built on: a second copy drifts from the first, and a
+drifted summary is worse than none because it is believed. Rebuild the
+projections and the digest changes with them.
+
+The `journal` table is the single exception, and it earns it: *why* a decision
+was made was never an event, so no amount of replay recovers it. `source`
+separates what a person asserted from what a program inferred, which is what
+keeps the journal trustworthy for the decisions it exists to hold.
+
+Two things this found, both silent:
+
+- **`runs.output_dir` was NULL for every run ever recorded.** The started
+  event carried it and the `EXPERIMENT_STARTED` upsert simply did not list the
+  column, so it was emitted, carried and dropped. It is the one field needed
+  to offer "resume this run" as a command. Fixed at the source; the digest
+  also derives it from the checkpoint path so history predating the fix is
+  still resumable.
+- **Shell-launched runs were absent from their own project's history.** The
+  collector only ingests while the Control Center is up, so a run started with
+  `run-evolution.sh` alone left its events in a file and nothing read them.
+  `control_plane/memory/importer.py` replays those logs, offset-tracked and
+  idempotent (`ingest` is INSERT OR IGNORE on a unique event id, so the offset
+  is an optimisation and not the correctness mechanism).
+
 ## 5. What to do next
 
 The queue with rationale lives in **[NEXT_TASKS.md](NEXT_TASKS.md)** — kept

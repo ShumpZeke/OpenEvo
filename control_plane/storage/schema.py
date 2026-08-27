@@ -18,7 +18,7 @@ Upstream checkpoint data is NOT duplicated here. Candidate code lives in
 OpenEvolve's own checkpoints; we store identity, metrics and pointers.
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Columns added after their table first shipped.
 #
@@ -423,6 +423,63 @@ CREATE TABLE IF NOT EXISTS config_revisions (
 CREATE INDEX IF NOT EXISTS ix_cfg_exp ON config_revisions(experiment_id, created_at);
 
 -- --------------------------------------------------------- provider health
+-- ------------------------------------------------------------- journal
+--
+-- Durable memory across sessions: what a person or an agent wants to remember
+-- that the event log cannot reconstruct.
+--
+-- The line this table draws is deliberate. Run history, scores, checkpoints
+-- and provider probes are all DERIVED at read time from the tables above —
+-- copying them here would create a second source of truth that drifts from the
+-- first, and this store's whole design is that projections are a cache and the
+-- event log is the truth.
+--
+-- What lands here is only what nothing else can answer: why a decision was
+-- made, what someone was in the middle of, what to do next. That is not
+-- derivable from events because it was never an event.
+CREATE TABLE IF NOT EXISTS journal (
+    entry_id   TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    kind       TEXT NOT NULL,          -- note | decision | blocker | milestone | session
+    title      TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    run_id     TEXT,                   -- optional anchor to a run
+    tags       TEXT NOT NULL DEFAULT '[]',
+    -- 'user' or 'agent'. Kept so a reader can tell what a person asserted from
+    -- what a program inferred; collapsing the two would make the journal
+    -- untrustworthy for exactly the decisions it exists to record.
+    source     TEXT NOT NULL DEFAULT 'user',
+    metadata   TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_journal_created ON journal(created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_journal_kind    ON journal(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_journal_run     ON journal(run_id);
+
+-- ------------------------------------------------------- imported logs
+--
+-- Where the importer got to in each run's NDJSON event log.
+--
+-- Runs started from the shell write their events to a file and nothing
+-- ingests them: the collector only runs while the Control Center is up. So a
+-- CLI-launched run left no trace in this database at all, and the project's
+-- own history was a function of how you happened to launch it.
+--
+-- The importer replays those files. `ingest` is INSERT OR IGNORE on a unique
+-- event id, so replaying is already idempotent and this table is purely an
+-- optimisation — but a load-bearing one: without the offset, every `memory`
+-- invocation would re-read every byte of every log a run has ever written.
+--
+-- Offset is in bytes and the file is opened in binary. A log being appended to
+-- by a live run is handled by construction: the next import picks up from
+-- where this one stopped.
+CREATE TABLE IF NOT EXISTS imported_logs (
+    path        TEXT PRIMARY KEY,
+    offset      INTEGER NOT NULL DEFAULT 0,
+    size_bytes  INTEGER,
+    imported_at REAL,
+    events      INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS provider_health (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     provider      TEXT NOT NULL,

@@ -46,13 +46,15 @@ evolution-run = "control_plane.runner.entrypoint:main"
 # OE-MAX: provider broker and dashboard.
 oe-max-broker = "oe_max.broker.cli:main"
 oe-max-dashboard = "oe_max.dashboard:main"
+# Project memory: history, resume points and the journal.
+evolution-memory = "control_plane.memory.cli:main"
 
 [tool.setuptools]
 packages = [
     "openevolve", "openevolve.llm", "openevolve.prompt", "openevolve.utils",
     "control_plane", "control_plane.telemetry", "control_plane.storage",
     "control_plane.api", "control_plane.providers", "control_plane.sandbox",
-    "control_plane.runner",
+    "control_plane.runner", "control_plane.memory",
     "oe_max", "oe_max.providers", "oe_max.broker", "oe_max.evaluation",
     "oe_max.search",
 ]

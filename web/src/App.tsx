@@ -14,6 +14,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Inspector } from "./components/Inspector";
 import { EventRail } from "./components/EventRail";
 import { Overview } from "./views/Overview";
+import { Memory } from "./views/Memory";
 import { EvolutionGraph } from "./views/EvolutionGraph";
 import { MapElitesLab } from "./views/MapElitesLab";
 import { IslandsLab } from "./views/IslandsLab";
@@ -37,10 +38,11 @@ export type ViewId =
   | "overview" | "evolution" | "map-elites" | "islands" | "candidates"
   | "experiments" | "models" | "evaluators" | "sandbox" | "checkpoints"
   | "activity" | "metrics" | "logs" | "errors" | "traces" | "compare"
-  | "system" | "classic" | "settings";
+  | "system" | "classic" | "settings" | "memory";
 
 const NAV: { id: ViewId; label: string; group: string }[] = [
   { id: "overview", label: "Overview", group: "Evolution" },
+  { id: "memory", label: "Memory", group: "Evolution" },
   { id: "evolution", label: "Evolution", group: "Evolution" },
   { id: "map-elites", label: "MAP-Elites", group: "Evolution" },
   { id: "islands", label: "Islands", group: "Evolution" },
@@ -155,6 +157,7 @@ export default function App() {
   const body = useMemo(() => {
     switch (view) {
       case "overview": return <Overview {...viewProps} />;
+      case "memory": return <Memory {...viewProps} />;
       case "evolution": return <EvolutionGraph {...viewProps} />;
       case "map-elites": return <MapElitesLab {...viewProps} />;
       case "islands": return <IslandsLab {...viewProps} />;

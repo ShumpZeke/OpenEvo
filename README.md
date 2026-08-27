@@ -72,6 +72,19 @@ Watch it live:
 ./run.sh                          # browser Control Center → 127.0.0.1:8000
 ```
 
+### Coming back to it later
+
+```bash
+./scripts/memory.sh                 # where you left off
+./scripts/memory.sh note "..."      # leave yourself something
+./scripts/memory.sh search "..."    # find it again
+```
+
+Prints your run history, the high-water score, every run you can resume with
+the exact command to do it, and your journal. Runs started from the shell are
+imported automatically, so history means the same thing however you launched.
+The same thing lives in the Control Center's **Memory** view.
+
 **No API key is required to try it.** OpenCode Zen serves four free models
 without one — verified 2026-08-26 — and `./scripts/verify-providers.sh` shows
 what is actually reachable right now. Every other provider is key-gated and
