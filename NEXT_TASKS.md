@@ -116,6 +116,46 @@ each — their model ids are discovered, so nothing else is configured.
 
 ---
 
+## T1c — Does the bandit beat uniform random?
+
+**Priority:** high. **Effort:** small — the arm is registered.
+**Blocked by:** nothing.
+
+The operator bandit is now wired end to end (`OE_MAX_OPERATOR_BANDIT=1`,
+HANDOFF §4b-bandit) and **off by default because nobody has measured whether it
+helps**. That is the only thing standing between it and being a default.
+
+```bash
+./scripts/start-broker.sh
+./scripts/ablation.sh --arms operators,operator_bandit --repeats 3
+```
+
+Compare against the `operators` arm, not the baseline. The bandit acts through
+operator steering, so measuring it against a plain baseline measures steering
+and selection together and cannot say which one paid.
+
+### Careful
+
+Two things make this arm harder to read than the others, and both push toward
+*more* repeats rather than fewer:
+
+- **A short run barely leaves exploration.** Twelve iterations gives the bandit
+  about a dozen observations spread over fifteen arms. Thompson sampling will
+  still be sampling widely at that point, so a null result is evidence about
+  short runs and not about the bandit. If the answer comes back "no
+  difference", the honest next step is a longer run, not a conclusion.
+- **It is the one arm that is not reproducible.** Selection depends on rewards
+  from earlier iterations, so a rerun with the same seed diverges the moment a
+  score differs. Do not treat run-to-run variation here as a bug.
+
+### Done when
+
+You can say whether reward-driven operator selection beats uniform on
+improvement-per-request, with ≥3 runs per arm — or state plainly that a run of
+this length cannot tell, which is also a result.
+
+---
+
 ## T2 — Multi-offspring per request (spec §7F)
 
 **Priority:** built, needs a real-provider benchmark. **Effort:** small.

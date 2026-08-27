@@ -543,8 +543,14 @@ EVOLUTION_EVALUATOR_PATH=examples/function_minimization/evaluator.py \
 OE_MAX_VERIFY_ENTRY_POINT=search_algorithm \
 OE_MAX_OPERATORS=1 OE_MAX_ISLAND_POLICIES=1 OE_MAX_MULTI_OFFSPRING=3 \
 OE_MAX_VERIFY=1 OE_MAX_SANDBOX_EVAL=1 OE_MAX_SEED_FORGE=3 \
+OE_MAX_OPERATOR_BANDIT=1 \
   ./scripts/run-evolution.sh --iterations 12
 ```
+
+Note this command did nothing at all before §3.11 was fixed — the script exec'd
+the plain upstream CLI, which installs no instrumentation, and every flag above
+is read by instrumentation. Re-run it after adding a feature; the numbers below
+were recorded before the fix and should be treated as needing reconfirmation.
 
 Verified on a 12-iteration run: 14 candidates carrying an operator, three
 distinct island policies in use, 2 extra offspring, 5 forge-descended
