@@ -555,8 +555,32 @@ OE_MAX_OPERATOR_BANDIT=1 \
 
 Note this command did nothing at all before §3.11 was fixed — the script exec'd
 the plain upstream CLI, which installs no instrumentation, and every flag above
-is read by instrumentation. Re-run it after adding a feature; the numbers below
-were recorded before the fix and should be treated as needing reconfirmation.
+is read by instrumentation.
+
+**Re-verified after the fix, 10 iterations, 2026-08-27** — and this time from
+the shell command itself rather than through the control plane:
+
+| | |
+|---|---|
+| events | 1,044 |
+| candidates | 34 |
+| operators labelled | 30, across 9 distinct classes |
+| island policies exercised | all four — exploit 9, explore 9, balanced 6, refine 6 |
+| multi-offspring siblings | 20 |
+| seed-forge descendants | 3, all carrying `forge_origin` |
+| verification events | 12 |
+| bandit pulls | 30, across 9 operators |
+
+The consistency worth checking is the last two rows against the third: **30
+labelled candidates, 30 bandit pulls.** Every labelled candidate produced
+exactly one reward — no double counting from migrants, no silent drops.
+
+Zero migrants is correct here rather than a missing flag: migration is keyed to
+island *generation*, and 10 iterations over 4 islands leaves each below
+`migration_interval: 6`. A longer run is the way to exercise that path.
+
+No new integration bugs surfaced. The three listed below were found by an
+earlier run of this command and remain fixed.
 
 Verified on a 12-iteration run: 14 candidates carrying an operator, three
 distinct island policies in use, 2 extra offspring, 5 forge-descended
