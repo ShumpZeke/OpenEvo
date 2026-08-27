@@ -168,6 +168,16 @@ _worker_island_count: int = 0
 # mutation", policies say "this island is for a different kind of mutation".
 ENV_ISLAND_POLICIES = "OE_MAX_ISLAND_POLICIES"
 
+# Let the bandit pick the operator instead of uniform random. Separate from
+# operator steering because it is a further claim: steering says "name the
+# mutation class", this says "and let measured reward choose which".
+#
+# Off by default, and it must stay that way until somebody measures whether it
+# beats uniform. It also makes a run non-reproducible in a way seeding cannot
+# fix — the choice depends on rewards from earlier iterations, so a rerun with
+# the same seed diverges the moment a score differs.
+ENV_OPERATOR_BANDIT = "OE_MAX_OPERATOR_BANDIT"
+
 
 def island_policies_enabled() -> bool:
     return os.environ.get(ENV_ISLAND_POLICIES, "").lower() in ("1", "true", "yes", "on")
@@ -175,6 +185,41 @@ def island_policies_enabled() -> bool:
 
 def operators_enabled() -> bool:
     return os.environ.get(ENV_OPERATORS, "").lower() in ("1", "true", "yes", "on")
+
+
+def operator_bandit_enabled() -> bool:
+    """
+    Bandit selection requires operator steering: without a named operator there
+    is nothing to attribute reward to, so enabling this alone would be a flag
+    that silently does nothing.
+    """
+    if not operators_enabled():
+        return False
+    return os.environ.get(ENV_OPERATOR_BANDIT, "").lower() in ("1", "true", "yes", "on")
+
+
+def _bandit_store(run_id: Optional[str]):
+    """
+    The per-run bandit state file, or None.
+
+    Per *run*, deliberately. A bandit that carried evidence between runs would
+    learn across different tasks, different seeds and different providers, and
+    the operator that suits one problem is not the operator that suits the
+    next. It would also make the first iteration of every run depend on
+    whichever run happened to precede it, which is untraceable.
+    """
+    if not run_id:
+        return None
+    try:
+        from oe_max.search.bandit_store import BanditStore
+        from oe_max.search.operators import OPERATORS
+
+        root = os.environ.get("EVOLUTION_WORKSPACE") or os.path.join(".evolution", "workspace")
+        path = os.path.join(root, "bandits", f"{run_id}.json")
+        return BanditStore(path, [op.value for op in OPERATORS])
+    except Exception as exc:
+        logger.debug("bandit store unavailable: %r", exc)
+        return None
 
 
 def _select_operator(run_id: Optional[str], iteration: Any,
@@ -213,6 +258,19 @@ def _select_operator(run_id: Optional[str], iteration: Any,
             policy = policy_for(_worker_island, _worker_island_count)
             picked = choose(policy, choices, rng)
             return picked.value if picked else None
+
+        if operator_bandit_enabled():
+            # Reward is observed in the main process and selection happens
+            # here, in a worker, so the bandit's two halves never share memory.
+            # The state file is the channel — see oe_max/search/bandit_store.
+            store = _bandit_store(run_id)
+            if store is not None:
+                picked = store.select([c.value for c in choices])
+                if picked is not None:
+                    return str(picked)
+            # Falling through to uniform is the point: an unreadable state file
+            # must cost a little exploitation, never the mutation.
+
         return rng.choice(choices).value
     except Exception as exc:  # steering is an enhancement, never a requirement
         logger.debug("operator selection failed: %r", exc)
@@ -273,6 +331,60 @@ def _attribution_of(program: Any) -> Optional[Dict[str, Any]]:
     if rec and (time.time() - rec.get("at", 0)) > _ATTRIBUTION_MAX_AGE_S:
         return None
     return rec
+
+
+def _parent_fitness(db: Any, program: Any) -> Optional[float]:
+    """The parent's score, for the delta the reward is built from."""
+    parent_id = getattr(program, "parent_id", None)
+    if not parent_id:
+        return None
+    parent = (getattr(db, "programs", {}) or {}).get(parent_id)
+    if parent is None:
+        return None
+    cfg = getattr(db, "config", None)
+    dims = list(getattr(cfg, "feature_dimensions", []) or [])
+    return _fitness(dict(getattr(parent, "metrics", {}) or {}), dims)
+
+
+def _reward_operator(db: Any, program: Any, *, accepted: bool,
+                     fitness: Optional[float]) -> None:
+    """
+    Credit the operator that produced this candidate.
+
+    This half runs in the MAIN process, where the score exists. Selection runs
+    in a worker, where it does not. The two never share memory — see
+    HANDOFF §3.7 — so the bandit's evidence goes through a file.
+
+    Migrants are excluded. `_migrate_programs` copies metadata wholesale into
+    the copy, so a migrated program carries the operator of the mutation that
+    made the *original*, and rewarding it again would count one mutation
+    several times — once per island it reaches. That is the same trap that made
+    two analysis modules measure the wrong population.
+    """
+    if not operator_bandit_enabled():
+        return
+    try:
+        md = getattr(program, "metadata", None) or {}
+        if md.get("migrant"):
+            return
+        operator = (_attribution_of(program) or {}).get("operator")
+        if not operator:
+            return
+        store = _bandit_store(_active.run_id if _active else None)
+        if store is None:
+            return
+
+        from oe_max.search.bandit import reward_from_outcome
+
+        delta: Optional[float] = None
+        if accepted and fitness is not None:
+            parent = _parent_fitness(db, program)
+            if parent is not None:
+                delta = fitness - parent
+        store.update(operator, reward_from_outcome(accepted=accepted,
+                                                   fitness_delta=delta))
+    except Exception as exc:   # learning must never cost a candidate
+        logger.debug("operator reward failed: %r", exc)
 
 
 def _provenance_flags(program: Any) -> Dict[str, Any]:
@@ -715,6 +827,11 @@ class EngineInstrumentation:
                           # for them, or duplicate-heavy routes look free.
                           **_attribution_fields(_attribution_of(program))},
             ))
+            # A rejected candidate is a real outcome for its operator, not a
+            # missing one. Recording only accepted candidates would teach the
+            # bandit that an operator producing nothing but duplicates is
+            # indistinguishable from one that is never tried.
+            _reward_operator(db, program, accepted=False, fitness=None)
             return
 
         # Attribute this candidate to the model request that generated it, if
@@ -753,6 +870,8 @@ class EngineInstrumentation:
                 **_attribution_fields(gen_req),
             },
         ))
+
+        _reward_operator(db, program, accepted=True, fitness=fitness)
 
         # MAP-Elites: diff the island's real feature map.
         for idx, after in after_maps.items():

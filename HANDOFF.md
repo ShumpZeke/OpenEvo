@@ -238,7 +238,35 @@ Two properties worth preserving if you touch it:
   policy; silently redirecting a pinned request would make an A/B experiment
   measure something other than what it named.
 
-### 3.11 A configured model can simply stop existing
+### 3.11 The plain CLI installs no telemetry, and every feature rides on it
+
+`scripts/run-evolution.sh` exec'd `openevolve-run.py`, the untouched upstream
+CLI. Upstream installs no instrumentation, and **every OE-MAX feature is
+installed by that instrumentation** — operator steering, attribution,
+multi-offspring, verification, sandboxed evaluation, the bandit. So:
+
+```bash
+OE_MAX_OPERATORS=1 ./scripts/run-evolution.sh --iterations 12
+```
+
+set an environment variable that nothing ever read. The run succeeded, the
+score improved, and not one of those features happened. No error, no warning,
+no event log — the only symptom was the absence of something you had no reason
+to check for.
+
+`auto_install_from_env()` is called from exactly one place,
+`control_plane/runner/entrypoint.py`, and it needs both `EVOLUTION_TELEMETRY`
+and `EVOLUTION_RUN_ID`. Runs started from the Control Center went through it;
+runs started from the shell script did not.
+
+Fixed: both launchers now exec the entrypoint and generate a run id when the
+caller has not supplied one. `tests/evolution/test_launch_scripts.py` pins it.
+
+**If you add a feature that hangs off instrumentation, check which launcher
+path the operator will actually use.** A flag that silently does nothing is
+worse than one that errors.
+
+### 3.12 A configured model can simply stop existing
 
 This is the trap that cost the most, because nothing failed loudly.
 
@@ -265,7 +293,7 @@ The general shape: **a model id written from memory is a claim that decays.**
 The catalogue (`configs/oe_max/providers.yaml`) therefore names patterns and
 materialises concrete ids from each provider's own listing.
 
-### 3.12 An exhausted free allowance is not a rate limit
+### 3.13 An exhausted free allowance is not a rate limit
 
 Both are HTTP 429, and Zen's free-limit body even says *"Rate limit exceeded.
 Please try again later."* Only the error **type** (`FreeUsageLimitError`)
@@ -347,14 +375,55 @@ Three things to know before changing it:
 - **It is off by default on purpose.** It changes what the model is asked, so
   turning it on globally would confound the stock-vs-MAX comparison and every
   measurement already recorded.
-- **The bandit is not driving it.** Selection is uniform random, seeded from
-  `(run_id, iteration)` so a rerun is comparable. The bandit exists and is
-  tested, but it learns from per-operator reward and there was none until this
-  existed. Measure first; then close the loop.
+- **The bandit can drive it now, and does not by default.** Selection is
+  uniform random, seeded from `(run_id, iteration)` so a rerun is comparable.
+  Setting `OE_MAX_OPERATOR_BANDIT=1` as well hands the choice to measured
+  reward instead (§4b-bandit below). Uniform remains the default because
+  whether the bandit *helps* is unmeasured, and because bandit selection makes
+  a run non-reproducible in a way seeding cannot fix.
 - **The evaluator's prompt is never steered.** Upstream builds a second
   `PromptSampler` for LLM feedback and marks it with `set_templates()`.
   Steering that one corrupts the *score* rather than the candidate, which is
   much harder to notice than a broken diff.
+
+## 4b-bandit. Letting reward pick the operator (opt-in, needs 4b)
+
+```bash
+OE_MAX_OPERATORS=1 OE_MAX_OPERATOR_BANDIT=1 \
+  ./scripts/run-evolution.sh --iterations 12
+```
+
+Discounted Thompson sampling over the operator taxonomy. Reward is
+`reward_from_outcome`: 0 for a rejected candidate, 0.25 for accepted-but-not-
+better, saturating toward 1 for an improvement — so an operator that mostly
+emits duplicates is penalised without needing a separate validity signal.
+
+**The structural problem, which is why this sat unwired for so long.** The two
+halves live in different processes: selection in a worker inside
+`PromptSampler.build_prompt`, reward in the main process inside
+`ProgramDatabase.add`. §3.7 covers worker→main; there is no in-memory channel
+main→worker at all. State therefore goes through a file
+(`oe_max/search/bandit_store.py`), single-writer with atomic replace, which is
+the same choice the rate limiter makes for its rolling window.
+
+Three details that are load-bearing:
+
+- **Per run, not global.** A bandit carrying evidence between runs would learn
+  across different tasks, seeds and providers, and would make the first
+  iteration of every run depend on whichever run preceded it.
+- **Migrants are excluded.** `_migrate_programs` copies metadata wholesale, so
+  a migrant carries the operator of the mutation that made the *original*.
+  Rewarding it again counts one mutation once per island it reaches — the same
+  trap that made two analysis modules measure the wrong population.
+- **A rejected candidate is a real outcome, not a missing one.** Recording only
+  accepted candidates would make an operator that produces nothing but
+  duplicates indistinguishable from one that is never tried.
+
+Verified on a real 5-iteration run: four operators pulled, rewards 0.25 to
+0.999, pull counts matching the telemetry's attributed operators exactly.
+
+**Whether it beats uniform random is unmeasured.** That is the ablation arm to
+run, and until it is run this stays off.
 
 ## 4c. Multi-offspring per request (opt-in)
 
@@ -543,8 +612,24 @@ Two things that are *built but not in the loop*, which is the trap this project
 keeps falling into and the first thing worth checking before building anything
 new:
 
-- **the operator bandit.** `search/bandit.py` is tested and is not what picks
-  operators; selection is uniform random until per-operator reward exists.
+- ~~**the operator bandit.**~~ **Closed.** `OE_MAX_OPERATOR_BANDIT=1` now
+  makes measured reward pick the operator. The reason it stayed open so long
+  is structural and worth understanding before wiring anything similar:
+  selection happens in a **worker** and reward is known in the **main**
+  process, and they share no memory. §3.7 covers worker→main
+  (`Program.metadata`); this needed the other direction, which had no channel
+  at all, so the state goes through a file —
+  `oe_max/search/bandit_store.py`, the same choice the rate limiter already
+  makes for its rolling window.
+
+  Verified on a real 5-iteration run: four operators pulled, rewards ranging
+  0.25 for no improvement to 0.999 for a large one, and the bandit's pull
+  counts matching the telemetry's attributed operators exactly.
+
+  **Whether it beats uniform is unmeasured.** It is off by default for that
+  reason, and it also makes a run non-reproducible in a way seeding cannot fix
+  — the choice depends on rewards from earlier iterations, so a rerun with the
+  same seed diverges the moment a score differs.
 - **nothing measures whether the forged population helps.** The seeding path
   exists (§4e); the ablation arm for it does not.
 

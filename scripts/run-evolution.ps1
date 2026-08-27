@@ -31,6 +31,20 @@ if ($Profile -eq "max") {
   try { Invoke-WebRequest "http://127.0.0.1:$port/health" -TimeoutSec 5 -UseBasicParsing | Out-Null }
   catch { Write-Error "The broker is not running. Start it: .\scripts\start-broker.ps1"; exit 1 }
 }
+# Run through the instrumented entrypoint, not `openevolve-run.py` directly.
+# The plain upstream CLI installs no telemetry, and every OE_MAX_* feature is
+# installed BY that telemetry — so setting one of those variables against the
+# old command changed nothing at all, silently.
+if (-not $env:EVOLUTION_RUN_ID) {
+  $env:EVOLUTION_RUN_ID = "run_$(Get-Date -Format 'yyyyMMddHHmmss')_$PID"
+}
+if (-not $env:EVOLUTION_TELEMETRY) { $env:EVOLUTION_TELEMETRY = "1" }
+if (-not $env:EVOLUTION_EVENT_LOG) {
+  $env:EVOLUTION_EVENT_LOG = Join-Path $Output "events.ndjson"
+}
+
 Write-Host "task=$Task profile=$Profile iterations=$Iterations"
 Write-Host "output=$Output"
-& $py openevolve-run.py $prog $eval --config $cfg --iterations $Iterations --output $Output
+Write-Host "run_id=$($env:EVOLUTION_RUN_ID)"
+Write-Host "events=$($env:EVOLUTION_EVENT_LOG)"
+& $py -m control_plane.runner.entrypoint $prog $eval --config $cfg --iterations $Iterations --output $Output
