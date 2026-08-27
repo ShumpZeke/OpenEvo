@@ -13,7 +13,10 @@ def env_keys(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-key-value")
 
 
-PRIMARY = "zen-nemotron-3-ultra-free"
+# NVIDIA NIM became the primary provider on 2026-08-27 by operator decision.
+# The keyless Zen route that held this name before it is still in every chain,
+# one step behind, which is what keeps a no-key checkout working.
+PRIMARY = "nim-nemotron-3-ultra"
 
 
 def test_the_primary_is_the_preferred_completion_route(env_keys):
@@ -21,23 +24,60 @@ def test_the_primary_is_the_preferred_completion_route(env_keys):
     assert r.select(Role.MUTATION).id == PRIMARY
 
 
-def test_the_withdrawn_ox_alpha_route_can_never_be_selected(env_keys):
+def test_ox_alpha_is_gone_from_the_routing_table(env_keys):
     """
-    Ox Alpha was this project's stated primary and no longer exists. Probed
-    2026-08-26: absent from Zen's /models, and a completion returns
-    `ModelError: Model x-preview-f-free is not supported` — removal, not
-    gating, since a paid Zen model answers `AuthError: Missing API key`.
+    Ox Alpha was this project's stated primary. The provider withdrew it on
+    2026-08-26 — absent from Zen's /models, and a completion returns
+    `ModelError: Model x-preview-f-free is not supported`, which is removal
+    rather than gating since a paid Zen model answers `AuthError: Missing API
+    key`. On 2026-08-27 the operator took it out of service here entirely.
 
-    The profile is kept, disabled, so the UI can explain what happened. This
-    test is the guard against it being quietly re-promoted from memory: if it
-    genuinely returns, re-enabling it is a deliberate edit that must also
-    delete this test, which is the point.
+    It was carried disabled-but-present for a while so the UI could explain what
+    happened. That is over: this asserts absence, so nothing can re-promote it
+    from memory. Two routes pointed at it — Zen's `x-preview-f-free` and an
+    alternate `stealth/ox-alpha` through OpenRouter — and the second outlived
+    the first by a day precisely because only the first was obvious.
     """
     r = ModelRouter()
-    assert r.profiles["zen-ox-alpha-free"].enabled is False
+    assert "zen-ox-alpha-free" not in r.profiles
+    for profile in r.profiles.values():
+        assert "ox-alpha" not in profile.id, profile.id
+        assert "x-preview-f-free" != profile.model, profile.id
     for role in Role:
-        assert r.select(role).id != "zen-ox-alpha-free", role
-        r.release(r.select(role).id, ok=True, latency_ms=1.0)
+        chosen = r.select(role)
+        assert "ox" not in chosen.id.split("-"), (role, chosen.id)
+        r.release(chosen.id, ok=True, latency_ms=1.0)
+
+
+def test_every_role_prefers_nvidia_nim(env_keys):
+    """
+    Operator decision, 2026-08-27: NIM is the primary provider.
+
+    NIM is also the only provider in this table whose models were probed
+    individually with a real key (HANDOFF §4i), so leading with it is both what
+    was asked for and the better-evidenced choice.
+    """
+    from control_plane.providers.profiles import default_role_chains
+
+    for role, chain in default_role_chains().items():
+        assert chain[0].startswith("nim-"), f"{role.value} leads with {chain[0]}"
+
+
+def test_no_chain_routes_to_a_nim_model_that_did_not_serve():
+    """
+    Probed 2026-08-28 with a real key: `openai/gpt-oss-120b` returned 0 bytes
+    after 190 s and again after 230 s, and `mistralai/codestral-22b-instruct-v0.1`
+    returned 404 "Not found for account" — an entitlement, which a catalogue
+    cannot express. Both shipped in chains before that probe.
+    """
+    from control_plane.providers.profiles import default_profiles, default_role_chains
+
+    unserveable = {"nim-gpt-oss-120b", "nim-codestral-22b"}
+    disabled = {p.id for p in default_profiles() if not p.enabled}
+    assert unserveable <= disabled, "a route that did not serve is still enabled"
+    for role, chain in default_role_chains().items():
+        assert not (set(chain) & unserveable), (
+            f"{role.value} routes to {set(chain) & unserveable}")
 
 
 def test_the_primary_serves_tool_roles_too(env_keys):
@@ -146,9 +186,13 @@ def test_keyless_capable_route_is_not_excluded_without_a_key(monkeypatch):
     exactly what the old behaviour did.
     """
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     r = ModelRouter()
     chosen = r.select(Role.MUTATION)
-    assert chosen.id == PRIMARY
+    # With no credential at all, the key-gated NIM routes that now lead every
+    # chain drop out and the keyless Zen route serves. That fallback is the
+    # whole reason leading with NIM is safe.
+    assert chosen.id == "zen-nemotron-3-ultra-free"
     assert chosen.requires_key is False
 
 

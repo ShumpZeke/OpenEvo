@@ -26,11 +26,11 @@ checkpoint_interval: 6
 random_seed: 42
 
 llm:
-  # Was `x-preview-f-free` (Ox Alpha). That model was withdrawn from Zen —
-  # probed 2026-08-26, absent from /models and answering `ModelError: Model
-  # x-preview-f-free is not supported`. This arm talks to the provider
-  # directly, with no broker and therefore no failover, so a withdrawn model
-  # here does not degrade the baseline: it makes every request fail.
+  # A keyless Zen route on purpose. This arm talks to the provider directly,
+  # with no broker and therefore no failover, so a model that stops serving
+  # does not degrade the baseline — it makes every request fail. That argues
+  # for the route needing no credential over the route that is fastest, since
+  # a missing key would fail exactly the same way.
   primary_model: "nemotron-3-ultra-free"
   primary_model_weight: 1.0
   api_base: "https://opencode.ai/zen/v1"

@@ -6,9 +6,10 @@
 # in a route A/B — an arm that silently failed over would be measuring the
 # chain, not the feature under test.
 #
-# nemotron rather than the alias because Ox Alpha was measured at 11% success
-# and ~300 s per request; arms pinned to it produce a waiting game with no
-# result. Re-point this at the alias, or at Ox Alpha, once it recovers.
+# A concrete model rather than the alias, because an arm has to hold its route
+# still. Pick one measured reliable: a route at ~11% success and ~300 s per
+# request produces a waiting game with no result at the end, which is how an
+# earlier round of this experiment was lost.
 max_iterations: 24
 checkpoint_interval: 6
 random_seed: 42

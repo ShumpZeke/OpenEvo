@@ -216,15 +216,6 @@ OPENCODE_ZEN_BASE = "https://opencode.ai/zen/v1"
 NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
 _ZEN_SOURCE = "opencode.ai/docs/zen, verified 2026-08-25"
-_OX_ALPHA_WITHDRAWN = (
-    "WITHDRAWN from OpenCode Zen. Probed 2026-08-26: absent from the /models "
-    "listing, and POST /chat/completions returns HTTP 401 with body "
-    "`{\"type\":\"ModelError\",\"message\":\"Model x-preview-f-free is not "
-    "supported\"}`. That is removal, not gating: a paid Zen model on the same "
-    "endpoint returns `AuthError: Missing API key`. This was the configured "
-    "primary route; it is disabled rather than deleted so the reason survives."
-)
-
 _TOOLS_ISSUE = (
     "Tool-calling was broken for this model under anomalyco/opencode issue "
     "#44300 (any request carrying a `tools` array returned 'Upstream request "
@@ -239,43 +230,13 @@ def default_profiles() -> List[ModelProfile]:
     """
     The shipped default routing table.
 
-    Ox Alpha is priority 0 for completion work — the operator explicitly wants
-    the strongest free route used first — while tool-requiring roles are routed
-    to verified tools-capable models because of the issue documented above.
+    NVIDIA NIM carries the primary routes: the operator asked for NIM, and it is
+    the only provider here whose models were probed individually with a real key
+    (HANDOFF §4i). The keyless Zen routes remain as the fallback tail, so an
+    install with no NVIDIA_API_KEY still serves rather than failing — a route
+    that needs an absent credential is filtered out, not attempted.
     """
     return [
-        # ---------------- PREFERRED PRIMARY ----------------
-        ModelProfile(
-            id="zen-ox-alpha-free",
-            provider="opencode_zen",
-            model="x-preview-f-free",
-            api_base=OPENCODE_ZEN_BASE,
-            secret_ref="OPENCODE_API_KEY",
-            display_name="Ox Alpha Free (OpenCode Zen)",
-            context_limit=1_048_576,
-            max_output_tokens=131_072,
-            # TOOLS declared as of 2026-08-26; see _TOOLS_ISSUE. The doctor
-            # still probes and can overrule this.
-            declared_capabilities=[
-                Capability.CHAT, Capability.TOOLS, Capability.JSON_MODE,
-                Capability.STREAMING,
-            ],
-            free_status=FreeStatus.UNKNOWN,
-            free_note=(
-                "Withdrawn. Was documented free for a limited time; the limited "
-                f"time appears to have ended. Source: {_ZEN_SOURCE}."
-            ),
-            requires_key=False,
-            priority=999,
-            max_concurrency=4,
-            # Kept in the table rather than deleted, so the UI can say what
-            # happened to a route an operator deliberately chose. A profile
-            # that simply disappears reads as a bug in this project; one that
-            # says "withdrawn, here is the evidence" reads as what it is.
-            enabled=False,
-            roles=[],
-            notes=_OX_ALPHA_WITHDRAWN,
-        ),
         # ------- Zen, tools-capable (verified working per issue #44300) -------
         ModelProfile(
             id="zen-nemotron-3-ultra-free",
@@ -413,14 +374,83 @@ def default_profiles() -> List[ModelProfile]:
                 Role.PLANNING, Role.REVIEW, Role.ARCHITECTURE,
             ],
             notes=(
-                "Replaces `deepseek-ai/deepseek-v4-pro`, which this project "
+                "VERIFIED 2026-08-28 with a real key: 4.5 s with tools. The "
+                "flagship reasoner, and the primary route for mutation work. "
+                "Replaces `deepseek-ai/deepseek-v4-pro`, which this project once "
                 "configured as its strong fallback and which is NOT in NVIDIA's "
-                "catalogue — the fallback could never have served. In catalogue "
-                "2026-08-26; inference UNVERIFIED (no key)."
+                "catalogue at all — that fallback could never have served."
+            ),
+        ),
+        # The fastest working route measured on any provider here, free or paid.
+        ModelProfile(
+            id="nim-nemotron-3-super-120b",
+            provider="nvidia_nim",
+            model="nvidia/nemotron-3-super-120b-a12b",
+            api_base=NVIDIA_NIM_BASE,
+            secret_ref="NVIDIA_API_KEY",
+            display_name="Nemotron 3 Super 120B (NVIDIA NIM)",
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.UNKNOWN,
+            free_note="NIM credit terms depend on the account; probe at runtime.",
+            priority=10,
+            max_concurrency=4,
+            roles=[
+                Role.EVALUATOR, Role.RESEARCH, Role.PARALLEL_WORKER, Role.EXPLORE,
+                Role.ORCHESTRATOR, Role.PLANNING, Role.REVIEW, Role.ARCHITECTURE,
+                Role.MUTATION, Role.EMERGENCY,
+            ],
+            notes=(
+                "VERIFIED 2026-08-28: 732 ms with tools — the fastest working "
+                "route measured on any provider here. Carries the latency-bound "
+                "roles for that reason."
+            ),
+        ),
+        ModelProfile(
+            id="nim-nemotron-3-nano-30b",
+            provider="nvidia_nim",
+            model="nvidia/nemotron-3-nano-30b-a3b",
+            api_base=NVIDIA_NIM_BASE,
+            secret_ref="NVIDIA_API_KEY",
+            display_name="Nemotron 3 Nano 30B (NVIDIA NIM)",
+            declared_capabilities=[Capability.CHAT, Capability.STREAMING],
+            free_status=FreeStatus.UNKNOWN,
+            free_note="NIM credit terms depend on the account; probe at runtime.",
+            priority=20,
+            max_concurrency=4,
+            roles=[
+                Role.EVALUATOR, Role.RESEARCH, Role.PARALLEL_WORKER, Role.EXPLORE,
+            ],
+            notes=(
+                "VERIFIED 2026-08-28: serves. Note the spelling — "
+                "`nvidia/nemotron-nano-3-30b-a3b` is ALSO in NVIDIA's catalogue "
+                "and returns 404 'Model not found'. Two transposed words, only "
+                "one real; this project had the broken one configured. Do not "
+                "retype this id from memory."
+            ),
+        ),
+        ModelProfile(
+            id="nim-deepseek-v4-flash",
+            provider="nvidia_nim",
+            model="deepseek-ai/deepseek-v4-flash-0731",
+            api_base=NVIDIA_NIM_BASE,
+            secret_ref="NVIDIA_API_KEY",
+            display_name="DeepSeek V4 Flash (NVIDIA NIM)",
+            declared_capabilities=[Capability.CHAT, Capability.STREAMING],
+            free_status=FreeStatus.UNKNOWN,
+            free_note="NIM credit terms depend on the account; probe at runtime.",
+            priority=60,
+            max_concurrency=2,
+            roles=[Role.DEEP_CODING, Role.MUTATION],
+            notes=(
+                "VERIFIED 2026-08-28: serves, but at 51 s — strong and slow "
+                "enough to matter. Ranked below the generalists deliberately."
             ),
         ),
         ModelProfile(
             id="nim-gpt-oss-120b",
+            enabled=False,
             provider="nvidia_nim",
             model="openai/gpt-oss-120b",
             api_base=NVIDIA_NIM_BASE,
@@ -457,6 +487,7 @@ def default_profiles() -> List[ModelProfile]:
         ),
         ModelProfile(
             id="nim-codestral-22b",
+            enabled=False,
             provider="nvidia_nim",
             model="mistralai/codestral-22b-instruct-v0.1",
             api_base=NVIDIA_NIM_BASE,
@@ -517,33 +548,65 @@ def default_role_chains() -> Dict[Role, List[str]]:
     deliberate edit when Ox Alpha vanished, and will take another when
     something better appears.
     """
-    # Reasoning-led work: the primary first, then the other keyless free
-    # routes, then the key-gated pool.
-    zen_first = [
+    # Every chain leads with NIM and ends with the keyless Zen routes. The tail
+    # is what makes leading with a key-gated provider safe: a route whose
+    # credential is absent is filtered out rather than attempted, so an install
+    # with no NVIDIA_API_KEY falls straight through to Zen and still serves.
+    #
+    # `nim-gpt-oss-120b` and `nim-codestral-22b` appear in none of these: probed
+    # 2026-08-28, the first hung (0 bytes after 190 s and again after 230 s) and
+    # the second returned 404 "Not found for account", which is an entitlement
+    # and not something a catalogue can express. Both are disabled above.
+    reasoning_first = [
+        "nim-nemotron-3-ultra", "nim-nemotron-3-super-120b",
         "zen-nemotron-3-ultra-free", "zen-hy3-free", "zen-laguna-s21-free",
-        "nim-nemotron-3-ultra", "nim-gpt-oss-120b",
     ]
-    # Cheap, high-volume work: the zero-reasoning route first.
+    # Cheap, high-volume work: 732 ms beats everything else measured here.
     fast_first = [
+        "nim-nemotron-3-super-120b", "nim-nemotron-3-nano-30b",
         "zen-laguna-s21-free", "zen-hy3-free", "zen-nemotron-3-ultra-free",
-        "nim-codestral-22b",
     ]
+    # Tool-using roles are reasoning work that happens to call tools, so they
+    # lead with the flagship rather than the fast route: one primary for
+    # completion and tool roles alike, which is the shape this table had before
+    # the move to NIM and the shape the router's tests assert.
     tools_first = [
+        "nim-nemotron-3-ultra", "nim-nemotron-3-super-120b", "nim-kimi-k3",
         "zen-nemotron-3-ultra-free", "zen-laguna-s21-free", "zen-hy3-free",
-        "nim-kimi-k3", "nim-nemotron-3-ultra", "zen-deepseek-v4-flash",
     ]
+    def ordered(*groups: List[str]) -> List[str]:
+        """
+        Concatenate preference groups, keeping first occurrence only.
+
+        The chains are built by prepending a role's specialists to a shared
+        tail, so an id that is already in the tail would otherwise appear
+        twice -- harmless to selection, but it makes the chain misreport its
+        own depth and gives a route two chances at a retry budget meant for
+        distinct routes.
+        """
+        seen: set = set()
+        out: List[str] = []
+        for group in groups:
+            for profile_id in group:
+                if profile_id not in seen:
+                    seen.add(profile_id)
+                    out.append(profile_id)
+        return out
+
     return {
-        Role.MUTATION: zen_first,
+        Role.MUTATION: reasoning_first,
         Role.EVALUATOR: fast_first,
         Role.RESEARCH: fast_first,
         Role.PARALLEL_WORKER: fast_first,
         Role.ORCHESTRATOR: tools_first,
-        Role.DEEP_CODING: (["zen-nemotron-3-ultra-free", "nim-kimi-k3",
-                            "nim-codestral-22b"] + tools_first),
+        Role.DEEP_CODING: ordered(["nim-kimi-k3", "nim-nemotron-3-ultra",
+                                   "nim-deepseek-v4-flash"], tools_first),
         Role.PLANNING: tools_first,
         Role.REVIEW: tools_first,
         Role.ARCHITECTURE: tools_first,
-        Role.EXPLORE: ["zen-laguna-s21-free"] + tools_first,
-        Role.EMERGENCY: ["nim-nemotron-3-ultra", "nim-gpt-oss-120b",
+        # EXPLORE is high-volume scanning, not deep reasoning, so it belongs on
+        # the fast chain rather than behind the flagship.
+        Role.EXPLORE: fast_first,
+        Role.EMERGENCY: ["nim-nemotron-3-ultra", "nim-nemotron-3-super-120b",
                          "zen-nemotron-3-ultra-free", "local-openai-compatible"],
     }

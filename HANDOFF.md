@@ -67,11 +67,16 @@ Watch it:
 ./scripts/verify-providers.sh      # what is actually reachable right now
 ```
 
-**No API key needed.** OpenCode Zen serves four free models without one —
-verified again 2026-08-26. It is no longer Ox Alpha: that model was withdrawn
-(§3.11). The primary is now `nemotron-3-ultra-free`.
+**The primary is NVIDIA NIM** (operator decision, 2026-08-27). Set
+`NVIDIA_API_KEY` and it leads every role chain; §4i has the five ids that serve
+and the four that do not.
 
-Tests: `./test.sh` → 431 upstream + 399 control plane + 303 OE-MAX + 34
+**No API key needed to try it.** OpenCode Zen serves four free models without
+one — verified again 2026-08-26 — and they sit behind NIM in every chain. A
+route whose credential is absent is filtered out rather than attempted, so a
+checkout with no key falls through to them and still runs.
+
+Tests: `./test.sh` → 431 upstream + 402 control plane + 306 OE-MAX + 34
 BrainPort. Six upstream tests fail on Windows only; see §9.
 
 ---
@@ -907,8 +912,11 @@ These are not style preferences; each is load-bearing.
    between documentation and marketing.
 5. **Credentials stay in the broker process.** Candidates and evaluators get no
    keys. Redaction runs before persistence, not at render time.
-6. **Model and provider IDs are configuration.** Ox Alpha is a stealth preview
-   and may vanish; nothing should need a rewrite when it does.
+6. **Model and provider IDs are configuration.** A stealth preview used as the
+   primary here did vanish, and nothing needed a rewrite when it did. Ids are
+   discovered from provider listings, never written from memory.
+7. **NVIDIA NIM is the primary provider** (2026-08-27). Ox Alpha is removed from
+   service — not disabled, removed — and tests fail if either fact regresses.
 
 ---
 
@@ -940,13 +948,17 @@ you need the authoritative wording.
 
 ```
 branch     main
-tests      431 upstream + 399 control plane + 303 OE-MAX + 34 BrainPort = 1167 passing
+tests      431 upstream + 402 control plane + 306 OE-MAX + 34 BrainPort = 1173 passing
            + 6 upstream failures that are Windows-only (see below)
 engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
            by tests/evolution/test_patch_surface.py
-verified   OpenCode Zen free routes — live, keyless, end-to-end evolution.
-           Ox Alpha (x-preview-f-free) was the primary and is WITHDRAWN.
-           NVIDIA NIM — real key, 2026-08-28; 5 of 9 configured ids serve (§4i)
+primary    NVIDIA NIM — leads every role chain (operator decision 2026-08-27)
+verified   NVIDIA NIM — real key, 2026-08-28; 5 of 9 configured ids serve (§4i)
+           OpenCode Zen free routes — live, keyless, end-to-end evolution;
+           the keyless tail behind NIM in every chain
+removed    Ox Alpha (x-preview-f-free) — withdrawn by the provider 2026-08-26,
+           taken out of service here 2026-08-27, including the alternate
+           stealth/ox-alpha route through OpenRouter
 unverified OpenRouter and the 13 catalogue providers — endpoint liveness only,
            no credential has ever been present, so no inference call has run
            BrainPort against a live OpenCode host — stub-only so far (§4h)

@@ -73,19 +73,31 @@ def test_providers_endpoint_exposes_routes_and_health(client):
     assert primary["free_status"] == "free_limited_time"
 
 
-def test_a_withdrawn_route_is_still_explained_rather_than_hidden(client):
+def test_the_api_serves_no_ox_alpha_route(client):
     """
-    Ox Alpha was withdrawn from Zen (probed 2026-08-26). Its profile is kept
-    and disabled instead of deleted, so the operator who chose it can see what
-    happened to it. A route that simply vanishes from the UI reads as a bug in
-    this project rather than as a change at the provider.
+    Ox Alpha was withdrawn by the provider on 2026-08-26 and removed from
+    service here on 2026-08-27. The API is the surface the Control Center reads,
+    so absence has to hold here and not only in the table it is built from.
     """
     body = client.get("/api/providers").json()
-    ox = next(p for p in body["profiles"] if p["id"] == "zen-ox-alpha-free")
-    assert ox["enabled"] is False
-    assert "withdrawn" in ox["notes"].lower()
-    # And it must not still be advertised as a free tier that works.
-    assert ox["free_status"] == "unknown"
+    for profile in body["profiles"]:
+        assert "ox-alpha" not in profile["id"], profile["id"]
+        assert profile.get("model") != "x-preview-f-free", profile["id"]
+
+
+def test_a_route_that_did_not_serve_is_disabled_but_still_explained(client):
+    """
+    The "explain, do not hide" principle outlived Ox Alpha and still applies to
+    the two NIM routes that probing found unserveable: an operator who set
+    NVIDIA_API_KEY and sees only three of five models should be able to read why
+    from the UI rather than assume a bug here.
+    """
+    body = client.get("/api/providers").json()
+    by_id = {p["id"]: p for p in body["profiles"]}
+    for pid in ("nim-gpt-oss-120b", "nim-codestral-22b"):
+        assert pid in by_id, pid
+        assert by_id[pid]["enabled"] is False, pid
+        assert by_id[pid]["notes"].strip(), pid
 
 
 def test_classic_visualizer_is_reachable(client):

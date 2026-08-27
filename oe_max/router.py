@@ -52,26 +52,32 @@ class Route:
 # Default chain — the role-agnostic order, used when no role is named and as
 # the shared tail of every role chain.
 #
-# Ox Alpha led this list until 2026-08-26, when it stopped existing. What
-# replaced it is ordered by measurement: the verified-keyless Zen routes first
-# so the system works with no credentials at all, then the key-gated NIM pool,
-# which is stronger on paper and unverified here. `usable()` drops the NIM
-# entries automatically when NVIDIA_API_KEY is absent, so this one list serves
-# both the credentialled and the keyless install.
+# NIM first, by operator decision (2026-08-27) and by measurement: it is the
+# only provider here whose models were probed individually with a real key, and
+# the four ids that were in NVIDIA's catalogue but did not serve are already
+# absent — see the registry for what each one did.
+#
+# The keyless Zen routes follow as the tail, not as a preference. `usable()`
+# drops the NIM entries when NVIDIA_API_KEY is absent, so this single list
+# serves both installs: with a key the run is on NIM, without one it still
+# works rather than failing at the first request.
+#
+# Ox Alpha is deliberately absent. It was withdrawn by the provider on
+# 2026-08-26 and has since been removed from service here entirely, including
+# the alternate `stealth/ox-alpha` route that used to sit at the end of this
+# list through OpenRouter.
 DEFAULT_CHAIN: List[Tuple[str, str]] = [
-    ("opencode_zen", "nemotron_ultra"),
-    ("opencode_zen", "hy3"),
-    ("opencode_zen", "laguna"),
-    ("opencode_zen", "nemotron_lightning"),
-    # NIM, ordered by measured latency 2026-08-28. Four ids that were in the
-    # catalogue are absent here because probing them with a real key found
-    # them unserveable — see the registry for what each one did.
+    # NIM, ordered by measured latency 2026-08-28.
     ("nvidia_nim", "nemotron_super_120b"),
     ("nvidia_nim", "nemotron_ultra_253b"),
     ("nvidia_nim", "nemotron_nano_30b"),
     ("nvidia_nim", "kimi_k3"),
     ("nvidia_nim", "deepseek_v4_flash"),
-    ("openrouter", "ox_alpha"),
+    # Keyless fallback, so a checkout with no credential still runs.
+    ("opencode_zen", "nemotron_ultra"),
+    ("opencode_zen", "hy3"),
+    ("opencode_zen", "laguna"),
+    ("opencode_zen", "nemotron_lightning"),
 ]
 
 

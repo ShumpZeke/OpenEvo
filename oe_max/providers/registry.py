@@ -163,19 +163,6 @@ def build_default_registry(
                       "Usable only with a large max_tokens — see HANDOFF 3.3. "
                       "Named 'lightning' but measured slowest of the four (7.6s).",
             ),
-            # Kept, disabled, deliberately. Deleting it would erase the record
-            # of what happened and let a future session re-add it from memory;
-            # `available=False` keeps it visible and lets `verify()` flip it
-            # back the moment the model returns.
-            "ox_alpha": ModelSpec(
-                key="ox_alpha", id="x-preview-f-free", priority=0,
-                ephemeral_preview=True, available=False,
-                notes="WITHDRAWN. Probed 2026-08-26: absent from /models, and "
-                      "POST returns `ModelError: Model x-preview-f-free is not "
-                      "supported` (a paid model returns `AuthError: Missing API "
-                      "key`, so this is removal, not gating). Was the configured "
-                      "primary. Re-enabled automatically if a probe finds it.",
-            ),
             "mimo": ModelSpec(
                 key="mimo", id="mimo-v2.5-free", priority=0, available=False,
                 notes="Listed but exhausted: HTTP 429 `FreeUsageLimitError` on "
@@ -207,13 +194,12 @@ def build_default_registry(
         limiter=NullLimiter("openrouter"),
         requires_key=True,
         timeout_s=180.0,
-        models={
-            "ox_alpha": ModelSpec(
-                key="ox_alpha", id="stealth/ox-alpha", priority=80,
-                ephemeral_preview=True,
-                notes="Alternate Ox Alpha route. Verify before relying on it.",
-            ),
-        },
+        # No models are configured here. OpenRouter carried one entry, an
+        # alternate `stealth/ox-alpha` route, and the operator has taken Ox Alpha
+        # out of service entirely. The provider stays declared so a key plus a
+        # discovery pass can populate it, which is the same shape every other
+        # catalogue provider has.
+        models={},
     )
 
     nim = ProviderAdapter(

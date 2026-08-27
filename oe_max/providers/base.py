@@ -140,8 +140,8 @@ class ChatResult:
 class ModelSpec:
     """A model as configured. IDs live here, never as application constants."""
 
-    key: str                       # local handle, e.g. "ox_alpha"
-    id: str                        # wire id, e.g. "x-preview-f-free"
+    key: str                       # local handle, e.g. "nemotron_super_120b"
+    id: str                        # wire id, e.g. "nvidia/nemotron-3-super-120b-a12b"
     priority: int = 100            # higher wins
     ephemeral_preview: bool = False
     supports_tools: Optional[bool] = None    # None = not yet probed

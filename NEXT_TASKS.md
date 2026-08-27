@@ -385,10 +385,13 @@ Two further corrections came out of it:
 - `ModelProfile.requires_key` was added, because Zen serves Ox Alpha with no
   Authorization header and treating a missing key as disqualifying switched off
   a working primary route.
-- The role chains now lead with Ox Alpha for tool-requiring roles too, since
-  #44300 is resolved and tools are verified. Note the honest distinction: the
-  *capability filter* self-corrects in both directions automatically, but the
-  *chain order* is a stated preference and needed a deliberate edit.
+- The role chains led with Ox Alpha for tool-requiring roles once #44300 was
+  resolved. **Superseded:** Ox Alpha was withdrawn by the provider and, on
+  2026-08-27, removed from this repo entirely; NVIDIA NIM is now the primary
+  and leads every chain. The honest distinction the original note drew still
+  holds and is worth keeping: the *capability filter* self-corrects in both
+  directions automatically, but the *chain order* is a stated preference and
+  needs a deliberate edit every time.
 
 ## T5 — Sandbox executors (spec §9)
 

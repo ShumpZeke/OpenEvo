@@ -68,9 +68,12 @@ Both sit *around* upstream. The engine is byte-identical.
 - **Real telemetry** — a typed event model instrumented at the engine boundary.
   Every value the UI shows traces to an emitted event; there are no fixtures or
   placeholder metrics anywhere in the frontend.
-- **Provider routing** — free OpenCode Zen routes preferred by default, with
-  automatic fallback to NVIDIA NIM and thirteen other OpenAI-compatible
-  providers, driven by live health *and* verified capabilities. Providers are
+- **Provider routing** — **NVIDIA NIM is the primary provider**, leading every
+  role chain, with the keyless OpenCode Zen routes behind it and thirteen other
+  OpenAI-compatible providers available by configuration. Routing is driven by
+  live health *and* verified capabilities. A route whose credential is absent is
+  filtered out rather than attempted, so a checkout with no `NVIDIA_API_KEY`
+  falls straight through to the keyless routes and still runs. Providers are
   configuration (`configs/oe_max/providers.yaml`) and their model ids are
   discovered from each provider's own listing rather than written down.
 - **Route quality, not just route health** — every candidate is attributed to
@@ -147,12 +150,26 @@ curl -X POST http://127.0.0.1:8000/api/control/runs \
     "iterations": 24, "name": "first-run" }'
 ```
 
-To use a real provider, put a key in `.env`:
+### Using NVIDIA NIM
+
+NIM is the primary provider and leads every role chain. One key turns it on:
 
 ```bash
-OPENCODE_API_KEY=...     # preferred primary route
-NVIDIA_API_KEY=...       # strong fallback
+NVIDIA_API_KEY=nvapi-...      # primary — leads every role chain
+OPENCODE_API_KEY=...          # optional; Zen's free routes need no key at all
 ```
+
+Five of the nine configured NIM models serve, measured with a real key on
+2026-08-28: `nemotron-3-super-120b-a12b` (732 ms with tools — the fastest
+working route measured on any provider here), `nemotron-3-ultra-550b-a55b`
+(4.5 s, the flagship reasoner), `nemotron-3-nano-30b-a3b`, `kimi-k3` (11.5 s,
+the code specialist) and `deepseek-v4-flash-0731` (51 s). The other four are
+shipped disabled with the reason attached — a hang, a 400, a 404 entitlement
+error and a standing 429. See [PROVIDERS.md](PROVIDERS.md) for the table.
+
+Without the key nothing breaks: a route whose credential is absent is filtered
+out rather than attempted, so the chain falls through to the keyless Zen routes
+and the run still works.
 
 Then run the provider doctor (Models → *run provider doctor*) to probe what is
 actually available right now.
@@ -210,8 +227,8 @@ Measured on Windows 11 / CPython 3.11.9:
 | Suite | Result |
 |---|---|
 | Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
-| Control plane | **399 passed**, 10 skipped |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **303 passed**, 24 skipped |
+| Control plane | **402 passed**, 10 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **306 passed**, 24 skipped |
 | BrainPort (OpenCode brain, worker, plugin contract) | **34 passed** |
 | Web typecheck | clean |
 
@@ -249,27 +266,33 @@ fork, not merely a control-plane bug.
 
 ## Three things worth knowing up front
 
-**A free route can stop existing.** Ox Alpha (`x-preview-f-free`) was this
-project's primary and was withdrawn from Zen — probed 2026-08-26, absent from
-`/models` and answering `ModelError: ... is not supported`. Free status is a
-runtime-probed value, never rendered as unlimited, and the model tables are
-reconciled against each provider's live listing on every discovery so a
-withdrawal disables itself. See [PROVIDERS.md](PROVIDERS.md).
+**A route can stop existing.** A stealth-preview model was this project's
+primary until the provider withdrew it — probed and found absent from `/models`,
+answering `ModelError: ... is not supported`. It has since been removed from
+service here entirely. Free status is a runtime-probed value, never rendered as
+unlimited, and the model tables are reconciled against each provider's live
+listing on every discovery so a withdrawal disables itself. That is also how
+`openai/gpt-oss-120b` and `mistralai/codestral-22b-instruct-v0.1` came out of the
+NIM chains: probed with a real key, the first hung and the second returned a 404
+entitlement error. See [PROVIDERS.md](PROVIDERS.md).
 
-**A reasoning model can spend its whole budget thinking.** Ox Alpha was measured
-using 7,986–7,997 of an 8,000-token budget on *hidden* reasoning, truncating the
-visible diff — 5 of 8 iterations produced nothing from ~130-second requests. Its
-replacement reasons too. The broker detects `finish_reason=length` and retries
-with a doubled budget, and `max_tokens`, the provider timeout and the client
-timeout are tuned together. It is also why judging routes to a different model
-than mutation: of the free Zen routes, only `laguna-s-2.1-free` reports zero
-reasoning tokens, and ranking candidates does not need hidden thought.
+**A reasoning model can spend its whole budget thinking.** One former primary was
+measured using 7,986–7,997 of an 8,000-token budget on *hidden* reasoning,
+truncating the visible diff — 5 of 8 iterations produced nothing from
+~130-second requests. Several current routes reason too. The broker detects
+`finish_reason=length` and retries with a doubled budget, and `max_tokens`, the
+provider timeout and the client timeout are tuned together. It is also why
+judging routes to a different model than mutation: ranking candidates does not
+need hidden thought, so it goes to the cheapest fast route rather than the
+flagship.
 
 **A listed model is not a working model, and an unlisted one is not a model.**
 Zen lists `deepseek-v4-flash-free` and returns "Model is unavailable" for it, so
-discovery is two-stage: list, then smoke-test. The converse is what caught Ox
-Alpha's withdrawal and two NVIDIA models this project had configured that were
-never in NVIDIA's catalogue at all.
+discovery is two-stage: list, then smoke-test. The converse caught a withdrawn
+primary and two NVIDIA models this project had configured that were never in
+NVIDIA's catalogue at all. The sharpest case: `nvidia/nemotron-nano-3-30b-a3b`
+returns 404 while `nvidia/nemotron-3-nano-30b-a3b` serves — two transposed
+words, both in the catalogue, one of them fictional in practice.
 
 ## Licence
 

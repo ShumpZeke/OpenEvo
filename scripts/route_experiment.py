@@ -33,7 +33,7 @@ Design notes that are not incidental:
 
 Usage:
 
-    scripts/route_experiment.py --routes x-preview-f-free,nemotron-3-ultra-free \\
+    scripts/route_experiment.py --routes nvidia/nemotron-3-super-120b-a12b,nemotron-3-ultra-free \\
                                --iterations 12 --repeats 2
 """
 

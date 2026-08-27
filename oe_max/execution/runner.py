@@ -124,6 +124,15 @@ class SandboxedRunner:
             path = os.path.join(workdir, "candidate.py")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(script)
+            # mkdtemp gives 0700 and the file 0600, owned by the host user. A
+            # container whose image does not run as root -- or a daemon with
+            # user-namespace remapping, which is what GitHub's runners use --
+            # then cannot read the very script it was asked to run, and the
+            # candidate "crashes" with Errno 13 rather than failing honestly.
+            # Widening is safe here: this directory is a throwaway holding one
+            # candidate program, and the sandbox is given no credentials.
+            os.chmod(workdir, 0o755)
+            os.chmod(path, 0o644)
             if backend == "container":
                 return self._run_container(workdir)
             return self._run_subprocess(workdir)

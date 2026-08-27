@@ -74,45 +74,55 @@ ALIASES: Dict[str, Role] = {
 # must exist in the registry; unknown entries are reported, not silently
 # dropped (see `validate_preferences`).
 #
+# NVIDIA NIM leads every chain: it is the operator's chosen provider, and it is
+# the only one here whose models were probed individually with a real key
+# (HANDOFF 4i -- five of nine serve, and the fastest working route measured on
+# any provider, free or paid, is NIM's `nemotron-3-super-120b-a12b` at 732 ms).
+#
 # Routes that need a credential are filtered out automatically when it is
-# absent, so a keyless install degrades to the Zen routes rather than failing.
-# That is why each preference leads with a route verified to serve keyless.
+# absent, so this costs a keyless install nothing: with no NVIDIA_API_KEY the
+# NIM entries drop out and the Zen tail serves, exactly as before. With a key,
+# NIM is what runs.
 _PREFERENCES: Dict[Role, Chain] = {
-    # Strongest verified-free reasoning first. NIM's flagship sits behind it:
-    # better on paper, unverified in this repo, and key-gated.
+    # NIM's flagship reasoner first (4.5 s with tools, and its hidden reasoning
+    # is kept out of the visible budget, which is what makes it safe for long
+    # mutations -- see HANDOFF 3.2 for what the opposite costs). The 120B is the
+    # fast second opinion; the Zen tail keeps the role alive with no key.
     Role.REASONER: [
-        ("opencode_zen", "nemotron_ultra"),
         ("nvidia_nim", "nemotron_ultra_253b"),
         ("nvidia_nim", "nemotron_super_120b"),
+        ("opencode_zen", "nemotron_ultra"),
         ("opencode_zen", "hy3"),
     ],
-    # Coding leads with the same verified-free route, because a strong general
-    # model that answers beats a code-specialised one that needs a key we do
-    # not have. The specialists rank above the generalists behind it.
+    # Code specialist first now that it is reachable: kimi-k3 is slower (11.5 s)
+    # but it is the only route here chosen *for* code. deepseek-v4-flash serves
+    # at 51 s, so it sits below the generalist rather than above it.
     Role.CODER: [
-        ("opencode_zen", "nemotron_ultra"),
         ("nvidia_nim", "kimi_k3"),
         ("nvidia_nim", "nemotron_ultra_253b"),
         ("nvidia_nim", "deepseek_v4_flash"),
+        ("opencode_zen", "nemotron_ultra"),
         ("opencode_zen", "hy3"),
     ],
-    # Judging wants a consistent, cheap, prompt-cacheable answer, not hidden
-    # reasoning: laguna is the only free Zen route measured at zero reasoning
-    # tokens, so it does this work at a fraction of the cost. The reasoner sits
-    # behind it for when the judgement is genuinely hard.
+    # Judging wants a consistent, cheap answer rather than hidden reasoning.
+    # The 120B is both the cheapest NIM route and the fastest measured anywhere
+    # (732 ms), which is exactly the shape this role wants. Zen's laguna stays
+    # behind it as the keyless equivalent -- the only free Zen route measured at
+    # zero reasoning tokens.
     Role.JUDGE: [
-        ("opencode_zen", "laguna"),
         ("nvidia_nim", "nemotron_super_120b"),
+        ("nvidia_nim", "nemotron_nano_30b"),
+        ("opencode_zen", "laguna"),
         ("opencode_zen", "nemotron_ultra"),
-        ("nvidia_nim", "nemotron_nano_30b"),
     ],
-    # Fast work is latency-bound. Note `nemotron_lightning` is deliberately NOT
-    # first despite the name: measured at 7.6s, the slowest of the four free
-    # Zen routes, because it reasons before answering.
+    # Fast work is latency-bound, so this is the one role where the ordering is
+    # purely the measured number: 732 ms, then the nano, then the keyless tail.
+    # `nemotron_lightning` is deliberately absent despite the name -- measured at
+    # 7.6 s, the slowest of the four free Zen routes, because it reasons first.
     Role.FAST: [
-        ("opencode_zen", "laguna"),
         ("nvidia_nim", "nemotron_super_120b"),
         ("nvidia_nim", "nemotron_nano_30b"),
+        ("opencode_zen", "laguna"),
         ("opencode_zen", "hy3"),
     ],
 }

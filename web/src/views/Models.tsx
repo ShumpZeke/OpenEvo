@@ -203,7 +203,7 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
  *
  * The route table above answers "did the route respond?". This answers "did it
  * produce better mutations, and at what cost?" — a different question, and the
- * two were measured coming apart: Ox Alpha at 26% success and a 284 s p50
+ * two were measured coming apart: one route at 26% success and a 284 s p50
  * against a fallback at 100% and 112 s. Reliability alone would say "switch".
  *
  * Every number here comes from the run's own telemetry. Where a route has too

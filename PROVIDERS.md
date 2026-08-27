@@ -21,6 +21,47 @@ upgrade one.
 
 ---
 
+## Current policy: NVIDIA NIM is the primary provider
+
+Operator decision, 2026-08-27. NIM leads every role chain in both routing
+layers — `oe_max/roles.py` for the broker and
+`control_plane/providers/profiles.py` for the control plane.
+
+It is also the best-evidenced choice available here: NIM is the only provider in
+this repo whose models were probed **individually with a real key**, and four of
+the nine configured ids did not survive that probe. Five serve:
+
+| model | measured |
+|---|---|
+| `nvidia/nemotron-3-super-120b-a12b` | **732 ms** with tools — fastest working route measured on any provider, free or paid |
+| `nvidia/nemotron-3-ultra-550b-a55b` | 4.5 s with tools — flagship reasoner, keeps reasoning out of the visible budget |
+| `nvidia/nemotron-3-nano-30b-a3b` | serves |
+| `moonshotai/kimi-k3` | 11.5 s with tools — the code specialist |
+| `deepseek-ai/deepseek-v4-flash-0731` | 51 s — strong, and slow enough to matter |
+
+Four did not, and are disabled rather than deleted so the reason stays readable:
+`openai/gpt-oss-120b` hangs (0 bytes after 190 s and again after 230 s),
+`nvidia/nemotron-3.5-lightning-30b-a3b` returns 400 "DEGRADED function cannot be
+invoked", `mistralai/codestral-22b-instruct-v0.1` returns 404 "Not found for
+account" (an entitlement, which a catalogue cannot express), and
+`minimaxai/minimax-m3` returns 429 on every attempt including after a 45 s idle
+gap — an allowance, not a burst limit.
+
+**Leading with a key-gated provider is safe here** because a route whose
+credential is absent is filtered out rather than attempted. With no
+`NVIDIA_API_KEY`, every NIM entry drops out of the chain and the keyless
+OpenCode Zen routes serve instead. Keep that tail: without it, a checkout with
+no credential would have nothing left.
+
+**Ox Alpha is removed from service.** Not disabled — removed. It was withdrawn
+by the provider on 2026-08-26 (see below) and taken out of this repo entirely on
+2026-08-27. Two routes pointed at it, Zen's `x-preview-f-free` and an alternate
+`stealth/ox-alpha` through OpenRouter, and the second outlived the first by a
+day because only the first was obvious. `tests/oe_max/test_roles.py` and
+`tests/evolution/test_providers.py` fail if either returns.
+
+---
+
 ## What changed on 2026-08-26, and why it matters
 
 The configured primary route had stopped existing, and nothing noticed.

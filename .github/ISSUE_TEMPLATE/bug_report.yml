@@ -49,7 +49,7 @@ body:
         OS:            Windows 11 / Ubuntu 24.04 / macOS 15
         Python:        3.11.9
         Path:          shipping / BrainPort
-        Provider used: OpenCode Zen (x-preview-f-free) / NVIDIA NIM / local stub
+        Provider used: NVIDIA NIM / OpenCode Zen (keyless) / local stub
     validations:
       required: true
 

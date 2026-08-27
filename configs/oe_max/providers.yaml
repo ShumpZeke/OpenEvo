@@ -9,7 +9,7 @@
 # and the registry materialises concrete models from each provider's own live
 # listing. A pattern is not a claim that a model exists; a remembered id is,
 # and this project has now been bitten by remembered ids three times —
-# `x-preview-f-free` (withdrawn), `deepseek-ai/deepseek-v4-pro` and
+# `deepseek-ai/deepseek-v4-pro` and
 # `qwen/qwen2.5-coder-32b-instruct` (never in NVIDIA's catalogue at all).
 #
 # VERIFICATION VOCABULARY, used strictly:
@@ -289,15 +289,6 @@ retired:
   - name: targon
     base_url: https://api.targon.com/v1
     finding: "Probed 2026-08-26: HTTP 410 Gone, empty body."
-    verified: "2026-08-26"
-
-  - name: opencode_zen_ox_alpha
-    base_url: https://opencode.ai/zen/v1
-    finding: >-
-      Model `x-preview-f-free` (Ox Alpha) WITHDRAWN. Absent from /models, and a
-      completion returns `ModelError: Model x-preview-f-free is not supported`.
-      Removal rather than gating: a paid Zen model returns `AuthError: Missing
-      API key` instead. Was this project's configured primary route.
     verified: "2026-08-26"
 
   - name: opencode_zen_deepseek_v4_flash_free

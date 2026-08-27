@@ -28,11 +28,22 @@ queue. This file is the short version of the rules that are load-bearing.
 5. **Credentials stay inside the broker process.** Candidates and evaluators get
    no keys. Redaction runs before persistence, not at render time.
 
-6. **Provider and model IDs are configuration, not constants.** Ox Alpha was a
-   stealth preview that might vanish, and on 2026-08-26 it did. Two NVIDIA
-   models this repo shipped as its "strong fallback" were never in NVIDIA's
-   catalogue at all. Model ids are discovered from provider listings and
-   reconciled on every discovery — do not write one down from memory.
+6. **Provider and model IDs are configuration, not constants.** A stealth
+   preview this repo used as its primary vanished on 2026-08-26, and two NVIDIA
+   models it shipped as its "strong fallback" were never in NVIDIA's catalogue
+   at all. Model ids are discovered from provider listings and reconciled on
+   every discovery — do not write one down from memory. The cleanest evidence:
+   `nvidia/nemotron-nano-3-30b-a3b` 404s while `nvidia/nemotron-3-nano-30b-a3b`
+   serves, and both are listed.
+
+7. **NVIDIA NIM is the primary provider** (operator decision, 2026-08-27). It
+   leads every role chain in `oe_max/roles.py` and
+   `control_plane/providers/profiles.py`. Ox Alpha is removed from service —
+   not disabled, removed — and `tests/oe_max/test_roles.py` plus
+   `tests/evolution/test_providers.py` fail if either fact regresses. Leading
+   with a key-gated provider is only safe because a route whose credential is
+   absent is filtered out rather than attempted: keep the keyless Zen tail in
+   every chain, or a checkout with no key has nothing to serve from.
 
 ## If another agent is working here too
 
@@ -57,7 +68,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 431 upstream + 399 control plane + 303 OE-MAX + 34 BrainPort
+./test.sh     # 431 upstream + 402 control plane + 306 OE-MAX + 34 BrainPort
               # 6 upstream tests fail on Windows only (platform, not regression)
               # -- see TEST_STRATEGY.md; do NOT 'fix' them by editing openevolve/
 ```
