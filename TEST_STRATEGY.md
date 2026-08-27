@@ -9,7 +9,7 @@ is the kind of thing that gets quoted back later as if it were universal.
 | Suite | Command | Result |
 |---|---|---|
 | Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/{evolution,oe_max,brain}` | **431 passed**, 6 failed (all Windows-only, see below), 43 subtests, 17 slow deselected |
-| Control plane | `pytest tests/evolution` | **389 passed**, 10 skipped |
+| Control plane | `pytest tests/evolution` | **399 passed**, 10 skipped |
 | OE-MAX | `pytest tests/oe_max` | **303 passed**, 24 skipped |
 | BrainPort | `pytest tests/brain` | **34 passed** |
 | Web typecheck | `npm run typecheck` | clean |
@@ -135,6 +135,13 @@ Stated rather than implied:
   `run-evolution.ps1`, `resume-evolution.ps1`, `ablation.ps1` — are parsed and
   argument-checked but have not been driven end-to-end against a live provider
   on Windows.
+- **Worker telemetry off Linux.** Now covered, and it was not before: under
+  `spawn` (the default on Windows and macOS) the pool initializer resolved to
+  upstream's unwrapped function, so no worker emitted anything and the UI
+  reported 0 model requests on a working run. Fixed and pinned by
+  `tests/evolution/test_spawn_worker_telemetry.py`, and confirmed on a real
+  12-iteration run: 1 emitting PID before, 3 after. The *fork* path remains
+  covered separately by `test_bus_is_rebuilt_after_fork`.
 - **Load at target scale.** Designed for tens of thousands of candidates with
   server-side pagination, downsampling and canvas rendering; verified runs were
   tens of candidates, not tens of thousands.

@@ -1527,6 +1527,10 @@ def install_worker_hook() -> None:
 
     wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
     process_parallel._worker_init = wrapper
+    # Rebinding above only reaches a forked child. A spawned one re-imports
+    # process_parallel and gets the original back, so the initializer itself
+    # has to come from a module the child will resolve to our code.
+    install_pool_initializer_hook()
     install_worker_attribution_hook()
     install_operator_hook()
     try:
@@ -1535,6 +1539,68 @@ def install_worker_hook() -> None:
         sandbox_eval.install(None)
     except Exception as exc:  # pragma: no cover
         logger.debug("sandbox eval install failed: %r", exc)
+
+
+def _worker_bootstrap(original_initializer, *initargs):
+    """
+    Pool-worker entry point that survives `spawn`.
+
+    This is a module-level function on purpose: under `spawn` the initializer is
+    pickled **by reference** (module path + qualified name) and re-resolved by
+    importing that module in the child. `install_worker_hook` rebinds
+    `openevolve.process_parallel._worker_init` to a wrapper, but that rebinding
+    lives only in the parent's memory -- the child imports `process_parallel`
+    fresh and gets upstream's ORIGINAL function back, so the wrapper (and with
+    it every worker-side emit) silently disappears.
+
+    Under `fork` the child inherits the parent's patched module, which is why
+    this was invisible on Linux and why the measurements taken there were real.
+    On Windows and macOS, where the default context is `spawn`, a run produced
+    candidates but reported `model_requests: 0` and `iterations_done: 0` -- a
+    plausible-looking zero, which is the specific thing the no-fake-data rule
+    exists to prevent.
+
+    Because this function lives in *our* package, the child resolves it to the
+    real thing, and installing telemetry here happens before upstream's own
+    initializer runs.
+    """
+    try:
+        auto_install_from_env()
+    except Exception as exc:  # pragma: no cover - telemetry never breaks a run
+        logger.debug("worker telemetry bootstrap failed: %r", exc)
+    if original_initializer is not None:
+        original_initializer(*initargs)
+
+
+def install_pool_initializer_hook() -> None:
+    """
+    Make every ProcessPoolExecutor worker self-instrument under `spawn`.
+
+    Wraps the stdlib constructor rather than upstream's call site, because the
+    call site is in `openevolve/` and that tree stays byte-identical. Patching
+    the class reaches every construction of it regardless of how the name was
+    imported, since there is only one class object.
+
+    The substitution is confined to runs that asked for telemetry: with
+    EVOLUTION_TELEMETRY unset the initializer is left exactly as the caller
+    passed it, which is what keeps the plain upstream CLI unaffected.
+    """
+    import concurrent.futures.process as _cfp
+
+    original = _cfp.ProcessPoolExecutor.__init__
+    if getattr(original, "__evolution_instrumented__", False):
+        return
+
+    @functools.wraps(original)
+    def wrapper(self, max_workers=None, mp_context=None,
+                initializer=None, initargs=(), **kw):
+        if os.environ.get(ENV_ENABLED, "").lower() in ("1", "true", "yes", "on"):
+            initializer = functools.partial(_worker_bootstrap, initializer)
+        return original(self, max_workers=max_workers, mp_context=mp_context,
+                        initializer=initializer, initargs=initargs, **kw)
+
+    wrapper.__evolution_instrumented__ = True  # type: ignore[attr-defined]
+    _cfp.ProcessPoolExecutor.__init__ = wrapper  # type: ignore[assignment]
 
 
 def _record_worker_island(args: Any, kwargs: Any) -> None:

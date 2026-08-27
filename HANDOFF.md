@@ -71,7 +71,7 @@ Watch it:
 verified again 2026-08-26. It is no longer Ox Alpha: that model was withdrawn
 (§3.11). The primary is now `nemotron-3-ultra-free`.
 
-Tests: `./test.sh` → 431 upstream + 389 control plane + 303 OE-MAX + 34
+Tests: `./test.sh` → 431 upstream + 399 control plane + 303 OE-MAX + 34
 BrainPort. Six upstream tests fail on Windows only; see §9.
 
 ---
@@ -154,6 +154,51 @@ OpenEvolve evaluates in a `ProcessPoolExecutor`. A forked child inherits the
 buffer nothing drains. Both the bus and the instrumentation are keyed by owning
 PID. Symptom if broken: `model_requests: 0` despite a run clearly making model
 calls. Pinned by `test_bus_is_rebuilt_after_fork`.
+
+### 3.5b Under `spawn`, the worker initializer resolves to upstream's, not ours
+
+Same symptom as 3.5, different cause, and the one that actually bites on
+Windows and macOS.
+
+`openevolve/process_parallel.py` hands the pool a module-level reference:
+`"initializer": _worker_init`. `install_worker_hook` rebinds that attribute to a
+wrapper that installs telemetry in the child.
+
+Under `fork` the child inherits the parent's patched module, so the wrapper is
+there. Under `spawn` the initializer is pickled **by reference** and re-resolved
+by importing `process_parallel` fresh in the child — which returns upstream's
+*original* function and drops the wrapper silently. On Python 3.11+ upstream
+does not set `mp_context`, so the context is the platform default: `fork` on
+Linux, **`spawn` on Windows and macOS**.
+
+Nothing errors. Candidates still arrive, because they travel back on the
+returned Program objects (3.7), so the only symptom is that `model_requests`,
+`tokens` and `iterations_done` all read **0** on a run that is plainly working.
+That is the plausible-looking zero the no-fake-data rule exists to prevent, and
+it is why every measurement in this repo taken on Linux was real and the same
+run on Windows looked idle.
+
+Measured on one 12-iteration local run, before and after:
+
+| | before | after |
+|---|---|---|
+| PIDs emitting telemetry | 1 | 3 |
+| `model.request.started` | 0 | 11 |
+| `generation.completed` | 0 | 9 |
+| `evaluator.started` | 1 | 12 |
+| `iterations_done` / `model_requests` | 0 / 0 | 11 / 11 |
+
+Fixed by routing the initializer through `_worker_bootstrap` in
+`control_plane/telemetry/instrument.py` — a function in *our* package, which the
+child therefore resolves to the real thing — installed by
+`install_pool_initializer_hook`, which wraps the stdlib `ProcessPoolExecutor`
+constructor rather than upstream's call site so that `openevolve/` stays
+byte-identical. The substitution only happens when `EVOLUTION_TELEMETRY` is set,
+so the plain upstream CLI is untouched. Pinned by
+`tests/evolution/test_spawn_worker_telemetry.py`.
+
+If you ever see a run producing candidates with zero model requests, check the
+emitting PID count in `events.ndjson` before anything else.
 
 ### 3.6 The limiter needs its epsilon
 
@@ -895,13 +940,18 @@ you need the authoritative wording.
 
 ```
 branch     main
-tests      431 upstream + 389 control plane + 303 OE-MAX + 34 BrainPort = 1157 passing
+tests      431 upstream + 399 control plane + 303 OE-MAX + 34 BrainPort = 1167 passing
            + 6 upstream failures that are Windows-only (see below)
 engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
            by tests/evolution/test_patch_surface.py
-verified   OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
-unverified NVIDIA NIM, OpenRouter — no credentials
+verified   OpenCode Zen free routes — live, keyless, end-to-end evolution.
+           Ox Alpha (x-preview-f-free) was the primary and is WITHDRAWN.
+           NVIDIA NIM — real key, 2026-08-28; 5 of 9 configured ids serve (§4i)
+unverified OpenRouter and the 13 catalogue providers — endpoint liveness only,
+           no credential has ever been present, so no inference call has run
            BrainPort against a live OpenCode host — stub-only so far (§4h)
+           the 44-per-60s rate contract under real pressure — proven on a
+           virtual clock; the NIM run peaked at 0 of 44
 ```
 
 **The six upstream failures are platform, not regression.** Four are

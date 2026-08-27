@@ -11,7 +11,16 @@ $mode = if ($args.Count -gt 0) { $args[0] } else { "server" }
 # argument, `$args[1..($args.Count-1)]` is `$args[1..0]`, which yields
 # $args[1] and $args[0] — so `.\run.ps1 cli` passed "cli" to the CLI as an
 # argument. Verified, not theorised.
-$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+#
+# Assigned in two statements rather than as `... else { @() }`, because an
+# empty array emitted from an `if` unrolls to nothing and leaves $rest as
+# $null. That reads the same until Set-StrictMode is on -- which _common.ps1
+# turns on -- and then `$rest.Count` throws PropertyNotFoundStrict and takes
+# `.\run.ps1 provider`, `classic` and `cli` down with it. @() around the slice
+# keeps a one-element result an array too, so $rest[0] means the first
+# argument rather than the first character of it.
+$rest = @()
+if ($args.Count -gt 1) { $rest = @($args[1..($args.Count - 1)]) }
 
 switch ($mode) {
   "classic" {

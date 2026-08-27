@@ -18,9 +18,12 @@ queue. This file is the short version of the rules that are load-bearing.
 3. **Unsupported controls are disabled with a reason**, never rendered as
    buttons that do nothing. See `RunManager.CAPABILITIES`.
 
-4. **Never claim a live test passed if it did not run.** NVIDIA NIM and
-   OpenRouter are unverified in this repo and labelled as such everywhere. Keep
-   that discipline.
+4. **Never claim a live test passed if it did not run.** OpenRouter and the 13
+   catalogue providers are unverified for inference in this repo and labelled
+   as such everywhere. NVIDIA NIM is no longer in that set — it was verified
+   with a real key on 2026-08-28 and 5 of its 9 configured ids serve
+   (HANDOFF §4i). Keep the discipline in both directions: a label that is stale
+   in the pessimistic direction is as wrong as one that overclaims.
 
 5. **Credentials stay inside the broker process.** Candidates and evaluators get
    no keys. Redaction runs before persistence, not at render time.
@@ -54,7 +57,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 431 upstream + 389 control plane + 303 OE-MAX + 34 BrainPort
+./test.sh     # 431 upstream + 399 control plane + 303 OE-MAX + 34 BrainPort
               # 6 upstream tests fail on Windows only (platform, not regression)
               # -- see TEST_STRATEGY.md; do NOT 'fix' them by editing openevolve/
 ```
@@ -73,7 +76,11 @@ fork is broken, not merely the control plane.
   allowance is spent, not that you are too fast. Only the error type says which.
 - A model in Zen's `/models` listing may still return "Model is unavailable".
 - The telemetry bus must be rebuilt after `fork()`, or all worker-process
-  telemetry silently disappears.
+  telemetry silently disappears. Under `spawn` — the default on Windows and
+  macOS — there is a second, separate way to lose it: the pool initializer is
+  pickled by reference and re-resolves to upstream's unwrapped function in the
+  child. Both have the same symptom, `model_requests: 0` on a run that is
+  plainly working. See HANDOFF §3.5 and §3.5b.
 - The rate limiter's epsilon is not cosmetic — removing it makes `acquire()`
   spin forever, and the tests hang rather than fail.
 - Nothing in memory crosses the worker→main process boundary. Anything a worker
