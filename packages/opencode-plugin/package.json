@@ -1,0 +1,28 @@
+{
+  "name": "opencode-openevo",
+  "version": "0.1.0",
+  "description": "OpenEvo evolution engine as an OpenCode plugin — OpenCode is the brain, OpenEvo is the search",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "lint": "tsc --noEmit",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.23",
+    "@opencode-ai/sdk": "1.18.23"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  },
+  "keywords": ["opencode", "plugin", "evolution", "openevo"],
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20" },
+  "opencode": {
+    "pluginCompat": "1.18.23"
+  }
+}

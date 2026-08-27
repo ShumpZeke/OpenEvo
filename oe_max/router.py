@@ -1,4 +1,8 @@
 """
+DEPRECATED — Legacy router, now behind oe_max.brain.legacy_adapter.
+
+New code must use BrainPort. See oe_max/brain/README.md.
+
 Route selection and failover.
 
 Routing is a chain, not a single choice: Ox Alpha first (the operator's stated

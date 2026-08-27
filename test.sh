@@ -9,9 +9,13 @@ PY="$PWD/.venv/bin/python"
 [ -x "$PY" ] || { echo "Run ./bootstrap.sh first."; exit 1; }
 RC=0
 
+# Nothing of ours lives in tests/ root -- every file there is upstream's,
+# which is what lets a failure here be read as "the fork broke the engine"
+# rather than "one of our own tests is red". Fork-side suites each get
+# their own directory.
 echo "=== upstream OpenEvolve compatibility suite ==="
 "$PY" -m pytest tests/ -q -m "not slow" \
-  --ignore=tests/evolution --ignore=tests/oe_max || RC=1
+  --ignore=tests/evolution --ignore=tests/oe_max --ignore=tests/brain || RC=1
 
 echo
 echo "=== control plane ==="
@@ -20,6 +24,10 @@ echo "=== control plane ==="
 echo
 echo "=== OE-MAX (broker, limiter, gates, search) ==="
 "$PY" -m pytest tests/oe_max -q || RC=1
+
+echo
+echo "=== BrainPort (OpenCode brain, worker, plugin contract) ==="
+"$PY" -m pytest tests/brain -q || RC=1
 
 echo
 if [ -d web/node_modules ]; then

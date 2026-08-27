@@ -24,3 +24,10 @@ web/tsconfig.tsbuildinfo
 
 # OE-MAX run outputs
 runs/
+
+# OpenCode plugin build output — reproduced by `npm run build` in packages/opencode-plugin
+packages/*/dist/
+
+# Scratch stores left by interrupted debugging runs
+_tmp_store/
+_test15_tmp/

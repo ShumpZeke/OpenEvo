@@ -65,6 +65,16 @@ if (Get-Command npm -ErrorAction SilentlyContinue) {
   finally { Pop-Location }
 } else { Warn "npm unavailable - skipping the web build" }
 
+Say "Building the OpenCode plugin"
+# dist/ is build output and is not committed, so a fresh clone has to produce it
+# here: .opencode/plugins/openevo.ts loads dist/index.js at runtime.
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+  Push-Location packages/opencode-plugin
+  try { npm install --no-audit --no-fund | Out-Null; npm run build | Out-Null; Ok "packages/opencode-plugin/dist built" }
+  catch { Warn "plugin build failed - OpenCode will not be able to load it" }
+  finally { Pop-Location }
+} else { Warn "npm unavailable - skipping the plugin build" }
+
 Say "Creating .env from the example (no secrets are written)"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Ok ".env created" }
 

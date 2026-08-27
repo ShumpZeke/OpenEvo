@@ -77,6 +77,17 @@ else
   warn "npm unavailable — skipping the web build"
 fi
 
+say "Building the OpenCode plugin"
+# dist/ is build output and is not committed, so a fresh clone has to produce
+# it here: .opencode/plugins/openevo.ts loads dist/index.js at runtime.
+if command -v npm >/dev/null 2>&1; then
+  (cd packages/opencode-plugin && npm install --no-audit --no-fund >/dev/null 2>&1 && npm run build >/dev/null 2>&1) \
+    && ok "packages/opencode-plugin/dist built" \
+    || warn "plugin build failed — OpenCode will not be able to load it"
+else
+  warn "npm unavailable — skipping the plugin build"
+fi
+
 say "Creating .env from the example (no secrets are written)"
 [ -f .env ] || { cp .env.example .env; ok ".env created — add provider keys to enable live routes"; }
 

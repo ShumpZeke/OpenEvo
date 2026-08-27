@@ -1,4 +1,10 @@
 """
+DEPRECATED — Legacy provider registry, now behind oe_max.brain.legacy_adapter.
+
+Do not add new models here. New code must use BrainPort (oe_max.brain).
+This file will be removed after the OpenCode path is verified per migration order.
+See oe_max/brain/README.md for the new architecture.
+
 Provider and model registry, with live discovery.
 
 The spec is emphatic that model identities are configuration, discovered and

@@ -1,4 +1,10 @@
 """
+DEPRECATED — Legacy profiles, superseded by oe_max.brain.capabilities + policies.
+
+New code must use BrainPort capability negotiation, not role->provider matrices.
+See oe_max/brain/README.md. This file is retained only for the control plane
+dashboard's historical views and will be removed after migration.
+
 Provider and model profiles.
 
 Default policy (SOURCE_OF_TRUTH section 16.1): OpenCode Zen / Ox Alpha Free is

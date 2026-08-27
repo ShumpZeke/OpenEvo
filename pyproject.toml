@@ -46,15 +46,18 @@ evolution-run = "control_plane.runner.entrypoint:main"
 # OE-MAX: provider broker and dashboard.
 oe-max-broker = "oe_max.broker.cli:main"
 oe-max-dashboard = "oe_max.dashboard:main"
+# Alpha Evolve — BrainPort evolution (provider-neutral, OpenCode is the brain)
+openevo-brain = "oe_max.brain.evolution:main"
+alpha-evolve = "oe_max.brain.evolution:main"
 
 [tool.setuptools]
 packages = [
     "openevolve", "openevolve.llm", "openevolve.prompt", "openevolve.utils",
     "control_plane", "control_plane.telemetry", "control_plane.storage",
     "control_plane.api", "control_plane.providers", "control_plane.sandbox",
-    "control_plane.runner",
-    "oe_max", "oe_max.providers", "oe_max.broker", "oe_max.evaluation",
-    "oe_max.search",
+    "control_plane.runner", "control_plane.analysis",
+    "oe_max", "oe_max.brain", "oe_max.providers", "oe_max.broker", "oe_max.evaluation",
+    "oe_max.execution", "oe_max.search", "oe_max.verification",
 ]
 
 [tool.setuptools.dynamic]

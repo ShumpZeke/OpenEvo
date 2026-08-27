@@ -1,4 +1,10 @@
 """
+DEPRECATED — NVIDIA-specific rate limiting, superseded by oe_max.brain.budgets.
+
+New code must use generic Budgets (max_brain_inflight, token_budget, etc.).
+Provider-specific throttling belongs outside the core.
+See oe_max/brain/README.md.
+
 Global provider rate limiting.
 
 The NVIDIA NIM account carries a hard contract of 48 requests/minute. The build
