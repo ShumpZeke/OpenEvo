@@ -2,6 +2,7 @@
 # Mirrors bootstrap.sh. Nothing is installed globally.
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+. (Join-Path $PSScriptRoot "scripts/_common.ps1")
 $venv = Join-Path $PSScriptRoot ".venv"
 $fail = 0
 
@@ -24,7 +25,13 @@ else { Warn "node not found - the web UI cannot be built (the API still runs)" }
 Say "Creating Python environment"
 if (Get-Command uv -ErrorAction SilentlyContinue) { uv venv $venv | Out-Null }
 else { python -m venv $venv }
-$py = Join-Path $venv "Scripts\python.exe"
+
+# Resolved rather than assumed. Windows puts the interpreter in
+# Scripts\python.exe and every other platform in bin/python, and hardcoding
+# the first is what made this script unrunnable - and therefore unchecked -
+# anywhere but Windows.
+$py = Get-VenvPython -Root $PSScriptRoot
+if (-not $py) { Bad "virtualenv creation produced no interpreter under $venv" }
 Ok $venv
 
 Say "Installing the engine and control plane"
@@ -33,7 +40,7 @@ Say "Installing the engine and control plane"
 Ok "openevolve (engine) + control plane installed"
 
 Say "Initialising control-plane storage"
-New-Item -ItemType Directory -Force -Path ".evolution\workspace" | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path ".evolution" "workspace") | Out-Null
 & $py -c @"
 import sys, os
 sys.path.insert(0, os.getcwd())
@@ -69,7 +76,7 @@ Say "Creating .env from the example (no secrets are written)"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Ok ".env created" }
 
 Say "Running the smoke test"
-& $py -m pytest tests\evolution -q
+& $py -m pytest tests/evolution -q
 if ($LASTEXITCODE -eq 0) { Ok "control-plane tests passed" } else { Warn "see .\test.ps1 for detail" }
 
 Write-Host ""
@@ -79,7 +86,7 @@ Write-Host @"
   Start everything      .\run.ps1
   Control Center        http://127.0.0.1:8000
   Classic visualizer    .\run.ps1 classic <checkpoint_dir>   -> http://127.0.0.1:8080
-  Original CLI          .venv\Scripts\openevolve-run.exe --help
+  Original CLI          .\run.ps1 cli --help
   Tests                 .\test.ps1
   Dev servers           .\dev.ps1
 

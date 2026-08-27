@@ -24,9 +24,13 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Every script that starts the engine. `resume-evolution` had the identical
+# bug and was fixed later, so it belongs here rather than in a test of its own.
 LAUNCHERS = [
     os.path.join(ROOT, "scripts", "run-evolution.sh"),
     os.path.join(ROOT, "scripts", "run-evolution.ps1"),
+    os.path.join(ROOT, "scripts", "resume-evolution.sh"),
+    os.path.join(ROOT, "scripts", "resume-evolution.ps1"),
 ]
 
 
