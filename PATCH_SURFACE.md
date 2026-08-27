@@ -10,14 +10,38 @@ $ diff -rq upstream-openevolve/openevolve/ openevolve/
 ```
 
 `openevolve/`, `scripts/visualizer.py`, `scripts/manual.py`, `configs/*.yaml`,
-`examples/` and `tests/` are byte-identical to upstream at
-`411fb59c886c18704caaffb611e17cf9e7d824d2`. Re-run the check any time:
+`examples/` and every file in the **root** of `tests/` are byte-identical to
+upstream at `411fb59c886c18704caaffb611e17cf9e7d824d2`. Re-run the check any
+time:
 
 ```bash
 git clone https://github.com/codelion/openevolve /tmp/up
 git -C /tmp/up checkout 411fb59c886c18704caaffb611e17cf9e7d824d2
 diff -rq /tmp/up/openevolve ./openevolve      # must print nothing
 ```
+
+The fork's own tests live in `tests/evolution`, `tests/oe_max` and
+`tests/brain` — never in `tests/` root, so the upstream suite keeps meaning
+"upstream still works" rather than "our tests are green".
+
+That has one consequence worth stating, because it is the reason a fork-side
+test file was once renamed *upstream's* file out of the way: two test modules
+with the same basename in directories that are not packages make pytest fail
+collection with `import file mismatch`. The fork-side file gets renamed when
+that happens. `tests/evolution/test_control_plane_api.py` is that rename —
+upstream owns the name `test_api.py`.
+
+## The surface is now enforced, not just documented
+
+`tests/evolution/test_patch_surface.py` fails if anything under `openevolve/` is
+modified **or added**. The added case is the one that motivated it: a new module
+dropped into the engine tree conflicts with nothing on merge, so the fork keeps
+merging cleanly right up until upstream adds a file at that path — and the empty
+patch surface has silently not been empty for however long.
+
+An upstream interface can always be implemented from outside the tree.
+`oe_max/brain/llm.py` subclasses upstream's `LLMInterface` exactly as any
+external package would, and lives in `oe_max/`.
 
 ## Why the surface is empty
 
