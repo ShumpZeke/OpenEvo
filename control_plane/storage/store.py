@@ -375,8 +375,8 @@ class Store:
         )
         cur.execute(
             """INSERT INTO runs (run_id, experiment_id, status, started_at, ended_at,
-                                 pid, provenance, error, metadata)
-               VALUES (?,?,?,?,?,?,?,?,?)
+                                 pid, provenance, error, metadata, output_dir)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(run_id) DO UPDATE SET
                  status=excluded.status,
                  started_at=COALESCE(runs.started_at, excluded.started_at),
@@ -384,11 +384,19 @@ class Store:
                  pid=COALESCE(excluded.pid, runs.pid),
                  provenance=CASE WHEN excluded.provenance != '{}'
                                  THEN excluded.provenance ELSE runs.provenance END,
-                 error=COALESCE(excluded.error, runs.error)""",
+                 error=COALESCE(excluded.error, runs.error),
+                 -- The started event is the one that knows where the run is
+                 -- writing, and this column was missing from its insert
+                 -- entirely: the value was emitted, carried, and dropped here.
+                 -- Every run therefore had a NULL output_dir, which is the one
+                 -- field needed to offer "resume this run" as a command.
+                 -- COALESCE so a later event without it cannot blank it.
+                 output_dir=COALESCE(excluded.output_dir, runs.output_dir)""",
             (
                 ev.run_id, experiment_id, status, started, ended, ev.pid,
                 _j(ev.metadata.get("provenance", {})),
                 _j(ev.error) if ev.error else None, _j(ev.metadata),
+                ev.metadata.get("output_dir"),
             ),
         )
         cur.execute(

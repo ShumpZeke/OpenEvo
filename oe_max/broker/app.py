@@ -22,9 +22,11 @@ Routes: GET /health · GET /v1/models · POST /v1/chat/completions
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -34,12 +36,12 @@ from pydantic import BaseModel, Field
 
 from ..health import RetryPolicy, RouteHealth
 from ..providers.registry import Registry, build_default_registry
+from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
 from ..router import DEFAULT_CHAIN, NoRouteAvailable, Route, Router
 
-# The alias OpenEvolve is configured with. Requests naming it (or anything
-# unrecognised) go through the chain; naming a concrete model pins that route.
-PRIMARY_ALIAS = "oe-max-primary"
-BROKER_VERSION = "1.0.0"
+# Requests naming a role alias select that role's chain; naming a concrete
+# model pins that route; anything unrecognised falls to the default role.
+BROKER_VERSION = "1.1.0"
 
 
 class ChatMessage(BaseModel):
@@ -91,31 +93,43 @@ class BrokerState:
 def create_app(registry: Optional[Registry] = None,
                verify_on_start: bool = False) -> FastAPI:
     state = BrokerState(registry)
-    app = FastAPI(title="OE-MAX Broker", version=BROKER_VERSION)
-    app.state.oe = state
 
-    @app.on_event("startup")
-    async def _startup() -> None:
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI):
         # One shared client: connection reuse matters when a single evolution
         # run makes thousands of calls.
         state.client = httpx.AsyncClient(
             timeout=httpx.Timeout(180.0, connect=15.0),
             limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
         )
+        task: Optional[asyncio.Task] = None
         if verify_on_start:
-            try:
-                await state.registry.discover(state.client)
-                await state.registry.verify(state.client)
-                state.verified_at = time.time()
-            except Exception:
-                # A failed startup probe must not prevent the broker booting;
-                # /health reports the unverified state.
-                pass
+            # Deliberately NOT awaited. Verification smoke-tests every model on
+            # every usable provider, and each probe is a real completion: with
+            # the shipped catalogue it took ~65 seconds before the socket
+            # accepted anything, and it grows with every credential added.
+            #
+            # Meanwhile `run-evolution.sh` gives up on /health after 5 seconds
+            # and tells the operator the broker is not running — which is both
+            # wrong and the most confusing possible message, since they just
+            # started it.
+            #
+            # Serving immediately with unverified beliefs is what the broker
+            # does without `--verify` anyway, and those beliefs are corrected
+            # the moment the probe finishes. `verified_at` stays null until
+            # then, so nothing claims to be verified before it is.
+            task = asyncio.create_task(_verify_in_background(state))
+        try:
+            yield
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+            if state.client is not None:
+                await state.client.aclose()
 
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        if state.client is not None:
-            await state.client.aclose()
+    app = FastAPI(title="OE-MAX Broker", version=BROKER_VERSION,
+                  lifespan=_lifespan)
+    app.state.oe = state
 
     def _check_local_auth(request: Request) -> None:
         """
@@ -165,8 +179,16 @@ def create_app(registry: Optional[Registry] = None,
         """
         _check_local_auth(request)
         now = int(time.time())
-        data = [{"id": PRIMARY_ALIAS, "object": "model", "created": now,
-                 "owned_by": "oe-max"}]
+        # Aliases first: they are what a client should normally name, and a
+        # client picking the first entry of /v1/models gets a routed chain with
+        # failover rather than a single pinned provider.
+        data = [
+            {"id": alias, "object": "model", "created": now, "owned_by": "oe-max",
+             "oe_max": {"alias_for_role": role.value,
+                        "chain": [f"{pr}/{mk}" for pr, mk
+                                  in state.router.chains.get(role, [])]}}
+            for alias, role in ALIASES.items()
+        ]
         for pname, p in state.registry.providers.items():
             for spec in p.models.values():
                 data.append({
@@ -213,6 +235,7 @@ def create_app(registry: Optional[Registry] = None,
         params = {k: v for k, v in params.items() if v is not None}
 
         pinned = _resolve_pinned(state.registry, req.model)
+        role = None if pinned is not None else role_for_alias(req.model)
         try:
             if pinned is not None:
                 # Pinned means "this route, no failover" — not "no policy".
@@ -226,7 +249,7 @@ def create_app(registry: Optional[Registry] = None,
                 )
             else:
                 result = await state.router.chat(
-                    state.client, messages,
+                    state.client, messages, role=role,
                     require_tools=bool(req.tools), **params
                 )
         except NoRouteAvailable as e:
@@ -251,7 +274,9 @@ def create_app(registry: Optional[Registry] = None,
         body = dict(result.body or {})
         # Stamp provenance onto every response: the spec requires recording
         # which provider actually served each request.
-        body["oe_max"] = result.to_log()
+        stamped = result.to_log()
+        stamped["role"] = role.value if role is not None else "pinned"
+        body["oe_max"] = stamped
         return body
 
     # ------------------------------------------------------- operations
@@ -269,10 +294,17 @@ def create_app(registry: Optional[Registry] = None,
         if state.client is None:
             raise HTTPException(status_code=503, detail="broker not started")
         discovered = await state.registry.discover(state.client)
+        # Discovery can create routes that did not exist when the chains were
+        # built — a catalogue provider has no models until its listing is
+        # fetched. Rebuilding here is what makes a newly credentialled provider
+        # actually reachable instead of merely present.
+        chain_sizes = state.router.refresh_chains()
         probes = await state.registry.verify(state.client, check_tools=check_tools)
         state.verified_at = time.time()
         return {
             "discovered_counts": {k: len(v) for k, v in discovered.items()},
+            "reconciled": state.registry.reconciled,
+            "chain_sizes": chain_sizes,
             "probes": [p.to_dict() for p in probes],
             "eligible_routes": state.router.snapshot()["eligible"],
         }
@@ -285,14 +317,38 @@ def create_app(registry: Optional[Registry] = None,
     return app
 
 
+async def _verify_in_background(state: "BrokerState") -> None:
+    """
+    Discover and smoke-test without holding up the socket.
+
+    Failures are swallowed for the same reason they were when this ran inline:
+    a failed startup probe must not stop the broker serving. `/health` reports
+    `verified_at: null`, which is the honest state — we have not verified,
+    rather than we verified and found nothing.
+    """
+    try:
+        await state.registry.discover(state.client)
+        # Discovery can create routes that did not exist when the chains were
+        # built: a catalogue provider has no models until its listing is
+        # fetched, so without this a newly credentialled provider would be
+        # discovered and never routed to.
+        state.router.refresh_chains()
+        await state.registry.verify(state.client)
+        state.verified_at = time.time()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        pass
+
+
 def _resolve_pinned(registry: Registry, model: str) -> Optional[Route]:
     """
     If the caller named a concrete configured model, pin that route.
 
-    Anything else — including the alias and unknown names — goes through the
-    chain, so a client that has not been told about the alias still works.
+    Anything else — a role alias, or a name we do not recognise — goes through
+    a chain, so a client that has not been told about the aliases still works.
     """
-    if not model or model == PRIMARY_ALIAS:
+    if not model or model in ALIASES:
         return None
     for p in registry.providers.values():
         if not p.usable():

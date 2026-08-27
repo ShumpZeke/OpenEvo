@@ -63,99 +63,154 @@ report READY by editing the gate.
 
 ---
 
-## T1 — Fast-model routing experiment
+## T1 — Route quality per role, now that roles exist
 
 **Priority:** highest. **Effort:** small — the machinery is built.
-**Blocked by:** nothing. **Status:** run it and read the answer.
+**Blocked by:** nothing. **Status:** the question changed; re-ask it.
 
-### Why
+### What happened to the old T1
 
-Measured on real runs, and the numbers move:
+The old T1 asked "does Ox Alpha produce better mutations than
+`nemotron-3-ultra-free`, and by how much per second?" **That question is dead.**
+Ox Alpha was withdrawn from OpenCode Zen on or before 2026-08-26 — absent from
+`/models`, and answering `ModelError: Model x-preview-f-free is not supported`.
+Two attempts to run that experiment had already been called off because the
+route was too slow and too unreliable to reach the minimum sample size. It is
+now impossible rather than merely expensive.
 
-| route | success | p50 latency | when |
+Keep the lesson, not the arm: **the experiment was blocked on the route, not on
+the harness**, and the route then ceased to exist. Check a route is alive and
+above ~25% success before pinning an arm to it (`./scripts/verify-providers.sh`).
+
+### The question worth asking now
+
+Routing is per role (`oe_max/roles.py`), and the role assignment is **argued
+from a two-word probe, not measured on real work**:
+
+| route | probe latency | reasoning tokens | assigned to |
 |---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | 40% | 220 s | first measurement |
-| `x-preview-f-free` (Ox Alpha) | 26% | 284 s | later, same week |
-| `nemotron-3-ultra-free` | 100% | 112 s | first measurement |
+| `nemotron-3-ultra-free` | 3.3 s | 39 | reasoner, coder |
+| `hy3-free` | 2.1 s | 43 | — |
+| `laguna-s-2.1-free` | 1.6 s | **0** | judge, fast |
+| `nemotron-3.5-lightning-free` | 7.6 s | 64/64 truncated | — |
 
-If a cheaper route produces comparable mutation quality, throughput roughly
-doubles. The objective divides by wall-clock and API requests, so this attacks
-the denominator directly. That Ox Alpha's own numbers moved by that much
-between measurements is itself the argument for re-running rather than
-trusting a table.
+The reasoning-token argument is sound and the *conclusion is untested*. Two
+things follow, and they are separate experiments:
 
-### What is already built
-
-The three things this used to need are done:
-
-1. **Attribution.** Every candidate carries the model request that generated
-   it, across the worker→main process boundary
-   (`control_plane/telemetry/instrument.py`, `ATTRIBUTION_KEY`). Verified live:
-   12 of 15 candidates attributed, the other 3 being the seed program and two
-   migrant copies, which are unattributable by design.
-2. **Quality per route.** `oe_max/route_quality.py` defines the measures;
-   `control_plane/analysis/route_quality.py` builds them from stored telemetry;
-   `GET /api/query/runs/{id}/route-quality?pool=…` serves them.
-3. **The experiment itself.** `scripts/route-experiment.sh` runs one arm per
-   route off a single base config, pools the runs per route, and prints a
-   verdict that refuses to name a winner on thin evidence.
+1. **Is laguna good enough to judge?** A cheap judge that ranks badly is worse
+   than an expensive one, because it corrupts the score rather than the
+   candidate — much harder to notice than a broken diff. Compare
+   `use_llm_feedback` runs with `evaluator_models` pinned to laguna against the
+   same pinned to nemotron, and look at whether the *ranking* agrees, not at
+   throughput.
+2. **Is hy3 a better reasoner than nemotron?** It probed faster (2.1s vs 3.3s)
+   with comparable reasoning tokens, and nothing has measured its mutation
+   quality at all. Under a real run the primary averaged **90 s** per request,
+   so probe latency is clearly not predictive and this needs a real arm.
 
 ### How to run it
 
 ```bash
-./scripts/start-broker.sh                        # terminal 1
-./run.sh                                         # terminal 2
+./scripts/start-broker.sh
 ./scripts/route-experiment.sh \
-    --routes x-preview-f-free,nemotron-3-ultra-free \
+    --routes nemotron-3-ultra-free,hy3-free \
     --iterations 12 --repeats 3
 ```
 
-Three repeats per arm is the point: `MIN_ATTEMPTS_FOR_COMPARISON` is 20, and a
-12-iteration run does not get there alone. `--min-attempts` can lower the bar,
-but lowering it is a claim you then have to defend.
-
-### What one run already showed
-
-A three-arm run is recorded in BENCHMARKS.md. The headline is that the two
-efficiency views **disagree**: Ox Alpha leads on improvement per *request*
-(0.331 vs 0.229) and loses badly on improvement per *second* (7.9e-04 vs
-2.7e-03), because it is ~5x slower. That is the trade-off to put in front of
-the operator, not a switch to make.
-
-It is not enough evidence: the arms were 4, 8 and 12 attempts against a
-minimum of 20, and two of them were cut off by a timeout and a container
-restart rather than by the design.
-
-A second attempt pooled `nemotron-3-ultra-free` to **24 attempts** — the first
-route ever to clear the minimum — and was called off part way through the Ox
-Alpha arms, which had produced 2 requests in 32 minutes at 11% success. See
-BENCHMARKS.
-
-**So the blocker on T1 is not the harness, it is the route.** Before spending
-hours on this again, check Ox Alpha's live success rate
-(`./scripts/verify-providers.sh`, or the ROUTE QUALITY section of
-`./scripts/dashboard.sh`). Below ~25% it will now be demoted out of the chain
-automatically, and an arm pinned to it is a waiting game with no result at the
-end.
+Three repeats per arm is the point: `MIN_ATTEMPTS_FOR_COMPARISON` is 20 and a
+12-iteration run does not get there alone.
 
 ### Done when
 
-You can answer "does Ox Alpha produce better mutations than
-`nemotron-3-ultra-free`, and by how much per second?" with numbers from ≥3 runs
-per arm, and the verdict is not "insufficient evidence".
+You can answer "which free Zen route produces the best mutations per second,
+and does laguna rank candidates the same way nemotron does?" with numbers from
+≥3 runs per arm, and the verdict is not "insufficient evidence".
 
 ### Careful
 
-The operator explicitly chose Ox Alpha as primary. **Do not change the default
-route on latency alone.** Bring evidence about quality, then propose it. If Ox
-Alpha is better per *request* but worse per *minute*, that is a genuine
-trade-off for the operator to decide, not for you to silently resolve.
-
-Read the three views before concluding anything. `improvement_per_request` is
-what matters under a rate contract, `improvement_per_second` when wall-clock is
-the constraint, `improvement_per_1k_tokens` when someone is paying. The same
-two routes can rank differently under each, and that is a result rather than a
+Read all three efficiency views before concluding: `improvement_per_request`
+matters under a rate contract, `improvement_per_second` when wall-clock is the
+constraint, `improvement_per_1k_tokens` when someone is paying. The same two
+routes can rank differently under each, and that is a result rather than a
 contradiction.
+
+And do not promote a route to primary on latency alone — that was the standing
+instruction when the operator had chosen a primary, and it survives the
+operator's choice being withdrawn.
+
+---
+
+## T1b — ~~Verify NVIDIA NIM for real~~ (DONE 2026-08-28)
+
+**Priority:** high. **Effort:** trivial once a key exists. **Blocked by:** a
+credential.
+
+**Done.** A key was supplied and all nine were probed; five serve and four do
+not. Results and the corrected ids are in HANDOFF §4i. The headline: two
+transposed words in `nemotron-3-nano-30b-a3b` separated a working model from a
+404, with both spellings in the catalogue.
+
+What remains open from this task is the rate limiter (below) and the other
+thirteen providers, each of which needs only a key.
+
+```bash
+echo "NVIDIA_API_KEY=nvapi-..." >> .env
+./scripts/start-broker.sh
+./scripts/verify-providers.sh
+```
+
+Then check three things that have never been observed:
+
+1. Which of the nine actually serve, and which support tools.
+2. Whether the 44-per-60s limiter holds against the real endpoint. The
+   invariant has 17 property tests on a virtual clock and has never met NIM.
+   Watch the rolling-window gauge on `./scripts/dashboard.sh`.
+3. Whether NIM's free credits are a recurring allowance or a one-off. If they
+   are one-off, the role chains should keep NIM behind the keyless Zen routes
+   permanently rather than only while unverified.
+
+The same applies to the thirteen catalogue providers, which need only a key
+each — their model ids are discovered, so nothing else is configured.
+
+---
+
+## T1c — Does the bandit beat uniform random?
+
+**Priority:** high. **Effort:** small — the arm is registered.
+**Blocked by:** nothing.
+
+The operator bandit is now wired end to end (`OE_MAX_OPERATOR_BANDIT=1`,
+HANDOFF §4b-bandit) and **off by default because nobody has measured whether it
+helps**. That is the only thing standing between it and being a default.
+
+```bash
+./scripts/start-broker.sh
+./scripts/ablation.sh --arms operators,operator_bandit --repeats 3
+```
+
+Compare against the `operators` arm, not the baseline. The bandit acts through
+operator steering, so measuring it against a plain baseline measures steering
+and selection together and cannot say which one paid.
+
+### Careful
+
+Two things make this arm harder to read than the others, and both push toward
+*more* repeats rather than fewer:
+
+- **A short run barely leaves exploration.** Twelve iterations gives the bandit
+  about a dozen observations spread over fifteen arms. Thompson sampling will
+  still be sampling widely at that point, so a null result is evidence about
+  short runs and not about the bandit. If the answer comes back "no
+  difference", the honest next step is a longer run, not a conclusion.
+- **It is the one arm that is not reproducible.** Selection depends on rewards
+  from earlier iterations, so a rerun with the same seed diverges the moment a
+  score differs. Do not treat run-to-run variation here as a bug.
+
+### Done when
+
+You can say whether reward-driven operator selection beats uniform on
+improvement-per-request, with ≥3 runs per arm — or state plainly that a run of
+this length cannot tell, which is also a result.
 
 ---
 

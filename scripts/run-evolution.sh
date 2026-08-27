@@ -41,8 +41,24 @@ if [ "$PROFILE" = "max" ] && ! curl -sf --max-time 5 \
   exit 1
 fi
 
+# Run through the instrumented entrypoint, not `openevolve-run.py` directly.
+#
+# This script used to exec the plain upstream CLI, which installs no telemetry
+# at all — and every OE_MAX_* feature is installed BY that telemetry. So
+# `OE_MAX_OPERATORS=1 ./scripts/run-evolution.sh` set an environment variable
+# that nothing ever read: no operator steering, no attribution, no
+# multi-offspring, no verification, no bandit. The run succeeded and the
+# feature silently did not happen, which is the worst way for a flag to fail.
+#
+# The entrypoint requires a run id, so generate one when the caller has not.
+export EVOLUTION_RUN_ID="${EVOLUTION_RUN_ID:-run_$(date +%Y%m%d%H%M%S)_$$}"
+export EVOLUTION_TELEMETRY="${EVOLUTION_TELEMETRY:-1}"
+export EVOLUTION_EVENT_LOG="${EVOLUTION_EVENT_LOG:-$OUT/events.ndjson}"
+
 echo "task=$TASK profile=$PROFILE iterations=$ITER"
 echo "config=$CFG"
 echo "output=$OUT"
-exec "$PY" openevolve-run.py "$PROG" "$EVAL" \
+echo "run_id=$EVOLUTION_RUN_ID"
+echo "events=$EVOLUTION_EVENT_LOG"
+exec "$PY" -m control_plane.runner.entrypoint "$PROG" "$EVAL" \
   --config "$CFG" --iterations "$ITER" --output "$OUT"

@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose something the project should do that it does not do yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `NEXT_TASKS.md` is the prioritised queue and says why each item is worth
+        doing and what would make it a bad idea. If your idea is already there,
+        adding evidence to it is worth more than a new issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The situation you are in, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        This project holds a line about measurement: a claim without a number
+        behind it stays labelled unverified. If you have run something, the
+        numbers are the most useful part of the issue.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this respects
+      description: |
+        These are load-bearing rules from `CLAUDE.md`. A proposal that breaks
+        one can still be right, but it needs to say so deliberately.
+      options:
+        - label: Does not require editing `openevolve/` (the empty patch surface)
+        - label: Does not introduce fixtures or placeholder numbers into the UI
+        - label: Does not claim a live result that has not actually been run

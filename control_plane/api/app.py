@@ -20,12 +20,16 @@ import queue
 import time
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..memory.importer import import_all
+from ..memory.journal import KINDS as JOURNAL_KINDS, Journal
+from ..memory.resume import build_digest
 from ..providers.doctor import ProviderDoctor, apply_reports
 from ..providers.profiles import Role
 from ..providers.router import ModelRouter
@@ -34,6 +38,7 @@ from ..storage.store import Store
 from ..telemetry.bus import configure_bus, get_bus
 from ..telemetry.collector import EventCollector
 from ..telemetry.events import Component, Event, EventType, Status
+from ..telemetry.gpu import probe as gpu_probe
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -114,6 +119,20 @@ class ForceRouteRequest(BaseModel):
     profile_id: str
 
 
+class JournalEntryRequest(BaseModel):
+    """A note the operator wants to survive the session."""
+
+    title: str
+    kind: str = "note"
+    detail: str = ""
+    run_id: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    # Defaults to 'user' because this endpoint is what the browser posts to.
+    # An agent writing through the API says so explicitly, and the distinction
+    # is kept so a reader can tell an assertion from an inference.
+    source: str = "user"
+
+
 def create_app(workspace: Optional[str] = None) -> FastAPI:
     state = AppState(workspace)
     app = FastAPI(title="Evolution Control Plane", version="1.0.0")
@@ -176,6 +195,12 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         except Exception as exc:
             info["host"] = None
             info["host_error"] = f"psutil unavailable: {exc}"
+
+        # Reported separately from `host` on purpose. A machine with no GPU is
+        # the normal case rather than a fault, so it must be distinguishable
+        # from a machine where sampling failed — and neither may be rendered as
+        # 0% utilised, which would be a fabricated number.
+        info["gpu"] = gpu_probe().to_dict()
         try:
             with open(os.path.join(_ROOT, "UPSTREAM.json")) as fh:
                 info["upstream"] = json.load(fh)
@@ -685,6 +710,102 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         snap = state.router.snapshot()
         snap["last_doctor_reports"] = state.last_doctor_reports
         return snap
+
+    # ------------------------------------------------------------ memory
+    @app.get("/api/memory")
+    def memory_digest(
+        limit: int = Query(10, ge=1, le=100),
+        days: float = Query(30.0, gt=0),
+        all_time: bool = Query(False),
+        notes: int = Query(20, ge=1, le=100),
+        import_logs: bool = Query(True),
+    ) -> Dict[str, Any]:
+        """
+        "Where was I?" — history, resume points and the journal.
+
+        Everything except the journal is derived at read time from the same
+        projections the rest of the API serves, so this view cannot drift from
+        the run list beside it.
+
+        `import_logs` pulls in runs started from the shell. The collector only
+        ingests while this server is up, so without it a CLI-launched run would
+        be missing from its own project's history.
+        """
+        if import_logs:
+            import_all(state.store)
+        return build_digest(
+            state.store,
+            limit=limit,
+            window_days=None if all_time else days,
+            journal_limit=notes,
+        )
+
+    @app.get("/api/memory/journal")
+    def memory_journal(
+        limit: int = Query(50, ge=1, le=500),
+        kind: Optional[str] = None,
+        run_id: Optional[str] = None,
+        q: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        journal = Journal(state.store)
+        entries = (journal.search(q, limit=limit) if q
+                   else journal.list(limit=limit, kind=kind, run_id=run_id))
+        return {
+            "entries": [e.to_dict() for e in entries],
+            "counts": journal.counts_by_kind(),
+            "kinds": list(JOURNAL_KINDS),
+        }
+
+    @app.post("/api/memory/journal")
+    def memory_journal_add(req: JournalEntryRequest) -> Dict[str, Any]:
+        try:
+            entry = Journal(state.store).add(
+                req.title, kind=req.kind, detail=req.detail,
+                run_id=req.run_id, tags=req.tags, source=req.source,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return entry.to_dict()
+
+    @app.delete("/api/memory/journal/{entry_id}")
+    def memory_journal_delete(entry_id: str) -> Dict[str, Any]:
+        if not Journal(state.store).delete(entry_id):
+            raise HTTPException(status_code=404, detail=f"no entry {entry_id}")
+        return {"deleted": entry_id}
+
+    @app.get("/api/broker")
+    async def broker_status() -> Dict[str, Any]:
+        """
+        The live state of the OE-MAX broker: the router that actually serves.
+
+        This exists because the Control Center was showing the control plane's
+        own `ModelRouter` while every real routing decision was being made in a
+        different process, on :8787. An operator could watch a route reported
+        healthy here while the broker had its circuit open, or watch a route
+        the broker had parked for an exhausted free allowance and see nothing
+        at all. Two routers, one of them serving, and the UI showed the other.
+
+        When the broker is not running this reports that plainly. It must not
+        synthesise a route table: an operator reading invented health would
+        make worse decisions than one reading "not reachable".
+        """
+        base = os.environ.get("OE_MAX_BASE", "http://127.0.0.1:8787")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{base}/v1/oe-max/status")
+                r.raise_for_status()
+                payload = r.json()
+        except Exception as exc:
+            return {
+                "reachable": False,
+                "base": base,
+                "detail": f"{type(exc).__name__}: {exc}"[:200],
+                "router": None,
+                "registry": None,
+            }
+        payload["reachable"] = True
+        payload["base"] = base
+        return payload
 
     @app.post("/api/providers/doctor")
     async def run_doctor(probe_tools: bool = True) -> Dict[str, Any]:

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something behaves differently from what the docs say it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: `HANDOFF.md` §3 lists the traps that have already cost
+        someone a day — a rebuilt telemetry bus after `fork()`, `urllib` vs
+        `httpx` against OpenCode Zen, coupled timeout/token settings on a
+        reasoning model. If one of those matches, the answer may already be there.
+
+  - type: dropdown
+    id: path
+    attributes:
+      label: Which path?
+      description: |
+        The two do not share an evolution loop, so the same symptom means
+        different things in each.
+      options:
+        - Shipping path (upstream engine + OE-MAX broker on :8787)
+        - BrainPort path (oe_max/brain/, driven by the OpenCode plugin)
+        - Control Center / API
+        - Bootstrap, scripts or tests
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what it did instead of what you expected.
+      placeholder: |
+        $ ./scripts/run-evolution.sh --iterations 12
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Output of `./scripts/verify-providers.sh` is useful when the problem
+        involves a model or route. Please redact keys — the broker redacts
+        before persistence, but pasted terminal output is not covered by that.
+      placeholder: |
+        OS:            Windows 11 / Ubuntu 24.04 / macOS 15
+        Python:        3.11.9
+        Path:          shipping / BrainPort
+        Provider used: OpenCode Zen (x-preview-f-free) / NVIDIA NIM / local stub
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Does the test suite reproduce it?
+      description: |
+        `./test.sh` (or `.\test.ps1`). Six upstream tests fail on Windows for
+        platform reasons documented in `TEST_STRATEGY.md` — those are expected
+        and are not what this asks about.
+    validations:
+      required: false

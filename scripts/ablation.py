@@ -96,6 +96,23 @@ ARMS: Dict[str, Dict[str, Any]] = {
                 "turns both on. Compare it against the `operators` arm, not "
                 "only against the baseline, to isolate the policy layer.",
     },
+    "operator_bandit": {
+        "env": {"OE_MAX_OPERATORS": "1", "OE_MAX_OPERATOR_BANDIT": "1"},
+        "asks": "does letting measured reward pick the operator beat picking "
+                "uniformly at random?",
+        "note": "the bandit acts through operator steering, so this arm turns "
+                "both on. Compare it against the `operators` arm, not only "
+                "against the baseline, or you measure steering and selection "
+                "together and cannot say which one paid.\n"
+                "    Read this arm with more suspicion than the others: a "
+                "12-iteration run gives the bandit roughly a dozen "
+                "observations spread over fifteen arms, which is thin enough "
+                "that it will mostly still be exploring. A null result here is "
+                "evidence about short runs, not about the bandit.\n"
+                "    It is also the one arm that is not reproducible: "
+                "selection depends on rewards from earlier iterations, so a "
+                "rerun with the same seed diverges as soon as a score does.",
+    },
     "multi_offspring": {
         "env": {"OE_MAX_MULTI_OFFSPRING": "3"},
         "asks": "do three alternatives per request beat one, after "

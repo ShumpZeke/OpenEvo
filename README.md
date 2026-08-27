@@ -1,5 +1,9 @@
 # Evolution
 
+[![tests](https://github.com/ShumpZeke/OpenEvo/actions/workflows/ci.yml/badge.svg)](https://github.com/ShumpZeke/OpenEvo/actions/workflows/ci.yml)
+[![licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+[![upstream: OpenEvolve 411fb59c](https://img.shields.io/badge/upstream-OpenEvolve%20411fb59c-lightgrey.svg)](https://github.com/codelion/openevolve)
+
 > **A second execution path landed on 2026-08-27: the OpenCode BrainPort.** It
 > is additive and **not yet the default** — be precise about which path you are
 > reading about, because the two do not share a loop.
@@ -14,7 +18,7 @@
 >   its own lighter evolution loop in `oe_max/brain/evolution.py` — it does not
 >   go through upstream's controller, MAP-Elites or island machinery.
 >
-> **Verification status, stated plainly:** 31 tests cover the BrainPort, and 26
+> **Verification status, stated plainly:** 34 tests cover the BrainPort, and 26
 > acceptance gates pass (`scripts/verify-brainport-acceptance.ps1`). All of them
 > run against `NullBrainPort` or the stdio worker. **No BrainPort run against a
 > live OpenCode host has been recorded**, so the claim "zero source changes when
@@ -47,7 +51,8 @@ Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
 **OE-MAX** — a local OpenAI-compatible **provider broker** on `127.0.0.1:8787`.
 OpenEvolve points at it and knows nothing about providers: routing, the NIM rate
 contract, failover, retry and credential ownership all live behind that one
-base URL. Ox Alpha (OpenCode Zen) is the primary route.
+base URL. Routing is **per role** — reasoner, coder, judge, fast — each with its
+own chain, addressed by model alias so the engine needs no changes.
 
 **Control plane** — telemetry, storage, query/control APIs and a 19-view browser
 Control Center over live evolution.
@@ -63,9 +68,11 @@ Both sit *around* upstream. The engine is byte-identical.
 - **Real telemetry** — a typed event model instrumented at the engine boundary.
   Every value the UI shows traces to an emitted event; there are no fixtures or
   placeholder metrics anywhere in the frontend.
-- **Provider routing** — OpenCode Zen / Ox Alpha Free preferred by default, with
-  automatic fallback to NVIDIA NIM and other OpenAI-compatible endpoints,
-  driven by live health *and* verified capabilities.
+- **Provider routing** — free OpenCode Zen routes preferred by default, with
+  automatic fallback to NVIDIA NIM and thirteen other OpenAI-compatible
+  providers, driven by live health *and* verified capabilities. Providers are
+  configuration (`configs/oe_max/providers.yaml`) and their model ids are
+  discovered from each provider's own listing rather than written down.
 - **Route quality, not just route health** — every candidate is attributed to
   the model request that generated it, so the question "which route produces
   better mutations, and at what cost?" is answerable from a run's own
@@ -79,8 +86,18 @@ Both sit *around* upstream. The engine is byte-identical.
 ## Quick start
 
 ```bash
+git clone https://github.com/ShumpZeke/OpenEvo.git
+cd OpenEvo
 ./bootstrap.sh                    # environment, deps, storage, UI build, checks
 ```
+
+`bootstrap` creates `.venv`, installs the engine and control plane with the
+`[dev]` extra, initialises storage, builds the Control Center and the OpenCode
+plugin, and runs a smoke test. It installs nothing globally and modifies nothing
+outside this directory. On Windows use `.\bootstrap.ps1`.
+
+Requirements: Python 3.10+ and git. Node 20+ is optional — without it the API
+still runs, it just serves no browser UI.
 
 Then, in two terminals:
 
@@ -96,9 +113,23 @@ Watch it live:
 ./run.sh                          # browser Control Center → 127.0.0.1:8000
 ```
 
-**No API key is required to try it.** OpenCode Zen was observed serving
-`x-preview-f-free` (Ox Alpha) without one — `./scripts/verify-providers.sh`
-shows what is actually reachable right now.
+### Coming back to it later
+
+```bash
+./scripts/memory.sh                 # where you left off
+./scripts/memory.sh note "..."      # leave yourself something
+./scripts/memory.sh search "..."    # find it again
+```
+
+Prints your run history, the high-water score, every run you can resume with
+the exact command to do it, and your journal. Runs started from the shell are
+imported automatically, so history means the same thing however you launched.
+The same thing lives in the Control Center's **Memory** view.
+
+**No API key is required to try it.** OpenCode Zen serves four free models
+without one — verified 2026-08-26 — and `./scripts/verify-providers.sh` shows
+what is actually reachable right now. Every other provider is key-gated and
+inert until you add its key, so the shipped configuration works as-is.
 
 Windows: `.\bootstrap.ps1` then `.\run.ps1`.
 
@@ -174,12 +205,23 @@ tests/              upstream suite (untouched) + tests/evolution
 ./test.sh
 ```
 
+Measured on Windows 11 / CPython 3.11.9:
+
 | Suite | Result |
 |---|---|
-| Upstream OpenEvolve (preserved) | **437 passed**, 17 slow deselected |
-| Control plane | **303 passed** |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **250 passed** |
+| Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
+| Control plane | **389 passed**, 10 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **303 passed**, 24 skipped |
+| BrainPort (OpenCode brain, worker, plugin contract) | **34 passed** |
 | Web typecheck | clean |
+
+The six upstream failures are platform, not regression: four are
+`openevolve/config.py` opening YAML with no `encoding=`, so Windows decodes it
+as cp1252 and dies on a non-ASCII byte; one asserts a POSIX absolute path
+survives unchanged; one expects `ProcessLookupError`, which is POSIX `os.kill`
+semantics. All six pass on Linux, which is what CI runs. They are not fixable
+here — `openevolve/` is byte-identical and stays that way. The full table with
+causes is in [TEST_STRATEGY.md](TEST_STRATEGY.md).
 
 The upstream suite runs first: a change that breaks it is a regression in the
 fork, not merely a control-plane bug.
@@ -188,12 +230,13 @@ fork, not merely a control-plane bug.
 
 | | |
 |---|---|
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | **clone, build, test, and the rules that are load-bearing** |
 | **[HANDOFF.md](HANDOFF.md)** | **start here if you are continuing this work** |
 | **[NEXT_TASKS.md](NEXT_TASKS.md)** | **prioritised work queue with rationale** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |
 | [DECISIONS.md](DECISIONS.md) | engineering decisions and their evidence |
 | [TELEMETRY.md](TELEMETRY.md) | event model, transport, no-fake-data rule |
-| [PROVIDERS.md](PROVIDERS.md) | routing policy, Ox Alpha's real status |
+| [PROVIDERS.md](PROVIDERS.md) | what each provider actually does, verified; and the dead-endpoint list |
 | [SANDBOX.md](SANDBOX.md) | OpenCode isolation boundary |
 | [SECURITY.md](SECURITY.md) | secret handling and redaction |
 | [PATCH_SURFACE.md](PATCH_SURFACE.md) | every upstream file touched (none) |
@@ -206,23 +249,27 @@ fork, not merely a control-plane bug.
 
 ## Three things worth knowing up front
 
-**Ox Alpha Free is free for a limited time, not permanently.** OpenCode's own
-documentation says so, so free status is a runtime-probed value and is never
-rendered as unlimited.
+**A free route can stop existing.** Ox Alpha (`x-preview-f-free`) was this
+project's primary and was withdrawn from Zen — probed 2026-08-26, absent from
+`/models` and answering `ModelError: ... is not supported`. Free status is a
+runtime-probed value, never rendered as unlimited, and the model tables are
+reconciled against each provider's live listing on every discovery so a
+withdrawal disables itself. See [PROVIDERS.md](PROVIDERS.md).
 
-**Ox Alpha is a reasoning model, and that changes the settings that work.** It
-was measured spending 7,986–7,997 of an 8,000-token budget on *hidden*
-reasoning, truncating the visible diff — 5 of 8 evolution iterations produced
-nothing from ~130-second requests. The broker now detects `finish_reason=length`
-and retries with a doubled budget, and `max_tokens`, the provider timeout and
-the client timeout are tuned together. See [BENCHMARKS.md](BENCHMARKS.md).
+**A reasoning model can spend its whole budget thinking.** Ox Alpha was measured
+using 7,986–7,997 of an 8,000-token budget on *hidden* reasoning, truncating the
+visible diff — 5 of 8 iterations produced nothing from ~130-second requests. Its
+replacement reasons too. The broker detects `finish_reason=length` and retries
+with a doubled budget, and `max_tokens`, the provider timeout and the client
+timeout are tuned together. It is also why judging routes to a different model
+than mutation: of the free Zen routes, only `laguna-s-2.1-free` reports zero
+reasoning tokens, and ranking candidates does not need hidden thought.
 
-**A listed model is not a working model.** Zen lists `deepseek-v4-flash-free`
-and returns "Model is unavailable" for it. Discovery is therefore two-stage:
-list, then smoke-test. Capabilities are probed too — which is why re-admitting
-Ox Alpha to tool-using roles after
-[anomalyco/opencode#44300](https://github.com/anomalyco/opencode/issues/44300)
-was fixed upstream needed no code change at all.
+**A listed model is not a working model, and an unlisted one is not a model.**
+Zen lists `deepseek-v4-flash-free` and returns "Model is unavailable" for it, so
+discovery is two-stage: list, then smoke-test. The converse is what caught Ox
+Alpha's withdrawal and two NVIDIA models this project had configured that were
+never in NVIDIA's catalogue at all.
 
 ## Licence
 

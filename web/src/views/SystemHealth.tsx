@@ -45,6 +45,60 @@ export const SystemHealth: React.FC<ViewProps> = () => {
         )}
       </Panel>
 
+      <Panel
+        title="GPU"
+        loading={sys.loading && !sys.data}
+        error={sys.error}
+        footer={
+          s?.gpu?.available
+            ? "Sampled from nvidia-smi on each request."
+            : "A host with no accelerator is the normal case, not a fault. It is "
+              + "reported as absent rather than as 0% utilised, which would be a "
+              + "number nothing measured."
+        }
+      >
+        {!s?.gpu?.available ? (
+          <div className="p-3 text-xs text-ink-faint">
+            No GPU metrics{s?.gpu?.reason ? `: ${s.gpu.reason}` : ""}.
+          </div>
+        ) : (
+          <div className="divide-y divide-line">
+            {(s.gpu.gpus ?? []).map((g: Json) => (
+              <div key={String(g.index)} className="p-2">
+                <div className="text-2xs text-ink-dim mb-1">
+                  <Mono className="text-ink">GPU {String(g.index)}</Mono> {String(g.name)}
+                </div>
+                <div className="grid grid-cols-4 divide-x divide-line">
+                  {/* Every cell renders "—" when the driver did not report the
+                      field. nvidia-smi emits [N/A] for values a given card
+                      does not expose, and showing those as 0 would invent a
+                      reading. */}
+                  <Stat
+                    label="Util"
+                    value={typeof g.utilization_percent === "number"
+                      ? `${g.utilization_percent.toFixed(0)}%` : "—"} />
+                  <Stat
+                    label="VRAM"
+                    value={typeof g.memory_percent === "number"
+                      ? `${g.memory_percent.toFixed(0)}%` : "—"}
+                    sub={typeof g.memory_total_mb === "number"
+                      ? `${fmtNum(g.memory_used_mb)} / ${fmtNum(g.memory_total_mb)} MiB`
+                      : undefined} />
+                  <Stat
+                    label="Temp"
+                    value={typeof g.temperature_c === "number"
+                      ? `${g.temperature_c.toFixed(0)}°C` : "—"} />
+                  <Stat
+                    label="Power"
+                    value={typeof g.power_w === "number"
+                      ? `${g.power_w.toFixed(0)} W` : "—"} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <Panel title="Telemetry self-health"
              footer="A non-zero drop count means the UI's live tail is incomplete; stored history still is not.">
         <div className="p-2">

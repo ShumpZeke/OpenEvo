@@ -22,11 +22,14 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-if (-not $Python) {
-    foreach ($candidate in @(".venv/Scripts/python.exe", ".venv/bin/python")) {
-        if (Test-Path (Join-Path $repo $candidate)) { $Python = Join-Path $repo $candidate; break }
-    }
-}
+. (Join-Path $PSScriptRoot "_common.ps1")
+
+# -Python wins when given. Otherwise the shared resolver handles both venv
+# layouts -- Scripts/python.exe on Windows, bin/python everywhere else -- so
+# this script does not carry its own copy of that logic to drift out of step.
+# A system `python` is the last resort, which lets the gates be run from a
+# checkout that has not been bootstrapped yet.
+if (-not $Python) { $Python = Get-VenvPython -Root $repo }
 if (-not $Python) { $Python = "python" }
 
 Write-Host "=== BrainPort acceptance gates ===" -ForegroundColor Cyan
@@ -69,8 +72,8 @@ $failed = 0
 $failedNames = @()
 
 foreach ($gate in $gates) {
-    $args = @("-m", "pytest", "-q", "-p", "no:cacheprovider") + $gate.Nodes
-    & $Python @args *> $null
+    $pytestArgs = @("-m", "pytest", "-q", "-p", "no:cacheprovider") + $gate.Nodes
+    & $Python @pytestArgs *> $null
     if ($LASTEXITCODE -eq 0) {
         Write-Host ("[PASS] " + $gate.Name) -ForegroundColor Green
         $passed++

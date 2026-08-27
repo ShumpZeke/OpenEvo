@@ -35,11 +35,16 @@ into it:
                     │  failover · owns all credentials │
                     └────────────────┬─────────────────┘
                                      ▼
-                    OpenCode Zen · OpenRouter · NVIDIA NIM
+       OpenCode Zen · NVIDIA NIM · +13 catalogue providers, key-gated
 ```
 
-**The engine is byte-identical to upstream.** `diff -rq` proves it, and 437
-upstream tests pass. Telemetry is installed by wrapping public methods at
+Routing is **per role**, not one chain for everything — `oe-max-reasoner`,
+`oe-max-coder`, `oe-max-judge`, `oe-max-fast`, plus `oe-max-primary` which
+still means the reasoner. See `oe_max/roles.py` for why the free routes differ
+in kind and not merely in quality.
+
+**The engine is byte-identical to upstream.** `diff -rq` proves it, and the
+upstream suite still passes. Telemetry is installed by wrapping public methods at
 runtime, so the patch surface is empty and upstream merges fast-forward. Keep
 it that way — see `PATCH_SURFACE.md` before you consider editing anything under
 `openevolve/`.
@@ -62,10 +67,12 @@ Watch it:
 ./scripts/verify-providers.sh      # what is actually reachable right now
 ```
 
-**No API key needed.** OpenCode Zen serves `x-preview-f-free` (Ox Alpha) without
-one. That was verified live, repeatedly.
+**No API key needed.** OpenCode Zen serves four free models without one —
+verified again 2026-08-26. It is no longer Ox Alpha: that model was withdrawn
+(§3.11). The primary is now `nemotron-3-ultra-free`.
 
-Tests: `./test.sh` → 437 upstream + 303 control plane + 250 OE-MAX.
+Tests: `./test.sh` → 431 upstream + 389 control plane + 303 OE-MAX + 34
+BrainPort. Six upstream tests fail on Windows only; see §9.
 
 ---
 
@@ -89,11 +96,18 @@ could not tell.
 Keep the trap in mind anyway: any new probing code you add must not reach for
 `urllib`.
 
-### 3.2 Ox Alpha spends its entire token budget on hidden reasoning
+### 3.2 A reasoning model can spend its entire token budget on hidden reasoning
 
-Measured: **7,986–7,997 reasoning tokens out of an 8,000 budget.** The visible
-diff gets truncated and OpenEvolve logs `No valid diffs found` — five of eight
-iterations produced nothing from ~130-second requests.
+Measured on Ox Alpha, the former primary: **7,986–7,997 reasoning tokens out of
+an 8,000 budget.** The visible diff gets truncated and OpenEvolve logs `No valid
+diffs found` — five of eight iterations produced nothing from ~130-second
+requests.
+
+**The trap outlived that model.** Its replacement reasons too:
+`nemotron-3-ultra-free` spent 39 completion tokens thinking about a two-word
+answer, and `nemotron-3.5-lightning-free` truncated at 64 of 64 tokens, all of
+them reasoning. Only `laguna-s-2.1-free` reports zero — which is exactly why it
+leads the judge and fast chains rather than the reasoning ones.
 
 Handled: the broker classifies `finish_reason=length` as `TRUNCATED` and retries
 with a **doubled** budget (an identical retry reproduces an identical
@@ -122,9 +136,16 @@ like a regression.
 ### 3.4 A listed model is not a working model
 
 Zen's `/models` lists `deepseek-v4-flash-free`; calling it returns HTTP 400
-"Model is unavailable". `mimo-v2.5-free` returns 429 `FreeUsageLimitError`.
+"Model is unavailable" — still true on 2026-08-26, a year-long liar.
+`mimo-v2.5-free` returns 429 `FreeUsageLimitError`, and the newly-listed
+`muse-spark-1.2-contributor-free` returns HTTP 500. Three of Zen's eight listed
+free models do not serve.
+
 Discovery is therefore two-stage — list, then smoke-test — in
 `oe_max/providers/registry.py`. Do not "simplify" it back to one stage.
+
+And read §3.11 for the converse, which is the half that was missing: an
+*unlisted* model is not a model either.
 
 ### 3.5 The event bus must be rebuilt after `fork()`
 
@@ -218,52 +239,129 @@ Two properties worth preserving if you touch it:
   policy; silently redirecting a pinned request would make an A/B experiment
   measure something other than what it named.
 
+### 3.11 The plain CLI installs no telemetry, and every feature rides on it
+
+`scripts/run-evolution.sh` exec'd `openevolve-run.py`, the untouched upstream
+CLI. Upstream installs no instrumentation, and **every OE-MAX feature is
+installed by that instrumentation** — operator steering, attribution,
+multi-offspring, verification, sandboxed evaluation, the bandit. So:
+
+```bash
+OE_MAX_OPERATORS=1 ./scripts/run-evolution.sh --iterations 12
+```
+
+set an environment variable that nothing ever read. The run succeeded, the
+score improved, and not one of those features happened. No error, no warning,
+no event log — the only symptom was the absence of something you had no reason
+to check for.
+
+`auto_install_from_env()` is called from exactly one place,
+`control_plane/runner/entrypoint.py`, and it needs both `EVOLUTION_TELEMETRY`
+and `EVOLUTION_RUN_ID`.
+
+**Scope, checked rather than assumed.** The Control Center and both experiment
+harnesses start runs with `POST /api/control/runs`, which goes through
+`RunManager` → that entrypoint, so they were always instrumented. Only the
+standalone shell script was not. Measurements recorded from `ablation.sh` and
+`route-experiment.sh` therefore stand; a measurement someone took by running
+the shell command in §4b/§4c/§4f by hand does not.
+
+Fixed: both launchers now exec the entrypoint and generate a run id when the
+caller has not supplied one. `tests/evolution/test_launch_scripts.py` pins it.
+
+**If you add a feature that hangs off instrumentation, check which launcher
+path the operator will actually use.** A flag that silently does nothing is
+worse than one that errors.
+
+### 3.12 A configured model can simply stop existing
+
+This is the trap that cost the most, because nothing failed loudly.
+
+`x-preview-f-free` (Ox Alpha) was the configured primary in both routing
+layers. On 2026-08-26 it was gone from OpenCode Zen: absent from `/models`, and
+answering `ModelError: Model x-preview-f-free is not supported`. Note that this
+arrives as **HTTP 401**, so it reads like a credential problem at a glance —
+the body is what distinguishes it, since a paid Zen model returns `AuthError:
+Missing API key` instead.
+
+Two NIM fallbacks turned out never to have existed at all:
+`deepseek-ai/deepseek-v4-pro` and `qwen/qwen2.5-coder-32b-instruct` are not in
+NVIDIA's catalogue, and NIM hosts no Qwen model. The "strong fallback" could
+not have served a single request.
+
+**What was missing was the converse of an existing check.** Two-stage discovery
+asked "is a listed model serveable?" and never asked "is a configured model
+still listed?". `Registry.reconcile()` now asks it on every discovery and
+disables what is no longer there. Listings are unauthenticated on both Zen and
+NIM, so this costs one GET and works before any key exists — run against the
+real endpoints it rediscovered all three findings above on its own.
+
+The general shape: **a model id written from memory is a claim that decays.**
+The catalogue (`configs/oe_max/providers.yaml`) therefore names patterns and
+materialises concrete ids from each provider's own listing.
+
+### 3.13 An exhausted free allowance is not a rate limit
+
+Both are HTTP 429, and Zen's free-limit body even says *"Rate limit exceeded.
+Please try again later."* Only the error **type** (`FreeUsageLimitError`)
+distinguishes them.
+
+Retrying cannot refill a pool, so treating them alike spent the entire retry
+budget collecting the same error four times before failing over.
+`Outcome.FREE_LIMIT_EXHAUSTED` is not retryable and parks the route for 15
+minutes (`RouteHealth.park`). It deliberately does **not** trip the circuit:
+the provider is up, our allowance is gone, and an outage cooldown would just
+re-probe into the same refusal.
+
+If you add health reporting, remember a parked route's breaker reads
+`closed, 0s remaining` — reporting that says the route is fine while it is
+being skipped.
+
 ---
 
 ## 4. Live measurements — what the providers actually do
 
-From a real 10-iteration run through the broker, 2026-08-26:
+From an 8-iteration run through the broker, 2026-08-26, after Ox Alpha was
+replaced:
 
 | Route | Requests | Success | Avg latency | Errors |
 |---|---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | 15 | **40%** | 220 s | 6 transport, 1 unavailable, 1 server, 1 truncated |
-| `nemotron-3-ultra-free` | 1 | **100%** | 112 s | none |
+| `nemotron-3-ultra-free` (primary) | 4 | **50%** | 62 s | 2 × `[502] Upstream error from Nvidia: Service temporarily overloaded` |
+| `mimo-v2.5-free` | 1 | 0% | 0.7 s | 1 × `free_limit_exhausted`, parked 900 s |
+
+The run itself succeeded: 7 programs, all four islands populated, and a new
+best at iteration 5 (combined_score 1.461, from 0.761 at iteration 1).
 
 Two things to take from this:
 
-1. **Ox Alpha is slow and unreliable under sustained load.** 40% success, 220s
-   average. It is still the operator's chosen primary and the spec's requirement,
-   and the retry/failover path is what makes it usable.
-2. **The failover chain works in production, not just in tests.** When Ox Alpha
-   degraded, the router moved to `nemotron-3-ultra-free`, which returned 100%
-   success at half the latency.
+1. **The free primary is flaky under sustained load.** 50% success and a 62 s
+   average, with the failures coming from the upstream Zen fronts rather than
+   from Zen itself. This is the normal condition for free routes, not an
+   incident, and it is why the retry/failover path exists.
+2. **The route that was withdrawn is the reason to distrust any table here.**
+   The previous version of this section reported Ox Alpha at 40% success over
+   15 requests. That model no longer exists. Treat every row as perishable and
+   re-probe rather than plan around it.
 
-That second point is the most interesting open question in the project — see
-next steps.
+### Free Zen models, probed live 2026-08-26
 
-### Free Zen models, probed live
+Keyless, with a tools probe on each.
 
-| model | serves | tools | latency |
-|---|---|---|---|
-| `x-preview-f-free` (Ox Alpha) | yes | yes | 1,969 ms |
-| `nemotron-3-ultra-free` | yes | yes | 829 ms |
-| `nemotron-3.5-lightning-free` | yes | yes | 1,271 ms |
-| `laguna-s-2.1-free` | yes | yes | 1,855 ms |
-| `hy3-free` | yes | yes | 2,444 ms |
-| `deepseek-v4-flash-free` | **no** | — | 400 "Model is unavailable" |
-| `mimo-v2.5-free` | **no** | — | 429 `FreeUsageLimitError` |
+| model | serves | tools | latency | reasoning tokens |
+|---|---|---|---|---|
+| `nemotron-3-ultra-free` | yes | yes | 3.3 s | 39 |
+| `hy3-free` | yes | yes | 2.1 s | 43 |
+| `laguna-s-2.1-free` | yes | yes | 1.6 s | **0** |
+| `nemotron-3.5-lightning-free` | yes | yes | 7.6 s | 64/64, truncated |
+| `x-preview-f-free` (Ox Alpha) | **no** | — | — | `ModelError: not supported` |
+| `deepseek-v4-flash-free` | **no** | — | — | 400 "Model is unavailable" |
+| `mimo-v2.5-free` | **no** | — | — | 429 `FreeUsageLimitError` |
+| `muse-spark-1.2-contributor-free` | **no** | — | — | 500 internal error |
 
-`anomalyco/opencode#44300` (Ox Alpha failing on `tools`) **is resolved** — tools
-requests now return 200.
-
-Be precise about what that did and did not require, because it is easy to
-overclaim: the **capability filter** self-corrects in both directions with no
-code change — if the bug returns, the next probe records `supports_tools=False`
-and Ox Alpha drops out of tool roles automatically. The **chain order** is a
-stated preference and does *not* self-correct; leading tool roles with Ox Alpha
-again was a deliberate edit once the evidence changed.
-
----
+The zero in that column is the whole argument for role-based routing. Ranking
+two candidates does not need hidden reasoning, and buying it costs latency and
+truncation risk — measured end to end through the broker, the judge route
+answers in 859 ms where the reasoner takes 8,158 ms.
 
 ## 4b. Operator-labelled mutations (opt-in)
 
@@ -284,14 +382,55 @@ Three things to know before changing it:
 - **It is off by default on purpose.** It changes what the model is asked, so
   turning it on globally would confound the stock-vs-MAX comparison and every
   measurement already recorded.
-- **The bandit is not driving it.** Selection is uniform random, seeded from
-  `(run_id, iteration)` so a rerun is comparable. The bandit exists and is
-  tested, but it learns from per-operator reward and there was none until this
-  existed. Measure first; then close the loop.
+- **The bandit can drive it now, and does not by default.** Selection is
+  uniform random, seeded from `(run_id, iteration)` so a rerun is comparable.
+  Setting `OE_MAX_OPERATOR_BANDIT=1` as well hands the choice to measured
+  reward instead (§4b-bandit below). Uniform remains the default because
+  whether the bandit *helps* is unmeasured, and because bandit selection makes
+  a run non-reproducible in a way seeding cannot fix.
 - **The evaluator's prompt is never steered.** Upstream builds a second
   `PromptSampler` for LLM feedback and marks it with `set_templates()`.
   Steering that one corrupts the *score* rather than the candidate, which is
   much harder to notice than a broken diff.
+
+## 4b-bandit. Letting reward pick the operator (opt-in, needs 4b)
+
+```bash
+OE_MAX_OPERATORS=1 OE_MAX_OPERATOR_BANDIT=1 \
+  ./scripts/run-evolution.sh --iterations 12
+```
+
+Discounted Thompson sampling over the operator taxonomy. Reward is
+`reward_from_outcome`: 0 for a rejected candidate, 0.25 for accepted-but-not-
+better, saturating toward 1 for an improvement — so an operator that mostly
+emits duplicates is penalised without needing a separate validity signal.
+
+**The structural problem, which is why this sat unwired for so long.** The two
+halves live in different processes: selection in a worker inside
+`PromptSampler.build_prompt`, reward in the main process inside
+`ProgramDatabase.add`. §3.7 covers worker→main; there is no in-memory channel
+main→worker at all. State therefore goes through a file
+(`oe_max/search/bandit_store.py`), single-writer with atomic replace, which is
+the same choice the rate limiter makes for its rolling window.
+
+Three details that are load-bearing:
+
+- **Per run, not global.** A bandit carrying evidence between runs would learn
+  across different tasks, seeds and providers, and would make the first
+  iteration of every run depend on whichever run preceded it.
+- **Migrants are excluded.** `_migrate_programs` copies metadata wholesale, so
+  a migrant carries the operator of the mutation that made the *original*.
+  Rewarding it again counts one mutation once per island it reaches — the same
+  trap that made two analysis modules measure the wrong population.
+- **A rejected candidate is a real outcome, not a missing one.** Recording only
+  accepted candidates would make an operator that produces nothing but
+  duplicates indistinguishable from one that is never tried.
+
+Verified on a real 5-iteration run: four operators pulled, rewards 0.25 to
+0.999, pull counts matching the telemetry's attributed operators exactly.
+
+**Whether it beats uniform random is unmeasured.** That is the ablation arm to
+run, and until it is run this stays off.
 
 ## 4c. Multi-offspring per request (opt-in)
 
@@ -411,8 +550,38 @@ EVOLUTION_EVALUATOR_PATH=examples/function_minimization/evaluator.py \
 OE_MAX_VERIFY_ENTRY_POINT=search_algorithm \
 OE_MAX_OPERATORS=1 OE_MAX_ISLAND_POLICIES=1 OE_MAX_MULTI_OFFSPRING=3 \
 OE_MAX_VERIFY=1 OE_MAX_SANDBOX_EVAL=1 OE_MAX_SEED_FORGE=3 \
+OE_MAX_OPERATOR_BANDIT=1 \
   ./scripts/run-evolution.sh --iterations 12
 ```
+
+Note this command did nothing at all before §3.11 was fixed — the script exec'd
+the plain upstream CLI, which installs no instrumentation, and every flag above
+is read by instrumentation.
+
+**Re-verified after the fix, 10 iterations, 2026-08-27** — and this time from
+the shell command itself rather than through the control plane:
+
+| | |
+|---|---|
+| events | 1,044 |
+| candidates | 34 |
+| operators labelled | 30, across 9 distinct classes |
+| island policies exercised | all four — exploit 9, explore 9, balanced 6, refine 6 |
+| multi-offspring siblings | 20 |
+| seed-forge descendants | 3, all carrying `forge_origin` |
+| verification events | 12 |
+| bandit pulls | 30, across 9 operators |
+
+The consistency worth checking is the last two rows against the third: **30
+labelled candidates, 30 bandit pulls.** Every labelled candidate produced
+exactly one reward — no double counting from migrants, no silent drops.
+
+Zero migrants is correct here rather than a missing flag: migration is keyed to
+island *generation*, and 10 iterations over 4 islands leaves each below
+`migration_interval: 6`. A longer run is the way to exercise that path.
+
+No new integration bugs surfaced. The three listed below were found by an
+earlier run of this command and remain fixed.
 
 Verified on a 12-iteration run: 14 candidates carrying an operator, three
 distinct island policies in use, 2 extra offspring, 5 forge-descended
@@ -482,7 +651,7 @@ A feature added to one is not in the other.
 
 ### What is actually established
 
-31 tests (`tests/brain`) and 26 acceptance gates
+34 tests (`tests/brain`) and 26 acceptance gates
 (`scripts/verify-brainport-acceptance.ps1`) pass. Every one of them runs against
 `NullBrainPort` or the stdio worker.
 
@@ -519,6 +688,78 @@ python scripts/legacy_deletion_gate.py
 
 ---
 
+## 4h. Project memory
+
+```bash
+./scripts/memory.sh                              # the digest
+./scripts/memory.sh note "..." --kind decision   # journal it
+./scripts/memory.sh search hy3
+```
+
+Also `GET /api/memory` and the Control Center's **Memory** view, all reading
+the same workspace so the terminal and the browser cannot disagree.
+
+**The line it draws is the point.** Run history, scores, checkpoints and
+resume commands are DERIVED at read time from the projections the event log
+already produced — nothing is cached into a summary table. That is the same
+rule the storage layer is built on: a second copy drifts from the first, and a
+drifted summary is worse than none because it is believed. Rebuild the
+projections and the digest changes with them.
+
+The `journal` table is the single exception, and it earns it: *why* a decision
+was made was never an event, so no amount of replay recovers it. `source`
+separates what a person asserted from what a program inferred, which is what
+keeps the journal trustworthy for the decisions it exists to hold.
+
+Two things this found, both silent:
+
+- **`runs.output_dir` was NULL for every run ever recorded.** The started
+  event carried it and the `EXPERIMENT_STARTED` upsert simply did not list the
+  column, so it was emitted, carried and dropped. It is the one field needed
+  to offer "resume this run" as a command. Fixed at the source; the digest
+  also derives it from the checkpoint path so history predating the fix is
+  still resumable.
+- **Shell-launched runs were absent from their own project's history.** The
+  collector only ingests while the Control Center is up, so a run started with
+  `run-evolution.sh` alone left its events in a file and nothing read them.
+  `control_plane/memory/importer.py` replays those logs, offset-tracked and
+  idempotent (`ingest` is INSERT OR IGNORE on a unique event id, so the offset
+  is an optimisation and not the correctness mechanism).
+
+## 4i. NVIDIA NIM, measured
+
+Verified with a real key, 2026-08-28. **Four of the nine ids taken from the
+public catalogue did not serve**, which makes NIM the second provider to prove
+that a listing is not a promise:
+
+| model | result |
+|---|---|
+| `nvidia/nemotron-3-super-120b-a12b` | **732 ms**, tools — fastest working route measured on any provider |
+| `nvidia/nemotron-3-ultra-550b-a55b` | 4.5 s, tools — flagship reasoner |
+| `nvidia/nemotron-3-nano-30b-a3b` | serves |
+| `moonshotai/kimi-k3` | 11.5 s, tools |
+| `deepseek-ai/deepseek-v4-flash-0731` | 51 s — strong, and slow enough to matter |
+| `openai/gpt-oss-120b` | **hangs** — 0 bytes after 190 s, and again after 230 s |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | **400** "DEGRADED function cannot be invoked" |
+| `mistralai/codestral-22b-instruct-v0.1` | **404** "Not found for account" — entitlement, which a listing cannot express |
+| `minimaxai/minimax-m3` | **429** on every attempt, including after a 45 s idle gap — an allowance, not a burst limit |
+
+**The finding worth remembering.** `nvidia/nemotron-nano-3-30b-a3b` returns 404
+"Model not found" while `nvidia/nemotron-3-nano-30b-a3b` serves. Two transposed
+words, **both present in the catalogue**, only one real. This project had the
+broken spelling configured. It is the cleanest argument yet for §3.12: do not
+write a model id from memory, and do not trust a listing without a smoke test.
+
+Two behaviours differ from the Zen routes and matter for tuning:
+
+- NIM returns hidden reasoning in a separate `reasoning_content` field rather
+  than spending the visible `max_tokens` budget on it. The truncation trap of
+  §3.2 is therefore much weaker here.
+- `nemotron-3-super-120b` at 732 ms beats every free Zen route by a wide
+  margin, so with a key the judge and fast roles have a genuinely better
+  option than `laguna`. It is placed behind the keyless routes anyway, because
+  the shipped configuration must work without a credential.
+
 ## 5. What to do next
 
 The queue with rationale lives in **[NEXT_TASKS.md](NEXT_TASKS.md)** — kept
@@ -538,15 +779,35 @@ Two things that are *built but not in the loop*, which is the trap this project
 keeps falling into and the first thing worth checking before building anything
 new:
 
-- **the operator bandit.** `search/bandit.py` is tested and is not what picks
-  operators; selection is uniform random until per-operator reward exists.
+- ~~**the operator bandit.**~~ **Closed.** `OE_MAX_OPERATOR_BANDIT=1` now
+  makes measured reward pick the operator. The reason it stayed open so long
+  is structural and worth understanding before wiring anything similar:
+  selection happens in a **worker** and reward is known in the **main**
+  process, and they share no memory. §3.7 covers worker→main
+  (`Program.metadata`); this needed the other direction, which had no channel
+  at all, so the state goes through a file —
+  `oe_max/search/bandit_store.py`, the same choice the rate limiter already
+  makes for its rolling window.
+
+  Verified on a real 5-iteration run: four operators pulled, rewards ranging
+  0.25 for no improvement to 0.999 for a large one, and the bandit's pull
+  counts matching the telemetry's attributed operators exactly.
+
+  **Whether it beats uniform is unmeasured.** It is off by default for that
+  reason, and it also makes a run non-reproducible in a way seeding cannot fix
+  — the choice depends on rewards from earlier iterations, so a rerun with the
+  same seed diverges the moment a score differs.
 - **nothing measures whether the forged population helps.** The seeding path
   exists (§4e); the ablation arm for it does not.
 
 ## 6. Blocked, and exactly how to unblock
 
-**NVIDIA NIM and OpenRouter are UNVERIFIED.** No `NVIDIA_API_KEY` or
-`OPENROUTER_API_KEY` was available. The adapters, the global rate limiter, the
+**NVIDIA NIM is now VERIFIED** — a key was supplied on 2026-08-28 and five of
+the nine configured models serve. See §4i.
+
+**OpenRouter and the 13 catalogue providers remain UNVERIFIED for inference.**
+Endpoint liveness is verified for all of them; no credential has ever been
+present, so not one inference call has been made. The adapters, the global rate limiter, the
 retry/circuit-breaker path and the routing logic are all implemented and tested
 offline against a scripted provider — but the HTTP round-trip to those two
 endpoints has never run.
@@ -559,9 +820,16 @@ cp .env.example .env      # add OPENROUTER_API_KEY and/or NVIDIA_API_KEY
 ./scripts/verify-providers.sh
 ```
 
-NIM's model list is deliberately **empty** in `registry.py` — it must be
-discovered live, never populated from remembered IDs. The spec is explicit and
-the `deepseek-v4-flash-free` finding shows why.
+NIM's model list used to be deliberately **empty** in `registry.py`, on the
+principle that ids must be discovered live rather than remembered. The
+principle is right; the empty table was the wrong way to honour it, because it
+meant no chain could name a NIM route and the provider was unreachable except
+by pinning a string nobody had verified.
+
+`reconcile()` is the better guarantee. The ids are now named — every one read
+out of NVIDIA's public catalogue — and any that stops appearing there is
+disabled by the next discovery. Config states the preference; the live listing
+remains the authority.
 
 **The container execution backend is unverified for the same shape of reason.**
 `docker` is on PATH here and its daemon is not reachable, so
@@ -627,7 +895,7 @@ you need the authoritative wording.
 
 ```
 branch     main
-tests      417 upstream + 295 control plane + 226 OE-MAX + 31 BrainPort = 969 passing
+tests      431 upstream + 389 control plane + 303 OE-MAX + 34 BrainPort = 1157 passing
            + 6 upstream failures that are Windows-only (see below)
 engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
            by tests/evolution/test_patch_surface.py
@@ -640,8 +908,8 @@ unverified NVIDIA NIM, OpenRouter — no credentials
 `openevolve/config.py:453` opening YAML with no `encoding=`, so Windows uses
 cp1252 and dies on a non-ASCII byte; one asserts a POSIX absolute path survives
 unchanged; one expects `ProcessLookupError`, which is POSIX `os.kill` semantics.
-All six pass on Linux, which is what `bootstrap.sh` targets and where the
-437-passing figure in earlier handoffs was measured. They are **not** fixable
+All six pass on Linux, which is what `bootstrap.sh` targets, what CI runs, and
+where the higher figure in earlier handoffs was measured. They are **not** fixable
 here — `openevolve/` is byte-identical and rule 1 says it stays that way. Full
 table in `TEST_STRATEGY.md`. Do not "fix" them by editing the engine, and do not
 skip them: a green suite hiding six failures is worse than an honest six.

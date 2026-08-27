@@ -35,7 +35,8 @@ class ProviderRole(str, Enum):
 
 class Outcome(str, Enum):
     OK = "ok"
-    RATE_LIMITED = "rate_limited"       # 429
+    RATE_LIMITED = "rate_limited"       # 429 — slow down and retry
+    FREE_LIMIT_EXHAUSTED = "free_limit_exhausted"   # 429, but the free pool is empty
     UNAVAILABLE = "unavailable"         # 503 / upstream down
     AUTH_FAILED = "auth_failed"         # 401 / 403
     BAD_REQUEST = "bad_request"         # 400 — often "model is unavailable"
@@ -52,6 +53,31 @@ RETRYABLE = frozenset({
     Outcome.RATE_LIMITED, Outcome.UNAVAILABLE, Outcome.TIMEOUT,
     Outcome.TRANSPORT_ERROR, Outcome.SERVER_ERROR, Outcome.TRUNCATED,
 })
+
+# A free allowance that is spent is NOT retryable, even though it arrives as a
+# 429 like an ordinary rate limit. Waiting a second and asking again cannot
+# refill a monthly pool, so retrying burns the whole retry budget to earn the
+# identical error four times and then fails over anyway — several seconds later
+# than it needed to. Measured live 2026-08-26: `mimo-v2.5-free` on OpenCode Zen
+# answers every request with 429 `FreeUsageLimitError` regardless of spacing.
+#
+# The route is parked instead (`RouteHealth.park`), so the chain skips it
+# entirely until the cooldown expires rather than rediscovering it each call.
+FREE_LIMIT_MARKERS = (
+    "freeusagelimit",       # OpenCode Zen
+    "insufficient_quota",   # OpenAI-shaped providers
+    "insufficient balance",
+    "quota exceeded",
+    "exceeded your current quota",
+    "free tier limit",
+    "out of credits",
+)
+
+
+def looks_like_free_limit(text: str) -> bool:
+    """Whether a 429 body says the allowance is gone rather than too fast."""
+    low = (text or "").lower()
+    return any(marker in low for marker in FREE_LIMIT_MARKERS)
 
 
 @dataclass
@@ -142,6 +168,7 @@ class ProviderAdapter:
         timeout_s: float = 120.0,
         enabled: bool = True,
         requires_key: bool = True,
+        public_listing: bool = False,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
@@ -150,6 +177,12 @@ class ProviderAdapter:
         self.models: Dict[str, ModelSpec] = models or {}
         self.enabled = enabled
         self.requires_key = requires_key
+        # Whether `GET /models` answers without a credential. Verified true for
+        # NVIDIA NIM on 2026-08-26 (83 models returned, no Authorization
+        # header), which is worth exploiting: it lets us tell an operator that
+        # a configured model no longer exists *before* they obtain a key, and
+        # it is how the NIM ids in the registry are checkable at all.
+        self.public_listing = public_listing
         # Generous default: Ox Alpha was observed taking 25s for a trivial
         # completion, so a typical 30s client timeout would fail healthy calls.
         self.timeout_s = timeout_s
@@ -270,7 +303,17 @@ class ProviderAdapter:
                               status_code=200, body=payload, attempt=attempt)
 
         outcome = _classify(r.status_code)
+        if outcome is Outcome.RATE_LIMITED and looks_like_free_limit(r.text):
+            # Distinguished here rather than in `_classify` because only the
+            # body can tell the two 429s apart, and confusing them is expensive
+            # in both directions: retrying an exhausted pool wastes the budget,
+            # and parking a genuine rate limit would drop a working route.
+            outcome = Outcome.FREE_LIMIT_EXHAUSTED
         if outcome in (Outcome.RATE_LIMITED, Outcome.UNAVAILABLE):
+            # Deliberately not penalising the limiter for an exhausted free
+            # pool: the limiter is shared across every model on the provider,
+            # and one model's spent allowance says nothing about how fast the
+            # others may be called.
             self.limiter.penalise(retry_after=retry_after)
         return ChatResult(outcome, self.name, model_id, latency,
                           status_code=r.status_code, error=r.text[:300].strip(),
@@ -281,7 +324,8 @@ class ProviderAdapter:
             "name": self.name, "base_url": self.base_url, "role": self.role.value,
             "enabled": self.enabled, "requires_key": self.requires_key,
             "api_key_env": self.api_key_env, "key_present": self.has_key,
-            "usable": self.usable(), "timeout_s": self.timeout_s,
+            "usable": self.usable(), "public_listing": self.public_listing,
+            "timeout_s": self.timeout_s,
             "models": {k: m.to_dict() for k, m in self.models.items()},
             "limiter": self.limiter.snapshot(),
         }

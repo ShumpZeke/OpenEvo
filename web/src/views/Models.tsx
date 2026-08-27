@@ -25,6 +25,8 @@ import {
 export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   const [busy, setBusy] = useState(false);
   const p = useAsync(() => api.providers(), [liveTick]);
+  // The broker is a different process and the one that actually routes.
+  const broker = useAsync(() => api.broker(), [liveTick]);
   const reqs = useAsync(
     () => (runId ? api.modelRequests(runId, { limit: 150 }) : Promise.resolve(null)),
     [runId, liveTick]);
@@ -53,8 +55,9 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   };
 
   return (
-    <div className="h-full grid grid-rows-[auto_auto_auto_1fr] gap-2 min-h-0
+    <div className="h-full grid grid-rows-[auto_auto_auto_auto_1fr] gap-2 min-h-0
                     overflow-y-auto">
+      <BrokerRoutes state={broker} />
       <Panel title="Model profiles" loading={p.loading && !p.data} error={p.error}
              actions={<Button size="xs" tone="primary" onClick={runDoctor} disabled={busy}>
                {busy ? "probing…" : "run provider doctor"}</Button>}
@@ -210,6 +213,135 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
  */
 const pct = (v: unknown): string =>
   typeof v === "number" ? `${(v * 100).toFixed(0)}%` : "—";
+
+/**
+ * Live routing state from the OE-MAX broker.
+ *
+ * The panels below this one describe the control plane's own routing table.
+ * The broker is a *different process*, on :8787, and it is the one that
+ * actually chooses a provider for every request. Showing only the control
+ * plane meant an operator could read a route as healthy here while the broker
+ * had its circuit open on it, or see nothing at all for a route the broker had
+ * parked because its free allowance was spent.
+ *
+ * When the broker is not running this says so. It deliberately renders no
+ * route table in that case: an operator acting on invented health is worse off
+ * than one told the truth that we cannot see.
+ */
+const BrokerRoutes: React.FC<{ state: any }> = ({ state }) => {
+  const data = state.data;
+  const reachable: boolean = data?.reachable === true;
+  const router: Json = data?.router ?? {};
+  const health: Record<string, Json> = router.health ?? {};
+  const excluded: Record<string, string> = router.excluded ?? {};
+  const eligible: string[] = router.eligible ?? [];
+  const stats: Record<string, Json> = data?.stats_by_route ?? {};
+
+  // Every route the broker knows about, whether or not it has served yet.
+  const keys = Array.from(new Set([...Object.keys(health), ...Object.keys(stats)]));
+
+  if (state.loading && !data) {
+    return <Panel title="Broker routes (live)" loading><span /></Panel>;
+  }
+  if (!reachable) {
+    return (
+      <Panel title="Broker routes (live)">
+        <div className="px-3 py-2 text-2xs text-ink-faint">
+          The OE-MAX broker is not reachable at{" "}
+          <Mono className="text-ink-dim">{data?.base ?? "127.0.0.1:8787"}</Mono>.
+          Start it with <Mono className="text-ink-dim">./scripts/start-broker.sh</Mono>.
+          {data?.detail ? <> <span className="text-ink-faint">({data.detail})</span></> : null}
+          <div className="mt-1">
+            No route health is shown because none is known — this panel will not
+            guess at one.
+          </div>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      title="Broker routes (live)"
+      empty={keys.length === 0}
+      emptyLabel="The broker is running but has not routed a request yet."
+      footer={
+        <span>
+          The chain the broker will actually try, in order:{" "}
+          <Mono className="text-ink-dim">
+            {(router.chain ?? []).slice(0, 6).join("  →  ")}
+            {(router.chain ?? []).length > 6
+              ? `  → +${(router.chain ?? []).length - 6} more` : ""}
+          </Mono>
+        </span>
+      }
+    >
+      <Table>
+        <thead>
+          <tr><Th>Route</Th><Th>State</Th><Th>Success</Th><Th>Attempts</Th>
+              <Th>p50 latency</Th><Th>Tokens</Th><Th>Last error</Th></tr>
+        </thead>
+        <tbody>
+          {keys.map((k) => {
+            const h: Json = (health[k]?.health ?? {}) as Json;
+            const circuit: Json = (health[k]?.circuit ?? {}) as Json;
+            const parked: Json | null = (health[k]?.parked ?? null) as Json | null;
+            const st: Json = (stats[k] ?? {}) as Json;
+            const serving = eligible.includes(k);
+
+            // Parking outranks the circuit in the display for the same reason
+            // it does in the router's own reporting: a parked route's breaker
+            // reads "closed", which says the route is fine while it is being
+            // skipped.
+            const badge = parked
+              ? <Badge tone="warn" title={String(parked.reason)}>
+                  parked {Math.round(Number(parked.remaining_s ?? 0))}s
+                </Badge>
+              : circuit.state === "open"
+              ? <Badge tone="err" title="Circuit open — the provider is failing">
+                  circuit open
+                </Badge>
+              : circuit.state === "half_open"
+              ? <Badge tone="warn">probing</Badge>
+              : serving
+              ? <Badge tone="ok">serving</Badge>
+              : <Badge tone="stopped" title={excluded[k] ?? "not in the eligible set"}>
+                  standby
+                </Badge>;
+
+            return (
+              <Row key={k}>
+                <Td><Mono className="text-ink">{k}</Mono></Td>
+                <Td>{badge}</Td>
+                <Td className="tabular">{pct(h.success_rate)}</Td>
+                <Td className="tabular">{fmtNum(h.total_attempts ?? st.requests)}</Td>
+                <Td className="tabular">{fmtMs(h.p50_latency_ms)}</Td>
+                <Td className="tabular">{fmtNum(h.total_tokens ?? st.tokens)}</Td>
+                <Td className="text-ink-faint max-w-[26rem] truncate"
+                    title={String(h.last_error ?? "")}>
+                  {h.last_error ? String(h.last_error) : "—"}
+                </Td>
+              </Row>
+            );
+          })}
+        </tbody>
+      </Table>
+
+      {Object.keys(excluded).length > 0 && (
+        <div className="px-3 py-2 border-t border-line">
+          <div className="text-2xs uppercase tracking-wide text-ink-faint mb-1">
+            Excluded from the chain, and why
+          </div>
+          {Object.entries(excluded).map(([k, why]) => (
+            <div key={k} className="text-2xs text-ink-faint">
+              <Mono className="text-ink-dim">{k}</Mono>{" — "}{why}
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+};
 
 const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, runId }) => {
   const data = state.data;

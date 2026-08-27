@@ -108,6 +108,18 @@ export const api = {
     req<{ runs: Json[] }>(`/api/query/compare${qs({ run_ids: runIds.join(",") })}`),
 
   providers: () => req<Json>("/api/providers"),
+  // The broker is a separate process and the one that actually routes;
+  // this reports "not reachable" rather than an invented table when it is down.
+  broker: () => req<Json>("/api/broker"),
+  // Project memory: derived history plus the stored journal.
+  memory: () => req<Json>("/api/memory"),
+  journal: (p: Json = {}) => req<Json>(`/api/memory/journal${qs(p)}`),
+  addJournalEntry: (body: Json) =>
+    req<Json>("/api/memory/journal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   runDoctor: (probeTools = true) =>
     req<Json>(`/api/providers/doctor${qs({ probe_tools: probeTools })}`, { method: "POST" }),
   forceRoute: (role: string, profile_id: string) =>

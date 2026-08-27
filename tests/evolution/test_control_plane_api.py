@@ -68,8 +68,24 @@ def test_query_endpoints_return_empty_not_fabricated(client):
 def test_providers_endpoint_exposes_routes_and_health(client):
     body = client.get("/api/providers").json()
     assert body["profiles"] and body["routes"]
+    primary = next(p for p in body["profiles"]
+                   if p["id"] == "zen-nemotron-3-ultra-free")
+    assert primary["free_status"] == "free_limited_time"
+
+
+def test_a_withdrawn_route_is_still_explained_rather_than_hidden(client):
+    """
+    Ox Alpha was withdrawn from Zen (probed 2026-08-26). Its profile is kept
+    and disabled instead of deleted, so the operator who chose it can see what
+    happened to it. A route that simply vanishes from the UI reads as a bug in
+    this project rather than as a change at the provider.
+    """
+    body = client.get("/api/providers").json()
     ox = next(p for p in body["profiles"] if p["id"] == "zen-ox-alpha-free")
-    assert ox["free_status"] == "free_limited_time"
+    assert ox["enabled"] is False
+    assert "withdrawn" in ox["notes"].lower()
+    # And it must not still be advertised as a free tier that works.
+    assert ox["free_status"] == "unknown"
 
 
 def test_classic_visualizer_is_reachable(client):
@@ -172,3 +188,54 @@ def test_a_candidate_nobody_verified_reports_an_empty_list(client):
     state = client.app.state.evolution
     _candidate_with_request(state)
     assert client.get("/api/query/runs/r1/candidates/c1").json()["verification"] == []
+
+
+# --------------------------------------------------------------------------
+# The broker is a different process, and it is the one that actually routes.
+# --------------------------------------------------------------------------
+
+
+def test_broker_status_is_honest_when_the_broker_is_not_running(client, monkeypatch):
+    """
+    The rule that matters here is the no-fabricated-data rule.
+
+    An operator reading an invented route table would make worse decisions than
+    one told plainly that we cannot see the broker. So an unreachable broker
+    must yield `reachable: false` and a null router — never an empty-but-
+    plausible table, which reads as "all routes healthy, nothing has happened
+    yet".
+    """
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")   # discard port
+    body = client.get("/api/broker").json()
+
+    assert body["reachable"] is False
+    assert body["router"] is None
+    assert body["registry"] is None
+    assert body["detail"], "an unreachable broker must say why"
+    assert "127.0.0.1:9" in body["base"]
+
+
+def test_broker_status_does_not_raise_when_the_broker_is_absent(client, monkeypatch):
+    """
+    A missing broker is the normal state before `start-broker.sh` runs. The
+    Control Center must still load — a 500 here would take the whole Models
+    view down for a condition that is expected.
+    """
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")
+    assert client.get("/api/broker").status_code == 200
+
+
+def test_system_reports_gpu_presence_honestly(client):
+    """
+    A host with no accelerator is the normal case, not a fault, and must be
+    distinguishable from one where sampling failed. Neither may be rendered as
+    0% utilised — a number nothing measured.
+    """
+    body = client.get("/api/system").json()
+
+    assert "gpu" in body, "the system view says nothing about the accelerator"
+    assert isinstance(body["gpu"]["available"], bool)
+    if not body["gpu"]["available"]:
+        assert body["gpu"]["reason"], "absence must explain itself"
+        assert body["gpu"]["gpus"] == []
+        assert body["gpu"]["count"] == 0

@@ -5,11 +5,14 @@ New code must use BrainPort. See oe_max/brain/README.md.
 
 Route selection and failover.
 
-Routing is a chain, not a single choice: Ox Alpha first (the operator's stated
-primary), then the alternate Ox route, then the strongest verified fallback.
+Routing is a chain, not a single choice, and there is one chain per *role*
+rather than one for everything — see `oe_max/roles.py` for why the free routes
+differ in kind and not merely in quality.
+
 The chain is data, so replacing a stealth-preview model is a config edit rather
-than a code change — which the spec requires precisely because Ox Alpha may
-vanish.
+than a code change. That provision was not theoretical: Ox Alpha, the
+operator's stated primary and the head of every chain here, was withdrawn from
+OpenCode Zen and probed gone on 2026-08-26. Replacing it was a table edit.
 
 Selection filters, then orders:
 
@@ -33,6 +36,7 @@ import httpx
 from .health import RetryPolicy, RouteHealth
 from .providers.base import ChatResult, Outcome, RETRYABLE, ProviderAdapter
 from .providers.registry import Registry
+from .roles import Role, build_chains
 
 
 @dataclass
@@ -45,16 +49,29 @@ class Route:
         return f"{self.provider}/{self.model_id}"
 
 
-# Default chain. Ox Alpha through Zen leads; OpenRouter is the alternate Ox
-# route; NIM is the specialist/fallback pool. Free Zen routes sit between so a
-# NIM key is not required for the system to keep working.
+# Default chain — the role-agnostic order, used when no role is named and as
+# the shared tail of every role chain.
+#
+# Ox Alpha led this list until 2026-08-26, when it stopped existing. What
+# replaced it is ordered by measurement: the verified-keyless Zen routes first
+# so the system works with no credentials at all, then the key-gated NIM pool,
+# which is stronger on paper and unverified here. `usable()` drops the NIM
+# entries automatically when NVIDIA_API_KEY is absent, so this one list serves
+# both the credentialled and the keyless install.
 DEFAULT_CHAIN: List[Tuple[str, str]] = [
-    ("opencode_zen", "ox_alpha"),
-    ("openrouter", "ox_alpha"),
     ("opencode_zen", "nemotron_ultra"),
-    ("opencode_zen", "nemotron_lightning"),
-    ("opencode_zen", "laguna"),
     ("opencode_zen", "hy3"),
+    ("opencode_zen", "laguna"),
+    ("opencode_zen", "nemotron_lightning"),
+    # NIM, ordered by measured latency 2026-08-28. Four ids that were in the
+    # catalogue are absent here because probing them with a real key found
+    # them unserveable — see the registry for what each one did.
+    ("nvidia_nim", "nemotron_super_120b"),
+    ("nvidia_nim", "nemotron_ultra_253b"),
+    ("nvidia_nim", "nemotron_nano_30b"),
+    ("nvidia_nim", "kimi_k3"),
+    ("nvidia_nim", "deepseek_v4_flash"),
+    ("openrouter", "ox_alpha"),
 ]
 
 
@@ -73,22 +90,65 @@ class Router:
         chain: Optional[List[Tuple[str, str]]] = None,
         retry: Optional[RetryPolicy] = None,
         health: Optional[RouteHealth] = None,
+        chains: Optional[Dict[Role, List[Tuple[str, str]]]] = None,
     ) -> None:
         self.registry = registry
         self.chain = list(chain if chain is not None else DEFAULT_CHAIN)
+        # Role chains are derived from the role-agnostic chain by default, so a
+        # caller that customises `chain` gets consistent role behaviour for
+        # free instead of silently keeping the shipped preferences.
+        self.chains: Dict[Role, List[Tuple[str, str]]] = (
+            chains if chains is not None else build_chains(self.chain)
+        )
         self.retry = retry or RetryPolicy()
         self.health = health or RouteHealth()
         self.request_log: List[Dict[str, Any]] = []
         self.max_log = 2000
 
+    def registry_routes(self) -> List[Tuple[str, str]]:
+        """
+        Every (provider, model_key) the registry currently knows, in a stable
+        order: providers in registration order, models by descending priority.
+        """
+        out: List[Tuple[str, str]] = []
+        for name, provider in self.registry.providers.items():
+            for key, spec in sorted(
+                provider.models.items(), key=lambda kv: -kv[1].priority
+            ):
+                out.append((name, key))
+        return out
+
+    def refresh_chains(self) -> Dict[str, int]:
+        """
+        Rebuild the role chains to include routes discovered since startup.
+
+        Catalogue providers have no models until a listing is fetched, so a
+        chain built at construction cannot contain them. Without this, adding
+        GROQ_API_KEY would produce a provider that discovers models, reports
+        them healthy, and is never routed to — the most confusing possible
+        outcome, because everything looks configured and nothing uses it.
+
+        The configured chain still leads. Discovered routes join the tail, so
+        a new provider is a fallback until someone deliberately promotes it,
+        rather than silently displacing a route that has been measured.
+        """
+        known = set(self.chain)
+        tail = [r for r in self.registry_routes() if r not in known]
+        self.chain = list(self.chain) + tail
+        self.chains = build_chains(self.chain)
+        return {role.value: len(chain) for role, chain in self.chains.items()}
+
     # -- selection -----------------------------------------------------
 
-    def candidates(self, require_tools: bool = False) -> Tuple[List[Route], Dict[str, str]]:
+    def candidates(
+        self, require_tools: bool = False, role: Optional[Role] = None,
+    ) -> Tuple[List[Route], Dict[str, str]]:
         routes: List[Route] = []
         reasons: Dict[str, str] = {}
         degraded: List[Tuple[Route, str, str]] = []
 
-        for provider_name, model_key in self.chain:
+        chain = self.chains.get(role, self.chain) if role is not None else self.chain
+        for provider_name, model_key in chain:
             p = self.registry.provider(provider_name)
             label = f"{provider_name}/{model_key}"
             if p is None:
@@ -111,10 +171,18 @@ class Router:
                 reasons[label] = "probed as not supporting tool calls"
                 continue
             if not self.health.allow(p.name, spec.id):
-                br = self.health.breaker(p.name, spec.id).to_dict()
-                reasons[label] = (
-                    f"circuit {br['state']}, {br['cooldown_remaining_s']}s remaining"
-                )
+                # Parking and the breaker both close a route, and reporting the
+                # wrong one sends an operator to debug the wrong thing: a
+                # parked route's breaker reads "closed, 0s remaining", which
+                # says the route is fine while it is being skipped.
+                parked = self.health.parked(p.name, spec.id)
+                if parked:
+                    reasons[label] = parked
+                else:
+                    br = self.health.breaker(p.name, spec.id).to_dict()
+                    reasons[label] = (
+                        f"circuit {br['state']}, {br['cooldown_remaining_s']}s remaining"
+                    )
                 continue
             route = Route(p.name, model_key, spec.id)
             why = self.health.degraded(p.name, spec.id)
@@ -149,6 +217,7 @@ class Router:
         messages: List[Dict[str, Any]],
         *,
         require_tools: bool = False,
+        role: Optional[Role] = None,
         **params: Any,
     ) -> ChatResult:
         """
@@ -158,7 +227,7 @@ class Router:
         NIM contract holds across the whole failover path rather than only the
         first try.
         """
-        routes, reasons = self.candidates(require_tools=require_tools)
+        routes, reasons = self.candidates(require_tools=require_tools, role=role)
         if not routes:
             raise NoRouteAvailable(reasons)
 
@@ -217,36 +286,64 @@ class Router:
             )
         attempt_params = dict(params)
         result: Optional[ChatResult] = None
+        started = time.monotonic()
 
         for attempt in range(1, self.retry.max_attempts + 1):
             result = await provider.chat(
                 client, route.model_id, messages, attempt=attempt, **attempt_params
             )
             self.health.record(result)
-            self._log(result, route)
 
             if result.ok:
+                self._log(result, route)
                 return result
 
-            if result.outcome not in RETRYABLE:
-                break   # 400/401 will not improve by retrying this route
+            # Decided before logging, because the log entry is a snapshot: a
+            # reason attached afterwards never reaches it, and the reason is
+            # the whole value here. "Gave up after 4 attempts" and "gave up
+            # after 4 minutes" point at different fixes.
+            retryable = result.outcome in RETRYABLE
+            give_up: Optional[str] = None
+            grown: Optional[Dict[str, Any]] = None
+
+            if retryable:
+                if result.outcome is Outcome.TRUNCATED:
+                    # Retrying a truncation with the same budget reproduces it
+                    # exactly. Reasoning models spend part of the completion
+                    # budget invisibly — Ox Alpha was measured burning 961 of
+                    # 1598 completion tokens on reasoning — so the fix is a
+                    # bigger budget, not another identical call.
+                    grown = _grow_token_budget(attempt_params)
+                    if grown is None:
+                        give_up = "token budget already at the ceiling"
+                if give_up is None:
+                    # A doubled budget on a slow route is the most expensive
+                    # retry there is, so escalation is bounded by the same
+                    # wall-clock budget as everything else.
+                    give_up = self.retry.exhausted(
+                        attempt, time.monotonic() - started)
+            else:
+                # 400/401 and an exhausted free allowance. Deliberately NOT
+                # annotated: these errors already say why they will not
+                # improve, and "Model is unavailable [not retryable]" is noise
+                # on a message that was already clear.
+                give_up = ""
+
+            if give_up:
+                result.error = f"{result.error or ''} [{give_up}]".strip()
+
+            self._log(result, route)
+
+            if give_up or not retryable:
+                break
 
             if result.outcome is Outcome.TRUNCATED:
-                # Retrying a truncation with the same budget reproduces it
-                # exactly. Reasoning models spend part of the completion
-                # budget invisibly — Ox Alpha was measured burning 961 of
-                # 1598 completion tokens on reasoning — so the fix is a
-                # bigger budget, not another identical call.
-                grown = _grow_token_budget(attempt_params)
-                if grown is None:
-                    break   # already at the ceiling; give up on this route
-                attempt_params = grown
+                attempt_params = grown or attempt_params
                 continue    # escalate immediately, no backoff needed
 
-            if attempt < self.retry.max_attempts:
-                await asyncio.sleep(
-                    self.retry.delay_for(attempt, result.retry_after)
-                )
+            await asyncio.sleep(
+                self.retry.delay_for(attempt, result.retry_after)
+            )
 
         return result or ChatResult(
             Outcome.SERVER_ERROR, route.provider, route.model_id, 0.0,
@@ -265,8 +362,22 @@ class Router:
     def snapshot(self) -> Dict[str, Any]:
         routes, reasons = self.candidates()
         tool_routes, tool_reasons = self.candidates(require_tools=True)
+        # Per-role: which route each role would actually reach right now.
+        # The chain is the intent; this is the outcome, and they differ exactly
+        # when something is unhealthy — which is when an operator looks.
+        by_role: Dict[str, Any] = {}
+        for role in Role:
+            role_routes, role_reasons = self.candidates(role=role)
+            by_role[role.value] = {
+                "chain": [f"{p}/{m}" for p, m in self.chains.get(role, [])],
+                "serving": str(role_routes[0]) if role_routes else None,
+                "eligible": [str(r) for r in role_routes],
+                "excluded": role_reasons,
+            }
+
         return {
             "chain": [f"{p}/{m}" for p, m in self.chain],
+            "roles": by_role,
             "eligible": [str(r) for r in routes],
             "eligible_with_tools": [str(r) for r in tool_routes],
             "excluded": reasons,

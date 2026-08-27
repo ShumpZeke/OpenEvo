@@ -8,10 +8,10 @@ is the kind of thing that gets quoted back later as if it were universal.
 
 | Suite | Command | Result |
 |---|---|---|
-| Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/{evolution,oe_max,brain}` | **417 passed**, 6 failed (all Windows-only, see below), 14 skipped, 43 subtests, 17 slow deselected |
-| Control plane | `pytest tests/evolution` | **295 passed**, 10 skipped |
-| OE-MAX | `pytest tests/oe_max` | **226 passed**, 24 skipped |
-| BrainPort | `pytest tests/brain` | **31 passed** |
+| Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/{evolution,oe_max,brain}` | **431 passed**, 6 failed (all Windows-only, see below), 43 subtests, 17 slow deselected |
+| Control plane | `pytest tests/evolution` | **389 passed**, 10 skipped |
+| OE-MAX | `pytest tests/oe_max` | **303 passed**, 24 skipped |
+| BrainPort | `pytest tests/brain` | **34 passed** |
 | Web typecheck | `npm run typecheck` | clean |
 | Web build | `npm run build` | 254 KB (75 KB gzipped) |
 | Live UI | Chromium via Playwright, all 19 views | **0 JavaScript errors** |
@@ -34,7 +34,7 @@ green suite that quietly hides six failures is worse than an honest six.
 | `test_template_dir_resolution::test_absolute_template_dir_unchanged` | asserts a POSIX absolute path survives unchanged; Windows resolves `/abs/path` to `C:\abs\path` |
 | `test_process_parallel::test_controller_stop_terminates_running_workers` | expects `ProcessLookupError`, which is POSIX `os.kill` semantics |
 
-All six pass on Linux, which is where the 437-passing figure in earlier
+All six pass on Linux, which is where the higher figure in earlier
 handoffs was measured and what `bootstrap.sh` targets. Anything CI gates on
 should run there. If you want them green on Windows, the fix belongs upstream
 (pass `encoding="utf-8"`), not in this fork.
@@ -125,9 +125,16 @@ Stated rather than implied:
   exist to test ([SANDBOX.md](SANDBOX.md)).
 - **Oh My OpenAgent integration.** Detection is tested for absence; no OMO
   install was available to test presence.
-- **Windows.** The `.ps1` scripts mirror the shell scripts and the code paths
-  avoid POSIX-only assumptions (control file rather than `SIGUSR1`, TCP rather
-  than AF_UNIX), but they have not been executed on Windows.
+- **Windows.** No longer wholly unverified. Every `.ps1` script is parsed and
+  gated by `tests/evolution/test_powershell_scripts.py` (16 tests), which also
+  refuses a hardcoded `.venv\Scripts\python.exe` in favour of the shared
+  resolver in `scripts/_common.ps1`, so the surface works under WSL and macOS
+  too. `bootstrap.ps1`, `test.ps1` and
+  `scripts/verify-brainport-acceptance.ps1` have been executed on Windows 11.
+  The *operator* scripts that need a running broker — `start-broker.ps1`,
+  `run-evolution.ps1`, `resume-evolution.ps1`, `ablation.ps1` — are parsed and
+  argument-checked but have not been driven end-to-end against a live provider
+  on Windows.
 - **Load at target scale.** Designed for tens of thousands of candidates with
   server-side pagination, downsampling and canvas rendering; verified runs were
   tens of candidates, not tens of thousands.

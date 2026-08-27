@@ -10,8 +10,16 @@ checkpoint_interval: 6
 random_seed: 42
 
 llm:
-  # `oe-max-primary` is the broker alias. It resolves through the route chain:
-  # Ox Alpha (Zen) → Ox Alpha (OpenRouter) → verified free Zen fallbacks → NIM.
+  # `oe-max-primary` is the broker alias for the REASONER role. It resolves
+  # through that role's chain: nemotron-3-ultra-free (Zen, verified serving
+  # keyless) → NIM's flagship reasoners when a key is present → the other free
+  # Zen routes → everything else discovered.
+  #
+  # The alias used to resolve to Ox Alpha, which was withdrawn from Zen on or
+  # before 2026-08-26. It stays pointed at the reasoner role so existing runs
+  # keep doing what they did and remain comparable with measurements already
+  # recorded. Other roles are addressable as `oe-max-coder`, `oe-max-judge`
+  # and `oe-max-fast`.
   primary_model: "oe-max-primary"
   primary_model_weight: 1.0
   api_base: "http://127.0.0.1:8787/v1"
@@ -19,10 +27,13 @@ llm:
   # the broker process.
   api_key: "oe-max-local"
   temperature: 0.8
-  # Measured, not guessed: Ox Alpha is a reasoning model and was observed
-  # spending 7,986-7,997 of an 8,000-token budget on hidden reasoning, leaving
-  # nothing for the visible diff. Five of eight iterations produced "No valid
-  # diffs found" as a result — ~130-second requests yielding nothing.
+  # Measured, not guessed. Ox Alpha, the previous primary, spent 7,986-7,997
+  # of an 8,000-token budget on hidden reasoning and left nothing for the
+  # visible diff — five of eight iterations produced "No valid diffs found"
+  # from ~130-second requests. The replacement reasons too: nemotron-3-ultra-
+  # free spent 39 completion tokens thinking about a two-word answer, and
+  # nemotron-3.5-lightning-free truncated at 64/64 tokens all spent reasoning.
+  # The budget therefore still has to cover reasoning plus output.
   # 16,000 leaves ~8,000 for visible output after reasoning. A much
   # larger budget mainly buys latency: OpenEvolve's own client timeout
   # then fires before the response lands, which was observed at 32,000. The broker also
@@ -30,6 +41,27 @@ llm:
   # a sensible default rather than a load-bearing constant.
   max_tokens: 16000
   timeout: 900
+
+  # LLM-as-judge goes to a different route than mutation generation.
+  #
+  # Upstream already separates these — `evaluator_models` defaults to a copy of
+  # `models` — so this needs no engine change, only a name. And the name is the
+  # whole point: `oe-max-judge` resolves to a chain led by laguna-s-2.1-free,
+  # measured at 859ms with ZERO reasoning tokens, where the reasoner alias took
+  # 8,158ms and spent 39 thinking about a two-word answer.
+  #
+  # Ranking two candidates does not need hidden reasoning. Paying for it here
+  # buys latency and truncation risk and nothing else, and truncation in the
+  # judge is the expensive kind of failure: it corrupts the *score* rather than
+  # the candidate, which is far harder to notice than a broken diff.
+  #
+  # This is wired but not switched on: `evaluator.use_llm_feedback` is false
+  # below, as upstream ships it. Turning it on changes what evolution optimises
+  # and would confound every measurement already recorded, so it is a
+  # deliberate choice and not a default.
+  evaluator_models:
+    - name: "oe-max-judge"
+      weight: 1.0
 
 prompt:
   system_message: |
@@ -50,6 +82,9 @@ database:
 evaluator:
   timeout: 90
   parallel_evaluations: 2
+  # Off, as upstream ships it. Set true to enable LLM-as-judge scoring, which
+  # then routes through `oe-max-judge` per the evaluator_models block above.
+  use_llm_feedback: false
 
 diff_based_evolution: true
 max_code_length: 24000

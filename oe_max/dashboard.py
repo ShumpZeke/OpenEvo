@@ -122,10 +122,22 @@ def render(broker_url: str, control_url: Optional[str], run_id: Optional[str]) -
     )
 
     # --------------------------------------------------------- providers
+    #
+    # Only usable providers get a line each. The catalogue ships fifteen more,
+    # all key-gated, and printing fourteen identical "no key" rows pushed the
+    # routes and the rate window off a short terminal — the dashboard filled up
+    # with the providers doing nothing at the expense of the ones working.
+    # They are summarised on one line instead, still named, so an operator can
+    # see what a key would buy without losing the live state to it.
     out.append(_rule("PROVIDERS"))
-    for name, p in (health.get("providers") or {}).items():
+    providers = (health.get("providers") or {})
+    dormant = []
+    for name, p in providers.items():
+        if not p.get("usable"):
+            dormant.append((name, p.get("api_key_env") or "?"))
+            continue
         lim = p.get("limiter") or {}
-        state = f"{GREEN}usable{RESET}" if p.get("usable") else f"{GREY}unusable{RESET}"
+        state = f"{GREEN}usable{RESET}"
         key = "key" if p.get("key_present") else (
             f"{GREY}no key{RESET}" if p.get("requires_key") else f"{GREY}keyless{RESET}")
         line = f"  {name:<15} {state:<20} {key:<18} {DIM}{p.get('role','')}{RESET}"
@@ -148,6 +160,14 @@ def render(broker_url: str, control_url: Optional[str], run_id: Optional[str]) -
                            f"  waited {st.get('waited', 0)}×"
                            f"  max wait {st.get('max_wait_s', 0):.1f}s{RESET}")
 
+    if dormant:
+        names = ", ".join(n for n, _ in dormant[:8])
+        more = f" +{len(dormant) - 8} more" if len(dormant) > 8 else ""
+        out.append(f"  {GREY}{len(dormant)} configured, no credential: "
+                   f"{names}{more}{RESET}")
+        out.append(f"    {DIM}set the matching *_API_KEY to enable; each is "
+                   f"inert until then{RESET}")
+
     # ------------------------------------------------------------ routes
     out.append(_rule("ROUTES"))
     eligible = health.get("routes") or []
@@ -159,6 +179,20 @@ def render(broker_url: str, control_url: Optional[str], run_id: Optional[str]) -
         excluded = (status.get("router") or {}).get("excluded") or {}
         for label, why in list(excluded.items())[:6]:
             out.append(f"  {GREY}○ {label} — {why[:70]}{RESET}")
+
+    # ------------------------------------------------------------- roles
+    roles = ((status or {}).get("router") or {}).get("roles") or {}
+    if roles:
+        out.append(_rule("ROLES"))
+        for role, info in roles.items():
+            serving = info.get("serving")
+            if serving:
+                out.append(f"  {GREEN}●{RESET} {role:<10} {serving}")
+            else:
+                # Not a cosmetic case: a role with nothing serving means those
+                # requests will 503 while other roles keep working, which is
+                # invisible in an aggregate route table.
+                out.append(f"  {RED}○ {role:<10} nothing serving{RESET}")
 
     # ------------------------------------------------------- route stats
     stats = (status or {}).get("stats_by_route") or {}
