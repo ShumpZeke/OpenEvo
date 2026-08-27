@@ -185,7 +185,10 @@ def describe_backends() -> List[Dict[str, Any]]:
     indistinguishable from a broken control, and the operator cannot tell
     whether to install something or file a bug.
     """
-    import resource  # noqa: F401  (import proves the module exists on this platform)
+    try:
+        import resource  # noqa: F401  (import proves the module exists on this platform)
+    except ImportError:
+        pass
 
     have_rlimits = hasattr(os, "setsid") and os.name == "posix"
     runtime = container_runtime()

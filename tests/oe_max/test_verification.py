@@ -58,11 +58,15 @@ def search_algorithm(iterations=1000, bounds=(-5, 5)):
     return float("nan"), float("nan"), float("-inf")
 '''
 
+# Draws from OS entropy rather than the seed the verifier pins, which is the
+# realistic shape of this cheat: a candidate that reaches for its own RNG.
+# Its non-determinism must not come from the wall clock -- time_ns() advances
+# in coarse ticks on Windows and reads identical across two back-to-back
+# calls, so a clock-seeded cheat looks perfectly reproducible and passes.
 NON_DETERMINISTIC = OBJECTIVE + '''
-import time
 def search_algorithm(iterations=1000, bounds=(-5, 5)):
     import numpy as np
-    rng = np.random.RandomState(int(time.time_ns() % 100000))
+    rng = np.random.RandomState()
     x, y = rng.uniform(*bounds), rng.uniform(*bounds)
     return x, y, evaluate_function(x, y)
 '''

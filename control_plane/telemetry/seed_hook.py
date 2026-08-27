@@ -37,6 +37,47 @@ ENV_EVALUATOR = "EVOLUTION_EVALUATOR_PATH"
 # made a single request, which is the opposite of the point.
 MAX_VARIANTS = 16
 
+# The evaluator's own contract, matching what `sandbox_eval` grants a candidate.
+_SUBPROCESS_TIMEOUT_S = 120.0
+
+# Used only when no sandbox backend exists. It mirrors the sandbox script
+# deliberately: same module loading, the same flattening of the two shapes an
+# evaluator may return, and the same result-through-a-file channel. Divergence
+# here would mean a variant scores differently depending on the host it ran on.
+_SUBPROCESS_SCRIPT = """
+import importlib.util, json, os, sys
+
+_eval_file = {eval_file}
+_program = {program}
+_out = {out}
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(_eval_file)))
+
+_spec = importlib.util.spec_from_file_location("evaluation_module", _eval_file)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+
+_result = _module.evaluate(_program)
+
+# EvaluationResult carries metrics plus artifacts; a plain dict is metrics
+# only. Both shapes are flattened so the parent has one thing to parse.
+_metrics = getattr(_result, "metrics", None)
+if _metrics is None and isinstance(_result, dict):
+    _metrics = _result
+
+
+def _plain(value):
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+with open(_out, "w", encoding="utf-8") as _fh:
+    json.dump({{"metrics": {{k: _plain(v) for k, v in (_metrics or {{}}).items()}}}}, _fh)
+"""
+
 
 def requested() -> int:
     try:
@@ -140,21 +181,93 @@ class SeedForgeHook:
         that might have.
         """
         from control_plane.telemetry import sandbox_eval
+        from oe_max.execution import available_backends
 
         with tempfile.TemporaryDirectory(prefix="oe-max-seed-") as tmp:
             path = os.path.join(tmp, "variant.py")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(code)
-            try:
-                payload, result = sandbox_eval.evaluate_in_sandbox(
-                    evaluator, path, "evaluate", 120.0)
-            except Exception as exc:
-                logger.debug("seed variant evaluation failed: %r", exc)
-                return {}
 
-        if not result.ok or not payload:
-            logger.debug("seed variant did not evaluate: %s", result.status)
+            # The sandbox is preferred whenever it can actually run. On a host
+            # with no POSIX rlimits and no container runtime there is no
+            # backend at all, and calling it would fail every variant rather
+            # than score it -- which reads as "the forge produced nothing".
+            if sandbox_eval.enabled() and available_backends():
+                try:
+                    payload, result = sandbox_eval.evaluate_in_sandbox(
+                        evaluator, path, "evaluate", 120.0)
+                    if result.ok and payload:
+                        return {
+                            k: float(v)
+                            for k, v in (payload.get("metrics") or {}).items()
+                            if isinstance(v, (int, float, bool))
+                        }
+                    logger.debug("seed variant sandbox did not return metrics: %s",
+                                 result.status)
+                except Exception as exc:
+                    logger.debug("seed variant sandbox failed: %r, falling back "
+                                 "to subprocess", exc)
+
+            return self._evaluate_subprocess(path, evaluator)
+
+    def _evaluate_subprocess(self, program_path: str,
+                             evaluator_path: str) -> Dict[str, float]:
+        """
+        Score a variant in a plain child process, when no sandbox backend exists.
+
+        This path enforces a wall clock and nothing else -- no memory ceiling,
+        no process-group kill, no network or filesystem restriction. That is a
+        real reduction and is named here rather than implied, because the
+        difference between this and `evaluate_in_sandbox` is exactly the set of
+        guarantees a reader would otherwise assume.
+
+        It is acceptable *here* specifically because Seed Forge mutates the
+        operator's own seed program and never runs model output: the code being
+        executed is already trusted to the same degree the seed is. Do not
+        reuse this for candidate evaluation, where that reasoning does not hold.
+        """
+        import json
+        import subprocess
+        import sys
+
+        # Metrics come back through a file, not stdout, for the same reason the
+        # sandbox script does it: an evaluator that prints is entirely normal,
+        # and mixing the two makes a diagnostic indistinguishable from a
+        # measurement.
+        result_path = os.path.join(os.path.dirname(program_path),
+                                   "oe_max_seed_result.json")
+        script = _SUBPROCESS_SCRIPT.format(
+            eval_file=json.dumps(os.path.abspath(evaluator_path)),
+            program=json.dumps(os.path.abspath(program_path)),
+            out=json.dumps(os.path.abspath(result_path)))
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, timeout=_SUBPROCESS_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            logger.debug("seed variant exceeded %ss in the subprocess fallback",
+                         _SUBPROCESS_TIMEOUT_S)
             return {}
+        except OSError as exc:
+            logger.debug("seed variant subprocess could not start: %r", exc)
+            return {}
+
+        if completed.returncode != 0:
+            # Decoded defensively: an evaluator's stderr is arbitrary bytes,
+            # and the console encoding is not UTF-8 on every host.
+            stderr = (completed.stderr or b"").decode("utf-8", "replace").strip()
+            logger.debug("seed variant subprocess failed (exit %d): %s",
+                         completed.returncode, stderr[-500:])
+            return {}
+
+        try:
+            with open(result_path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, ValueError) as exc:
+            logger.debug("seed variant produced no readable result: %r", exc)
+            return {}
+
         return {k: float(v) for k, v in (payload.get("metrics") or {}).items()
                 if isinstance(v, (int, float, bool))}
 

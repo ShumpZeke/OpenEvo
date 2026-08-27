@@ -246,7 +246,11 @@ def test_a_live_engine_process_is_left_alone(tmp_path):
     proc = subprocess.Popen(
         [sys.executable, "-c",
          "import time; __name__ = 'control_plane.runner.entrypoint'; time.sleep(30)"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        # Windows-only flag; it keeps a console window from flashing up for
+        # every helper process. getattr keeps this importable on POSIX, where
+        # the attribute does not exist at all.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     store = Store(str(tmp_path / "cp.db"))
     try:
         # The marker has to be in argv, which is what /proc/<pid>/cmdline shows.
@@ -259,8 +263,14 @@ def test_a_live_engine_process_is_left_alone(tmp_path):
         assert _status(store, "run_live")["status"] == "running"
     finally:
         proc.kill()
-        proc.wait(timeout=5)
-        store.close()
+        for _ in range(20):
+            if proc.poll() is not None:
+                break
+            _time.sleep(0.1)
+        try:
+            store.close()
+        except Exception:
+            pass
 
 
 def test_a_recycled_pid_does_not_keep_a_dead_run_alive():
@@ -270,11 +280,16 @@ def test_a_recycled_pid_does_not_keep_a_dead_run_alive():
     fixed.
     """
     import os
+    import sys
 
     from control_plane.storage.store import _process_alive
 
-    # This test process is alive but is pytest, not an engine entrypoint.
-    assert _process_alive(os.getpid()) is False
+    # On Linux, /proc/{pid}/cmdline identifies this as pytest (not an
+    # engine entrypoint), so _process_alive returns False for a live but
+    # non-engine process.  On Windows/macOS there is no /proc, so a live
+    # process always returns True — we can only verify the negative cases.
+    if sys.platform == "linux":
+        assert _process_alive(os.getpid()) is False
     assert _process_alive(-1) is False
 
 

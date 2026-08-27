@@ -11,6 +11,7 @@ Reads are concurrent (WAL) and go through short-lived read connections.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -63,8 +64,16 @@ def _process_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True          # alive, owned by someone else
-    except OSError:
-        return True          # cannot tell; do not claim it is dead
+    except OSError as exc:
+        # Windows raises OSError(EINVAL) -- WinError 87 -- for a PID that does
+        # not exist, where POSIX raises ProcessLookupError. That specific errno
+        # is the same evidence, so it is read the same way.
+        if exc.errno == errno.EINVAL:
+            return False
+        # Any other OSError means the question was not answered. Claiming the
+        # process is gone would mark a running engine dead and reconcile a live
+        # run out from under itself, so the unknown case still says "alive".
+        return True
 
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as fh:
