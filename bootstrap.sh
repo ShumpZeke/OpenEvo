@@ -40,7 +40,8 @@ fi
 ok "$VENV"
 
 say "Installing the engine and control plane"
-"${PIP[@]}" -e . >/dev/null
+# [dev] carries pytest, which the smoke test below and ./test.sh both need.
+"${PIP[@]}" -e ".[dev]" >/dev/null
 ok "openevolve (engine) + control plane installed"
 
 say "Initialising control-plane storage"
@@ -92,7 +93,11 @@ say "Creating .env from the example (no secrets are written)"
 [ -f .env ] || { cp .env.example .env; ok ".env created — add provider keys to enable live routes"; }
 
 say "Running the smoke test"
-if "$VENV/bin/python" -m pytest tests/evolution -q >/dev/null 2>&1; then
+# "pytest is not installed" and "tests failed" are different faults with
+# different fixes, so they are not collapsed into one warning.
+if ! "$VENV/bin/python" -c "import pytest" >/dev/null 2>&1; then
+  bad "pytest is missing, so nothing was verified — the install step did not take effect"
+elif "$VENV/bin/python" -m pytest tests/evolution -q >/dev/null 2>&1; then
   ok "control-plane tests passed"
 else
   warn "control-plane tests reported failures — run ./test.sh for detail"

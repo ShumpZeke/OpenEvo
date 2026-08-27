@@ -22,14 +22,35 @@ if (Get-Command node -ErrorAction SilentlyContinue) { Ok "node - $(node --versio
 else { Warn "node not found - the web UI cannot be built (the API still runs)" }
 
 Say "Creating Python environment"
-if (Get-Command uv -ErrorAction SilentlyContinue) { uv venv $venv | Out-Null }
-else { python -m venv $venv }
+# A uv-created venv has no pip inside it, so the installer has to be chosen
+# together with the venv rather than assumed to be `python -m pip`. bootstrap.sh
+# already does this; the two must stay in step or Windows installs nothing at
+# all and still reports success.
+$useUv = [bool](Get-Command uv -ErrorAction SilentlyContinue)
+if ($useUv) {
+  # No 2>$null here: PowerShell 5.1 turns a native command's redirected stderr
+  # into a NativeCommandError, and $ErrorActionPreference = "Stop" then aborts
+  # the script -- on uv's ordinary progress output, after it had succeeded.
+  uv venv $venv --python 3.11 | Out-Null
+  if ($LASTEXITCODE -ne 0) { uv venv $venv | Out-Null }
+} else {
+  python -m venv $venv | Out-Null
+}
 $py = Join-Path $venv "Scripts\python.exe"
+if (-not (Test-Path $py)) { Bad "could not create $venv"; exit 1 }
 Ok $venv
 
 Say "Installing the engine and control plane"
-& $py -m pip install --upgrade pip | Out-Null
-& $py -m pip install -e . | Out-Null
+# [dev] carries pytest, which the smoke test below and .\test.ps1 both need.
+# A native command's non-zero exit does NOT trip $ErrorActionPreference, so the
+# exit code is checked explicitly -- without that a failed install prints [ok].
+if ($useUv) {
+  uv pip install --python $py -e ".[dev]" | Out-Null
+} else {
+  & $py -m pip install --upgrade pip | Out-Null
+  & $py -m pip install -e ".[dev]" | Out-Null
+}
+if ($LASTEXITCODE -ne 0) { Bad "install failed -- re-run that line without | Out-Null to see why"; exit 1 }
 Ok "openevolve (engine) + control plane installed"
 
 Say "Initialising control-plane storage"
@@ -79,8 +100,16 @@ Say "Creating .env from the example (no secrets are written)"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Ok ".env created" }
 
 Say "Running the smoke test"
-& $py -m pytest tests\evolution -q
-if ($LASTEXITCODE -eq 0) { Ok "control-plane tests passed" } else { Warn "see .\test.ps1 for detail" }
+# "pytest is not installed" and "tests failed" are different faults with
+# different fixes, so they are not collapsed into one warning.
+& $py -c "import pytest"
+if ($LASTEXITCODE -ne 0) {
+  Bad "pytest is missing, so nothing was verified -- the install step did not take effect"
+} else {
+  & $py -m pytest tests\evolution -q
+  if ($LASTEXITCODE -eq 0) { Ok "control-plane tests passed" }
+  else { Warn "control-plane tests reported failures -- run .\test.ps1 for detail" }
+}
 
 Write-Host ""
 if ($fail -eq 0) { Say "Bootstrap complete" } else { Say "Bootstrap finished with missing prerequisites" }
