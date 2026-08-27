@@ -1,0 +1,18 @@
+[
+  {
+    "iterations": 5,
+    "valid_candidates": 5,
+    "improvements": 2,
+    "duplicates_rejected": 0,
+    "invalid_rejected": 0,
+    "cache_hits": 0,
+    "cache_misses": 5,
+    "eval_wall_s": 0.052472829818725586,
+    "total_wall_s": 0.052472829818725586,
+    "archive_size": 5,
+    "best_score": 0.7364712141640124,
+    "brain_calls": 5,
+    "seed": 42,
+    "brain_mode": "null"
+  }
+]

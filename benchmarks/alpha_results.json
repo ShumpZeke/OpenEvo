@@ -1,0 +1,73 @@
+{
+  "note": "Simulated brain, not a live model. The evolution loop is real; the responses are canned. Do not quote these as evolution quality.",
+  "brain": "SimulatedBrain(NullBrainPort)",
+  "simulated": true,
+  "runs": [
+    {
+      "iterations": 15,
+      "seed": 42,
+      "time_to_first_valid": 0.00015899113246372769,
+      "time_to_first_improvement": 0.0022258758544921875,
+      "model_calls_per_accepted": 1.0714285714285714,
+      "duplicate_rate": 0.06666666666666667,
+      "invalid_rate": 0.0,
+      "cache_hit_rate": 0.06666666666666667,
+      "eval_wall": 0.0022258758544921875,
+      "total_wall": 0.0022258758544921875,
+      "archive_improvement": 1,
+      "best_score": 2.0,
+      "brain_calls": 15,
+      "brain": "SimulatedBrain(NullBrainPort)",
+      "simulated": true
+    },
+    {
+      "iterations": 15,
+      "seed": 123,
+      "time_to_first_valid": 0.00022217962476942275,
+      "time_to_first_improvement": 0.0019996166229248047,
+      "model_calls_per_accepted": 1.6666666666666667,
+      "duplicate_rate": 0.35714285714285715,
+      "invalid_rate": 0.06666666666666667,
+      "cache_hit_rate": 0.35714285714285715,
+      "eval_wall": 0.0019996166229248047,
+      "total_wall": 0.0019996166229248047,
+      "archive_improvement": 1,
+      "best_score": 2.0,
+      "brain_calls": 15,
+      "brain": "SimulatedBrain(NullBrainPort)",
+      "simulated": true
+    },
+    {
+      "iterations": 15,
+      "seed": 999,
+      "time_to_first_valid": 0.00014288084847586497,
+      "time_to_first_improvement": 0.0020003318786621094,
+      "model_calls_per_accepted": 1.0714285714285714,
+      "duplicate_rate": 0.0,
+      "invalid_rate": 0.06666666666666667,
+      "cache_hit_rate": 0.0,
+      "eval_wall": 0.0020003318786621094,
+      "total_wall": 0.0020003318786621094,
+      "archive_improvement": 1,
+      "best_score": 2.0,
+      "brain_calls": 15,
+      "brain": "SimulatedBrain(NullBrainPort)",
+      "simulated": true
+    }
+  ],
+  "avg": {
+    "iterations": 15.0,
+    "seed": 388.0,
+    "time_to_first_valid": 0.0001746838685696718,
+    "time_to_first_improvement": 0.0020752747853597007,
+    "model_calls_per_accepted": 1.2698412698412698,
+    "duplicate_rate": 0.14126984126984127,
+    "invalid_rate": 0.044444444444444446,
+    "cache_hit_rate": 0.14126984126984127,
+    "eval_wall": 0.0020752747853597007,
+    "total_wall": 0.0020752747853597007,
+    "archive_improvement": 1.0,
+    "best_score": 2.0,
+    "brain_calls": 15.0
+  }
+}
