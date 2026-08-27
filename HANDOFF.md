@@ -459,6 +459,64 @@ The question it is settling: the first ablation measured multi-offspring at
 slowdown ambiguous between the feature and provider drift. Three interleaved
 repeats separate the two.
 
+## 4h. The OpenCode BrainPort — a second path, not a replacement
+
+This is the largest thing that changed, and the easiest to misread. `oe_max/brain/`
+makes the *model* somebody else's problem: OpenCode owns provider, credentials,
+catalog, reasoning config and model switching, and `brain.mode = inherit` means
+whatever is selected over there is what runs.
+
+**Read this before you touch it: there are now two evolution loops.**
+
+| | shipping path | BrainPort path |
+|---|---|---|
+| driven by | `./scripts/run-evolution.sh` | the OpenCode plugin, `packages/opencode-plugin/` |
+| engine | upstream's controller, MAP-Elites, islands | its own loop, `oe_max/brain/evolution.py` |
+| model comes from | the OE-MAX broker on `:8787` | whatever OpenCode has selected |
+| measured live | yes — all of BENCHMARKS.md | **no** |
+
+They share no loop. `oe_max/brain/evolution.py` does not import `openevolve` at
+all, so everything §4b–§4f describes — operators, island policies,
+multi-offspring, verification, seed forge — exists only on the shipping path.
+A feature added to one is not in the other.
+
+### What is actually established
+
+31 tests (`tests/brain`) and 26 acceptance gates
+(`scripts/verify-brainport-acceptance.ps1`) pass. Every one of them runs against
+`NullBrainPort` or the stdio worker.
+
+That proves the **structural** claim, which is the real one: there is no model
+ID, provider URL or API key env name anywhere in `oe_max/brain/`, and
+`tests/brain/test_brainport_acceptance.py` fails the build if one appears. A
+model vanishing genuinely cannot require a source change there.
+
+It does not prove the **behavioural** claim. **No BrainPort run against a live
+OpenCode host has been recorded**, and the acceptance script prints that as
+UNVERIFIED rather than counting a stub run as evidence. Same for the benchmarks
+in `benchmarks/` — the loop is real, the brain is canned, and
+`benchmarks/README.md` says so. Do not quote `best_score` out of them.
+
+### The legacy stack cannot be deleted yet, and the reason is subtle
+
+`oe_max/providers`, `oe_max/router`, `oe_max/limiter` and
+`control_plane/providers` are marked deprecated. Nothing in core imports them
+any more — so an import scan says "safe to delete", and an earlier version of
+`scripts/legacy_deletion_gate.py` said exactly that.
+
+It was wrong. The coupling is over **HTTP**: `configs/oe_max/evolution.yaml`
+points `api_base` at `127.0.0.1:8787`, `scripts/start-broker.sh` launches the
+broker, and `pyproject.toml` ships its console entry points. None of that is an
+import, so grepping for imports cannot see the dependency that the entire
+shipping path rests on.
+
+The gate now checks both kinds of coupling and reports **BLOCKED**, with the 13
+runtime references listed. Run it before you delete anything:
+
+```bash
+python scripts/legacy_deletion_gate.py
+```
+
 ---
 
 ## 5. What to do next
@@ -568,12 +626,25 @@ you need the authoritative wording.
 ## 9. Current state, precisely
 
 ```
-branch    main  (and claude/unzip-goals-instructions-vz9ely — identical)
-tests     437 upstream + 303 control plane + 250 OE-MAX = 990 passing
-engine    openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0
-verified  OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
+branch     main
+tests      417 upstream + 295 control plane + 226 OE-MAX + 31 BrainPort = 969 passing
+           + 6 upstream failures that are Windows-only (see below)
+engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
+           by tests/evolution/test_patch_surface.py
+verified   OpenCode Zen / Ox Alpha — live, keyless, end-to-end evolution
 unverified NVIDIA NIM, OpenRouter — no credentials
+           BrainPort against a live OpenCode host — stub-only so far (§4h)
 ```
+
+**The six upstream failures are platform, not regression.** Four are
+`openevolve/config.py:453` opening YAML with no `encoding=`, so Windows uses
+cp1252 and dies on a non-ASCII byte; one asserts a POSIX absolute path survives
+unchanged; one expects `ProcessLookupError`, which is POSIX `os.kill` semantics.
+All six pass on Linux, which is what `bootstrap.sh` targets and where the
+437-passing figure in earlier handoffs was measured. They are **not** fixable
+here — `openevolve/` is byte-identical and rule 1 says it stays that way. Full
+table in `TEST_STRATEGY.md`. Do not "fix" them by editing the engine, and do not
+skip them: a green suite hiding six failures is worse than an honest six.
 
 Since the last handoff, four things that were structurally impossible are now
 measurable, each verified on a live run rather than only in tests:

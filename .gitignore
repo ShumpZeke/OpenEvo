@@ -3,6 +3,8 @@
 node_modules/
 web/dist/
 *.egg-info/
+build/                 # setuptools leaves this behind after `pip wheel .`
+dist/
 __pycache__/
 *.py[cod]
 .pytest_cache/

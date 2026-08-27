@@ -51,7 +51,9 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 437 upstream + 303 control plane + 250 OE-MAX
+./test.sh     # 417 upstream + 295 control plane + 226 OE-MAX + 31 BrainPort
+              # 6 upstream tests fail on Windows only (platform, not regression)
+              # -- see TEST_STRATEGY.md; do NOT 'fix' them by editing openevolve/
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -83,8 +85,12 @@ Full detail for each: `HANDOFF.md` §3.
 openevolve/     upstream engine — DO NOT EDIT
 oe_max/         provider broker, rate limiter, gates, search, archives,
                 verification
+oe_max/brain/   BrainPort — the OpenCode path. Its own evolution loop; shares
+                nothing with the upstream engine. See HANDOFF.md §4h.
+packages/       the OpenCode plugin (TypeScript); dist/ is built, not committed
 control_plane/  telemetry, storage, APIs, sandbox isolation, runner
 web/            Control Center (React + TS)
 scripts/        operator scripts (.sh and .ps1)
-tests/          upstream (untouched) + tests/evolution + tests/oe_max
+tests/          upstream (untouched, root only) + tests/evolution
+                + tests/oe_max + tests/brain
 ```

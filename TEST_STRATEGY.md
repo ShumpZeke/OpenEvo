@@ -2,22 +2,54 @@
 
 ## Results
 
+Measured 2026-08-27 on Windows 11 / CPython 3.11.9. Where a suite is
+platform-sensitive the row says so, because a number with no platform attached
+is the kind of thing that gets quoted back later as if it were universal.
+
 | Suite | Command | Result |
 |---|---|---|
-| Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/evolution` | **437 passed**, 43 subtests, 17 slow deselected |
-| Control plane | `pytest tests/evolution` | **81 passed** |
+| Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/{evolution,oe_max,brain}` | **417 passed**, 6 failed (all Windows-only, see below), 14 skipped, 43 subtests, 17 slow deselected |
+| Control plane | `pytest tests/evolution` | **295 passed**, 10 skipped |
+| OE-MAX | `pytest tests/oe_max` | **226 passed**, 24 skipped |
+| BrainPort | `pytest tests/brain` | **31 passed** |
 | Web typecheck | `npm run typecheck` | clean |
 | Web build | `npm run build` | 254 KB (75 KB gzipped) |
 | Live UI | Chromium via Playwright, all 19 views | **0 JavaScript errors** |
 
-`./test.sh` runs all of them.
+`./test.sh` (or `.\test.ps1`) runs all four Python suites in that order.
+
+## The six upstream failures on Windows
+
+They are upstream's, they are platform assumptions rather than logic errors, and
+they are **not** fixable here: `openevolve/` is byte-identical to upstream and
+rule 1 says it stays that way. They are listed rather than skipped, because a
+green suite that quietly hides six failures is worse than an honest six.
+
+| Test | Cause |
+|---|---|
+| `test_valid_configs::test_import_config_files` | `openevolve/config.py:453` opens YAML with no `encoding=`, so Windows uses cp1252 and dies on a non-ASCII byte |
+| `test_examples_validation::test_all_example_configs_load` | same |
+| `test_api_key_from_env::test_yaml_file_loading_with_env_var` | same |
+| `test_reasoning_effort_config::test_yaml_file_loading_with_reasoning_effort` | same |
+| `test_template_dir_resolution::test_absolute_template_dir_unchanged` | asserts a POSIX absolute path survives unchanged; Windows resolves `/abs/path` to `C:\abs\path` |
+| `test_process_parallel::test_controller_stop_terminates_running_workers` | expects `ProcessLookupError`, which is POSIX `os.kill` semantics |
+
+All six pass on Linux, which is where the 437-passing figure in earlier
+handoffs was measured and what `bootstrap.sh` targets. Anything CI gates on
+should run there. If you want them green on Windows, the fix belongs upstream
+(pass `encoding="utf-8"`), not in this fork.
 
 ## Order matters
 
 The upstream suite runs **first**. A change that breaks it is a regression in
-the fork, not merely a control-plane bug. Those 437 tests are the contract that
-the engine is genuinely preserved — stronger evidence than the byte-identical
-diff alone, because they exercise behaviour rather than bytes.
+the fork, not merely a control-plane bug — it is stronger evidence that the
+engine is preserved than the byte-identical diff alone, because it exercises
+behaviour rather than bytes.
+
+For that reading to hold, `tests/` root must contain **only** upstream's files.
+Everything the fork adds lives in `tests/evolution`, `tests/oe_max` or
+`tests/brain`, and `tests/evolution/test_patch_surface.py` fails the build if
+anything appears under `openevolve/` that upstream does not have.
 
 ## What the control-plane tests actually assert
 

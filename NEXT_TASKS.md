@@ -8,6 +8,61 @@ Read `HANDOFF.md` first — especially §3, the traps.
 
 ---
 
+## T0 — Record one live BrainPort run against a real OpenCode host
+
+**Priority:** highest. **Effort:** small to run. **Blocked by:** an OpenCode host.
+**Status:** everything is built and nothing has been observed.
+
+### Why
+
+`oe_max/brain/` is 2,700 lines, 31 tests and 26 passing acceptance gates, and
+**every one of them runs against `NullBrainPort` or the stdio worker.** The
+structural claim is genuinely proven — no model ID, provider URL or key env name
+exists in the package and a test enforces it. The behavioural claim is not
+proven at all: nobody has watched a real OpenCode model answer a `BrainRequest`.
+
+Until that happens the whole second path is an untested integration wearing a
+green test suite, which is the most expensive kind of thing to leave lying
+around — every later change gets built on an assumption nobody checked.
+
+### How
+
+```bash
+npm --prefix packages/opencode-plugin install && npm --prefix packages/opencode-plugin run build
+opencode   # with opencode.json loaded; select any model
+# then drive evolve_start / evolve_status / evolve_candidates from the plugin
+```
+
+### Done when
+
+A run is recorded with the host model named in the checkpoint, and
+`scripts/verify-brainport-acceptance.ps1` can move "a real OpenCode model serves
+a full evolution run" out of UNVERIFIED. Write the numbers into
+`benchmarks/README.md` next to the stub ones, clearly separated.
+
+### Careful
+
+The stub cannot tell you about truncation, latency, or whether a real model's
+output survives `extract_diffs`. Those are exactly the failures §3.2 and §4c
+cost days to find on the shipping path, and none of that experience transfers
+automatically — the BrainPort has its own parser and its own funnel.
+
+---
+
+## T0b — Move the shipping path onto BrainPort, then delete legacy
+
+**Priority:** high, but strictly after T0. **Effort:** large.
+
+`scripts/legacy_deletion_gate.py` reports **BLOCKED** and lists 13 runtime
+couplings. The import scan is clean; the dependency is over HTTP, which is why
+an import-only scan previously reported "safe to delete" while the entire
+default path ran on the broker.
+
+Do not delete anything until the gate reports READY. And do not make the gate
+report READY by editing the gate.
+
+---
+
 ## T1 — Fast-model routing experiment
 
 **Priority:** highest. **Effort:** small — the machinery is built.

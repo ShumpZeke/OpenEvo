@@ -1,5 +1,32 @@
 # Evolution
 
+> **A second execution path landed on 2026-08-27: the OpenCode BrainPort.** It
+> is additive and **not yet the default** — be precise about which path you are
+> reading about, because the two do not share a loop.
+>
+> - **The shipping path** is unchanged: upstream's engine, driven through the
+>   OE-MAX provider broker on `:8787`. `./scripts/run-evolution.sh` uses this,
+>   and every live measurement in [BENCHMARKS.md](BENCHMARKS.md) came from it.
+> - **The BrainPort path** (`oe_max/brain/`) makes the *model* someone else's
+>   problem: OpenCode owns provider, credentials, catalog and model switching,
+>   and `brain.mode = inherit` means whatever is selected there is what runs.
+>   It is driven by the OpenCode plugin in `packages/opencode-plugin/` and runs
+>   its own lighter evolution loop in `oe_max/brain/evolution.py` — it does not
+>   go through upstream's controller, MAP-Elites or island machinery.
+>
+> **Verification status, stated plainly:** 31 tests cover the BrainPort, and 26
+> acceptance gates pass (`scripts/verify-brainport-acceptance.ps1`). All of them
+> run against `NullBrainPort` or the stdio worker. **No BrainPort run against a
+> live OpenCode host has been recorded**, so the claim "zero source changes when
+> a model disappears" is proven structurally — no model ID or provider URL
+> exists in the core, and a test enforces that — and not yet empirically.
+>
+> The legacy provider stack (`oe_max/providers`, `oe_max/router`, `oe_max/limiter`,
+> `control_plane/providers`) is marked deprecated and quarantined behind
+> `oe_max/brain/legacy_adapter.py`. It is **still what the default path runs on**
+> and must not be deleted until that path moves. `scripts/legacy_deletion_gate.py`
+> is the check that says when it may. See [oe_max/brain/README.md](oe_max/brain/README.md).
+
 A production fork of [OpenEvolve](https://github.com/codelion/openevolve) that
 keeps the evolutionary engine exactly as upstream ships it and adds a real-time
 control plane around it: a browser Control Center, typed telemetry, a query and
