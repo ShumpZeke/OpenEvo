@@ -163,9 +163,19 @@ class BanditStore:
         Fold one observation in and persist. Returns whether it was recorded.
 
         Read-modify-write is safe here only because the main process is the
-        sole writer. If a second writer is ever added this needs a lock, and
-        the symptom of getting that wrong would be lost updates rather than a
-        crash — which is to say, silent.
+        sole writer, and single-threaded within it. Both halves were checked
+        rather than assumed:
+
+          * `ProgramDatabase.add` is called from one place in the engine's
+            process-parallel loop (`process_parallel.py`), which pops one
+            completed future at a time inside a single asyncio task.
+          * `_reward_operator` is fully synchronous, so no `await` can split
+            this read from its write and let another iteration interleave.
+
+        `parallel_evaluations` parallelises the worker pool, not `add`. If a
+        second writer is ever introduced this needs a lock, and the symptom of
+        getting it wrong would be lost updates rather than a crash — which is
+        to say, silent.
         """
         try:
             selector = self.load()

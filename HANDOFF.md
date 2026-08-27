@@ -256,8 +256,14 @@ to check for.
 
 `auto_install_from_env()` is called from exactly one place,
 `control_plane/runner/entrypoint.py`, and it needs both `EVOLUTION_TELEMETRY`
-and `EVOLUTION_RUN_ID`. Runs started from the Control Center went through it;
-runs started from the shell script did not.
+and `EVOLUTION_RUN_ID`.
+
+**Scope, checked rather than assumed.** The Control Center and both experiment
+harnesses start runs with `POST /api/control/runs`, which goes through
+`RunManager` → that entrypoint, so they were always instrumented. Only the
+standalone shell script was not. Measurements recorded from `ablation.sh` and
+`route-experiment.sh` therefore stand; a measurement someone took by running
+the shell command in §4b/§4c/§4f by hand does not.
 
 Fixed: both launchers now exec the entrypoint and generate a run id when the
 caller has not supplied one. `tests/evolution/test_launch_scripts.py` pins it.
