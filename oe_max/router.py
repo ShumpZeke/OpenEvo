@@ -59,15 +59,14 @@ DEFAULT_CHAIN: List[Tuple[str, str]] = [
     ("opencode_zen", "hy3"),
     ("opencode_zen", "laguna"),
     ("opencode_zen", "nemotron_lightning"),
+    # NIM, ordered by measured latency 2026-08-28. Four ids that were in the
+    # catalogue are absent here because probing them with a real key found
+    # them unserveable — see the registry for what each one did.
+    ("nvidia_nim", "nemotron_super_120b"),
     ("nvidia_nim", "nemotron_ultra_253b"),
-    ("nvidia_nim", "gpt_oss_120b"),
+    ("nvidia_nim", "nemotron_nano_30b"),
     ("nvidia_nim", "kimi_k3"),
     ("nvidia_nim", "deepseek_v4_flash"),
-    ("nvidia_nim", "nemotron_super_120b"),
-    ("nvidia_nim", "minimax_m3"),
-    ("nvidia_nim", "codestral"),
-    ("nvidia_nim", "nemotron_lightning_30b"),
-    ("nvidia_nim", "nemotron_nano_30b"),
     ("openrouter", "ox_alpha"),
 ]
 

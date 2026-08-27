@@ -9,6 +9,13 @@ kind rather than only in quality. Measured on Zen, 2026-08-26:
     laguna-s-2.1-free        1.6s    0 reasoning tokens, prompt cache hit
     nemotron-3.5-lightning   7.6s   64/64 tokens spent reasoning, truncated
 
+With a NIM key the pool widens, measured 2026-08-28:
+
+    nemotron-3-super-120b-a12b   732ms  fastest working route on any provider
+    nemotron-3-ultra-550b-a55b   4.5s   reasoning kept OUT of the visible budget
+    moonshotai/kimi-k3          11.5s
+    deepseek-v4-flash-0731      51.1s   strong, and slow enough to matter
+
 Those are not four grades of the same thing. A reasoning model that spends its
 budget thinking is what you want proposing a mutation and precisely what you do
 not want ranking two candidates or summarising a diff — there it buys latency
@@ -76,7 +83,7 @@ _PREFERENCES: Dict[Role, Chain] = {
     Role.REASONER: [
         ("opencode_zen", "nemotron_ultra"),
         ("nvidia_nim", "nemotron_ultra_253b"),
-        ("nvidia_nim", "gpt_oss_120b"),
+        ("nvidia_nim", "nemotron_super_120b"),
         ("opencode_zen", "hy3"),
     ],
     # Coding leads with the same verified-free route, because a strong general
@@ -85,7 +92,7 @@ _PREFERENCES: Dict[Role, Chain] = {
     Role.CODER: [
         ("opencode_zen", "nemotron_ultra"),
         ("nvidia_nim", "kimi_k3"),
-        ("nvidia_nim", "codestral"),
+        ("nvidia_nim", "nemotron_ultra_253b"),
         ("nvidia_nim", "deepseek_v4_flash"),
         ("opencode_zen", "hy3"),
     ],
@@ -95,6 +102,7 @@ _PREFERENCES: Dict[Role, Chain] = {
     # behind it for when the judgement is genuinely hard.
     Role.JUDGE: [
         ("opencode_zen", "laguna"),
+        ("nvidia_nim", "nemotron_super_120b"),
         ("opencode_zen", "nemotron_ultra"),
         ("nvidia_nim", "nemotron_nano_30b"),
     ],
@@ -103,8 +111,8 @@ _PREFERENCES: Dict[Role, Chain] = {
     # Zen routes, because it reasons before answering.
     Role.FAST: [
         ("opencode_zen", "laguna"),
+        ("nvidia_nim", "nemotron_super_120b"),
         ("nvidia_nim", "nemotron_nano_30b"),
-        ("nvidia_nim", "nemotron_lightning_30b"),
         ("opencode_zen", "hy3"),
     ],
 }

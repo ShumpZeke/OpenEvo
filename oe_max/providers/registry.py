@@ -230,7 +230,14 @@ def build_default_registry(
         requires_key=True,
         # NIM's catalogue endpoint is unauthenticated — verified 2026-08-26.
         public_listing=True,
-        timeout_s=120.0,
+        # Was 120s, which was a guess made before any request had been sent.
+        # Measured on a real 6-iteration run 2026-08-28: the flagship averaged
+        # 86s per mutation and 3 of 9 requests hit the 120s ceiling — the
+        # timeouts were ours, not the provider's. A trivial probe returns in
+        # 4.5s, so a limit set from probe latency would have been wrong by an
+        # order of magnitude; a real mutation prompt is what has to set it.
+        # See HANDOFF 3.3: this moves with max_tokens and the client timeout.
+        timeout_s=420.0,
         # These were empty, on the principle that NIM model IDs must be
         # discovered live rather than remembered. The principle is right and
         # the empty table was the wrong way to honour it: it meant no chain
@@ -243,58 +250,90 @@ def build_default_registry(
         # appearing there is disabled by the next discovery. Config names the
         # preference; the live listing remains the authority.
         #
-        # NOT verified: inference itself. No NVIDIA_API_KEY exists in this
-        # environment, so every id below is catalogue-verified and
-        # response-unverified. `available` stays None (unprobed), never True.
+        # VERIFIED BY INFERENCE 2026-08-28, with a real key. Four of the nine
+        # ids configured from the catalogue did not serve, which makes NIM the
+        # second provider to prove that a listing is not a promise:
+        #
+        #   nemotron-nano-3-30b-a3b   404 "Model not found" — while the
+        #                             near-identical `nemotron-3-nano-30b-a3b`
+        #                             works. Two transposed words, both in the
+        #                             catalogue, one of them fictional in
+        #                             practice. Corrected below.
+        #   gpt-oss-120b              hangs: 0 bytes after 190s and again
+        #                             after 230s.
+        #   nemotron-3.5-lightning    400 "DEGRADED function cannot be invoked"
+        #   codestral-22b             404 "Not found for account" — gated per
+        #                             account, not universally available.
+        #   minimax-m3                429 on every attempt, including after a
+        #                             45s idle gap, so it is an allowance and
+        #                             not a burst limit.
         models={
             "nemotron_ultra_253b": ModelSpec(
                 key="nemotron_ultra_253b", id="nvidia/nemotron-3-ultra-550b-a55b",
                 priority=100,
-                notes="Flagship NIM reasoner. In catalogue 2026-08-26; "
-                      "inference UNVERIFIED (no key available).",
+                notes="Flagship NIM reasoner. VERIFIED 2026-08-28: HTTP 200 in "
+                      "4.5s, tools supported. Returns hidden reasoning in a "
+                      "separate `reasoning_content` field rather than spending "
+                      "the visible budget on it — unlike the Zen routes.",
             ),
             "gpt_oss_120b": ModelSpec(
-                key="gpt_oss_120b", id="openai/gpt-oss-120b", priority=95,
-                notes="Strong open-weight reasoner. In catalogue 2026-08-26; "
-                      "inference UNVERIFIED.",
+                key="gpt_oss_120b", id="openai/gpt-oss-120b", priority=0,
+                available=False,
+                notes="LISTED BUT HANGS. Probed 2026-08-28: zero bytes received "
+                      "after 190s, and again after 230s. Not a slow model — no "
+                      "response at all. Kept disabled rather than deleted so a "
+                      "later probe can re-enable it if the endpoint recovers.",
             ),
             "kimi_k3": ModelSpec(
                 key="kimi_k3", id="moonshotai/kimi-k3", priority=90,
-                notes="Agentic/coding strength. In catalogue 2026-08-26; "
-                      "inference UNVERIFIED.",
+                notes="Agentic/coding strength. VERIFIED 2026-08-28: HTTP 200 "
+                      "in 11.5s, tools supported.",
             ),
             "deepseek_v4_flash": ModelSpec(
                 key="deepseek_v4_flash", id="deepseek-ai/deepseek-v4-flash-0731",
                 priority=85,
-                notes="In catalogue 2026-08-26; inference UNVERIFIED. Note the "
-                      "id is date-suffixed — `deepseek-ai/deepseek-v4-pro`, "
-                      "which this project previously configured, is NOT in the "
-                      "catalogue at all.",
+                notes="VERIFIED 2026-08-28: HTTP 200, but slow — 51s on a "
+                      "two-word prompt. Note the id is date-suffixed; "
+                      "`deepseek-ai/deepseek-v4-pro`, which this project once "
+                      "configured, is not in the catalogue at all.",
             ),
             "nemotron_super_120b": ModelSpec(
                 key="nemotron_super_120b", id="nvidia/nemotron-3-super-120b-a12b",
-                priority=80,
-                notes="In catalogue 2026-08-26; inference UNVERIFIED.",
+                priority=98,
+                notes="VERIFIED 2026-08-28: HTTP 200 in 732ms with tools — the "
+                      "fastest working route measured on any provider, free or "
+                      "otherwise, and six times quicker than NIM's flagship. "
+                      "Promoted accordingly.",
             ),
             "minimax_m3": ModelSpec(
-                key="minimax_m3", id="minimaxai/minimax-m3", priority=75,
-                notes="In catalogue 2026-08-26; inference UNVERIFIED.",
+                key="minimax_m3", id="minimaxai/minimax-m3", priority=0,
+                available=False,
+                notes="LISTED, NOT SERVEABLE ON THIS ACCOUNT. HTTP 429 on every "
+                      "attempt 2026-08-28, including after a 45s idle gap — an "
+                      "allowance, not a burst limit.",
             ),
             "codestral": ModelSpec(
                 key="codestral", id="mistralai/codestral-22b-instruct-v0.1",
-                priority=70,
-                notes="Code-specialised. In catalogue 2026-08-26; inference "
-                      "UNVERIFIED.",
+                priority=0, available=False,
+                notes="LISTED, ACCOUNT-GATED. HTTP 404 'Not found for account' "
+                      "2026-08-28 — present in the public catalogue and not "
+                      "entitled to this account, which a listing cannot express.",
             ),
             "nemotron_lightning_30b": ModelSpec(
                 key="nemotron_lightning_30b",
-                id="nvidia/nemotron-3.5-lightning-30b-a3b", priority=60,
-                notes="Fast tier. In catalogue 2026-08-26; inference UNVERIFIED.",
+                id="nvidia/nemotron-3.5-lightning-30b-a3b", priority=0,
+                available=False,
+                notes="LISTED BUT DEGRADED. HTTP 400 'DEGRADED function cannot "
+                      "be invoked' 2026-08-28 — the provider's own word for it.",
             ),
             "nemotron_nano_30b": ModelSpec(
-                key="nemotron_nano_30b", id="nvidia/nemotron-nano-3-30b-a3b",
-                priority=55,
-                notes="Fast tier. In catalogue 2026-08-26; inference UNVERIFIED.",
+                key="nemotron_nano_30b", id="nvidia/nemotron-3-nano-30b-a3b",
+                priority=85,
+                notes="VERIFIED 2026-08-28. The id was `nemotron-nano-3-30b-a3b` "
+                      "until a probe returned 404 'Model not found' for it: two "
+                      "transposed words, BOTH present in the catalogue, only "
+                      "this spelling serveable. The cleanest possible argument "
+                      "against writing a model id from memory.",
             ),
         },
     )

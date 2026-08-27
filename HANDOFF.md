@@ -667,6 +667,40 @@ Two things this found, both silent:
   idempotent (`ingest` is INSERT OR IGNORE on a unique event id, so the offset
   is an optimisation and not the correctness mechanism).
 
+## 4i. NVIDIA NIM, measured
+
+Verified with a real key, 2026-08-28. **Four of the nine ids taken from the
+public catalogue did not serve**, which makes NIM the second provider to prove
+that a listing is not a promise:
+
+| model | result |
+|---|---|
+| `nvidia/nemotron-3-super-120b-a12b` | **732 ms**, tools — fastest working route measured on any provider |
+| `nvidia/nemotron-3-ultra-550b-a55b` | 4.5 s, tools — flagship reasoner |
+| `nvidia/nemotron-3-nano-30b-a3b` | serves |
+| `moonshotai/kimi-k3` | 11.5 s, tools |
+| `deepseek-ai/deepseek-v4-flash-0731` | 51 s — strong, and slow enough to matter |
+| `openai/gpt-oss-120b` | **hangs** — 0 bytes after 190 s, and again after 230 s |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | **400** "DEGRADED function cannot be invoked" |
+| `mistralai/codestral-22b-instruct-v0.1` | **404** "Not found for account" — entitlement, which a listing cannot express |
+| `minimaxai/minimax-m3` | **429** on every attempt, including after a 45 s idle gap — an allowance, not a burst limit |
+
+**The finding worth remembering.** `nvidia/nemotron-nano-3-30b-a3b` returns 404
+"Model not found" while `nvidia/nemotron-3-nano-30b-a3b` serves. Two transposed
+words, **both present in the catalogue**, only one real. This project had the
+broken spelling configured. It is the cleanest argument yet for §3.12: do not
+write a model id from memory, and do not trust a listing without a smoke test.
+
+Two behaviours differ from the Zen routes and matter for tuning:
+
+- NIM returns hidden reasoning in a separate `reasoning_content` field rather
+  than spending the visible `max_tokens` budget on it. The truncation trap of
+  §3.2 is therefore much weaker here.
+- `nemotron-3-super-120b` at 732 ms beats every free Zen route by a wide
+  margin, so with a key the judge and fast roles have a genuinely better
+  option than `laguna`. It is placed behind the keyless routes anyway, because
+  the shipped configuration must work without a credential.
+
 ## 5. What to do next
 
 The queue with rationale lives in **[NEXT_TASKS.md](NEXT_TASKS.md)** — kept
@@ -709,10 +743,12 @@ new:
 
 ## 6. Blocked, and exactly how to unblock
 
-**NVIDIA NIM, OpenRouter and all 13 catalogue providers are UNVERIFIED for
-inference.** No credential for any of them has ever been present here. Endpoint
-liveness IS verified for all of them, and NIM's model ids are catalogue-verified
-against its public listing — but not one inference call has been made. The adapters, the global rate limiter, the
+**NVIDIA NIM is now VERIFIED** — a key was supplied on 2026-08-28 and five of
+the nine configured models serve. See §4i.
+
+**OpenRouter and the 13 catalogue providers remain UNVERIFIED for inference.**
+Endpoint liveness is verified for all of them; no credential has ever been
+present, so not one inference call has been made. The adapters, the global rate limiter, the
 retry/circuit-breaker path and the routing logic are all implemented and tested
 offline against a scripted provider — but the HTTP round-trip to those two
 endpoints has never run.

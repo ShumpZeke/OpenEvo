@@ -85,15 +85,18 @@ operator's choice being withdrawn.
 
 ---
 
-## T1b — Verify NVIDIA NIM for real
+## T1b — ~~Verify NVIDIA NIM for real~~ (DONE 2026-08-28)
 
 **Priority:** high. **Effort:** trivial once a key exists. **Blocked by:** a
 credential.
 
-Nine NIM models are configured and every one is **catalogue-verified and
-inference-unverified**: the ids were read from NVIDIA's public listing, and not
-one call has been made. `available` is `None`, never `True`, and must stay that
-way until a probe says otherwise.
+**Done.** A key was supplied and all nine were probed; five serve and four do
+not. Results and the corrected ids are in HANDOFF §4i. The headline: two
+transposed words in `nemotron-3-nano-30b-a3b` separated a working model from a
+404, with both spellings in the catalogue.
+
+What remains open from this task is the rate limiter (below) and the other
+thirteen providers, each of which needs only a key.
 
 ```bash
 echo "NVIDIA_API_KEY=nvapi-..." >> .env
