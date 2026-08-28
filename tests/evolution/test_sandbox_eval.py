@@ -118,9 +118,26 @@ def search_algorithm(iterations=1000, bounds=(-5, 5)):
 def run_search():
     return search_algorithm()
 ''')
-    _, result = sandbox_eval.evaluate_in_sandbox(EVALUATOR, path, "evaluate", 20.0)
-    assert not result.ok
-    assert sandbox_eval.failure_metrics(result)["combined_score"] == 0.0
+    payload, result = sandbox_eval.evaluate_in_sandbox(EVALUATOR, path, "evaluate", 20.0)
+
+    # Containment has two legitimate shapes and the test must accept both,
+    # because which one happens is the kernel's choice, not ours. RLIMIT_AS
+    # usually makes the allocation raise MemoryError, which the evaluator
+    # catches and scores zero — the process survives, and the name of this test
+    # is precisely that the evaluator was not taken down with the candidate.
+    # A large enough single request is refused outright instead and the process
+    # dies. Asserting only the second shape made this test depend on which one
+    # the runtime picked.
+    #
+    # What must hold either way: the allocation did not succeed, and the
+    # candidate scored nothing.
+    if result.ok:
+        assert payload is not None, "a surviving evaluator must still report"
+        assert payload["metrics"]["combined_score"] == 0.0, (
+            "an unbounded allocation scored above zero, so the memory ceiling "
+            "did not fire")
+    else:
+        assert sandbox_eval.failure_metrics(result)["combined_score"] == 0.0
 
 
 def test_a_runaway_loop_is_stopped_by_the_wall_clock(tmp_path):
