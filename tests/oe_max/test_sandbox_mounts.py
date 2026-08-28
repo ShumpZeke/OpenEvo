@@ -204,3 +204,59 @@ class TestContainerImage:
         r._run_container(str(tmp_path), ())
 
         assert "registry.example/task:1.4" in seen["argv"]
+
+
+class TestSandboxThreadPools:
+    """
+    A candidate's numeric libraries must not size themselves from the machine.
+
+    OpenBLAS, MKL and OpenMP read the *host's* core count at import time and
+    build a thread pool from it, ignoring what the process is actually allowed.
+    Under the sandbox's RLIMIT_NPROC that is a hard failure, not a slow one: on
+    a 16-core CI runner `import numpy` died with "OpenBLAS blas_thread_init:
+    pthread_create failed", and the shipped example's evaluator was reported as
+    a crashed candidate before its first line ran.
+
+    Invisible on a machine where these tests skip for lack of POSIX resource
+    limits, which is why it reached CI. The process ceiling is the security
+    property and does not move, so the thread pools are what give way.
+    """
+
+    def test_the_numeric_libraries_are_pinned_to_one_thread(self):
+        from oe_max.execution.limits import ResourceLimits
+
+        env = ResourceLimits().child_env()
+
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+            assert env.get(var) == "1", var
+
+    def test_a_caller_can_still_override_the_pin(self):
+        """
+        The pin is a default, not a ceiling: a task that genuinely wants more
+        threads and has raised the process limit to match should get them.
+        """
+        from oe_max.execution.limits import ResourceLimits
+
+        env = ResourceLimits(env={"OMP_NUM_THREADS": "4"}).child_env()
+
+        assert env["OMP_NUM_THREADS"] == "4"
+        # The others keep the safe default.
+        assert env["OPENBLAS_NUM_THREADS"] == "1"
+
+    def test_the_pin_does_not_leak_host_credentials(self):
+        """
+        The reason child_env exists at all: a candidate inherits an allowlist,
+        never the parent's environment. Adding variables must not widen that.
+        """
+        import os
+
+        from oe_max.execution.limits import ResourceLimits
+
+        os.environ["NVIDIA_API_KEY"] = "nvapi-should-not-appear"
+        try:
+            env = ResourceLimits().child_env()
+            assert "NVIDIA_API_KEY" not in env
+            assert not any("nvapi-should-not-appear" == v for v in env.values())
+        finally:
+            os.environ.pop("NVIDIA_API_KEY", None)

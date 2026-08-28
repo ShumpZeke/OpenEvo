@@ -68,6 +68,30 @@ a time — an evaluator routinely imports a sibling, and upstream puts its
 directory on `sys.path`. Nothing else is exposed, and nothing is writable, so a
 candidate cannot rewrite the task it is being judged against.
 
+### The process ceiling and numeric thread pools
+
+`RLIMIT_NPROC` is the sandbox's defence against a fork bomb, and it interacts
+badly with numpy out of the box. OpenBLAS, MKL and OpenMP size their thread
+pools from the **machine's** core count when they are imported, not from what
+the process is permitted, so on a many-core host `import numpy` hits the process
+ceiling and fails outright:
+
+```
+OpenBLAS blas_thread_init: pthread_create failed
+```
+
+The candidate is then reported as crashed before its first line ran. Measured on
+a 16-core CI runner; invisible on a machine where the POSIX-limits tests skip.
+
+The ceiling is the security property, so it does not move. The thread pools do:
+`child_env()` pins `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`,
+`NUMEXPR_NUM_THREADS` and `VECLIB_MAXIMUM_THREADS` to `1`. That is also the
+behaviour this sandbox wants anyway — one candidate should not take every core,
+and single-threaded BLAS makes a score reproducible rather than dependent on how
+many cores happened to be free. A caller that genuinely needs more can override
+any of them through `ResourceLimits(env=...)`, having raised the process limit
+to match.
+
 ### The image must carry the task's dependencies
 
 The container runs `python:3.11-slim` by default, which has **no third-party

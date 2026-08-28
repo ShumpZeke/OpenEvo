@@ -113,6 +113,23 @@ class ResourceLimits:
         # iteration order — a real source of "it worked when I ran it".
         env.setdefault("PYTHONHASHSEED", "0")
         env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+        # Pin the numeric libraries to one thread each.
+        #
+        # OpenBLAS, MKL and OpenMP size their thread pools from the *machine's*
+        # core count at import time, not from what the process is allowed. Under
+        # RLIMIT_NPROC that is a hard failure rather than a slow one: on a
+        # 16-core CI runner `import numpy` died with
+        # "OpenBLAS blas_thread_init: pthread_create failed", so an honest
+        # candidate was reported as crashed before its first line ran. The
+        # process ceiling is not negotiable, so the thread pools give way.
+        #
+        # It is also the behaviour this sandbox wants regardless: one candidate
+        # should not take every core, and single-threaded BLAS makes a score
+        # reproducible instead of dependent on how many cores happened to be
+        # free.
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+            env.setdefault(var, "1")
         env.update(self.env)
         return env
 
