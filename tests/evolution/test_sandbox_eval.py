@@ -23,6 +23,25 @@ pytestmark = pytest.mark.skipif(
     reason="POSIX resource limits unavailable on this platform")
 
 
+@pytest.fixture(autouse=True)
+def _pin_the_subprocess_backend(monkeypatch):
+    """
+    These tests are about evaluation *semantics*, not about containerisation.
+
+    Left on "auto" they run against whichever backend is available, which on a
+    machine with Docker means a `python:3.11-slim` container — an image with no
+    numpy, so the shipped example's evaluator cannot even be imported and every
+    honest candidate "crashes". That is a true statement about that image and a
+    useless one about the evaluation path, and it turned CI red for a reason
+    unrelated to what these tests check.
+
+    The container backend has its own coverage: `tests/oe_max/test_sandbox_mounts.py`
+    for what it exposes, and `OE_MAX_SANDBOX_IMAGE` for pointing it at an image
+    that carries a task's dependencies (SANDBOX.md).
+    """
+    monkeypatch.setenv(sandbox_eval.ENV_BACKEND, "subprocess")
+
+
 OBJECTIVE = '''
 import numpy as np
 

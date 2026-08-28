@@ -68,6 +68,27 @@ a time — an evaluator routinely imports a sibling, and upstream puts its
 directory on `sys.path`. Nothing else is exposed, and nothing is writable, so a
 candidate cannot rewrite the task it is being judged against.
 
+### The image must carry the task's dependencies
+
+The container runs `python:3.11-slim` by default, which has **no third-party
+packages**. The shipped `function_minimization` evaluator imports numpy, so in
+that image it cannot be imported at all and every candidate is reported as
+crashed — a true statement about the image and a misleading one about the
+candidate.
+
+This is inherent to running an arbitrary task in a container, not a defect, so
+the image is configurable rather than fixed:
+
+```bash
+OE_MAX_SANDBOX_IMAGE=my-registry/evolution-task:1.4   # or any image with the
+                                                      # task's dependencies
+```
+
+Precedence is explicit argument → `OE_MAX_SANDBOX_IMAGE` → `python:3.11-slim`.
+Build an image with the task's requirements installed and point this at it;
+there is no way for the sandbox to infer them, and installing at run time is
+not an option because the container has no network by design.
+
 The rest of the isolation is unchanged and is asserted by test:
 `--network none`, a read-only root filesystem, `--cap-drop ALL`,
 `--security-opt no-new-privileges`, memory/pids/CPU ceilings, and no credentials

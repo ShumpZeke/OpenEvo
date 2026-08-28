@@ -228,7 +228,7 @@ Measured on Windows 11 / CPython 3.11.9:
 |---|---|
 | Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
 | Control plane | **402 passed**, 10 skipped |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **317 passed**, 24 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **321 passed**, 24 skipped |
 | BrainPort (OpenCode brain, worker, plugin contract) | **34 passed** |
 | Web typecheck | clean |
 

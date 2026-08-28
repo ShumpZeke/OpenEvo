@@ -43,6 +43,12 @@ from .limits import ResourceLimits, container_runtime, describe_backends
 # because a program printing in a loop is a thing that happens.
 MAX_OUTPUT_BYTES = 64 * 1024
 
+# The container image candidates run in. Deliberately minimal, and deliberately
+# overridable: a task's own dependencies have to be present in the image or its
+# evaluator cannot even be imported.
+DEFAULT_IMAGE = "python:3.11-slim"
+ENV_IMAGE = "OE_MAX_SANDBOX_IMAGE"
+
 # Failure classes, kept coarse on purpose: the caller acts on the class, and
 # the detail is in stderr.
 OK = "ok"
@@ -119,10 +125,16 @@ class SandboxedRunner:
     """
 
     def __init__(self, limits: Optional[ResourceLimits] = None,
-                 backend: str = "auto", image: str = "python:3.11-slim") -> None:
+                 backend: str = "auto", image: Optional[str] = None) -> None:
         self.limits = limits or ResourceLimits()
         self.backend = backend
-        self.image = image
+        # `python:3.11-slim` carries no third-party packages, so a task whose
+        # evaluator imports numpy -- as the shipped example does -- cannot run
+        # in it. That is inherent to running arbitrary tasks in a container
+        # rather than a defect, which is exactly why the image has to be
+        # settable: point OE_MAX_SANDBOX_IMAGE at one that has the task's
+        # dependencies. See SANDBOX.md.
+        self.image = image or os.environ.get(ENV_IMAGE) or DEFAULT_IMAGE
 
     # -- entry points --------------------------------------------------
 

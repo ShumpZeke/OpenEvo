@@ -136,3 +136,71 @@ class TestContainerArgv:
         argv = self._argv(monkeypatch, tmp_path / "work", [])
         assert sum(1 for a in argv if a == "-v") == 1, \
             "only the workdir should be mounted"
+
+
+class TestContainerImage:
+    """
+    `python:3.11-slim` carries no third-party packages, so a task whose
+    evaluator imports numpy — as the shipped example does — cannot be imported
+    inside it and every candidate is reported as crashed. That is a true
+    statement about the image and a misleading one about the candidate.
+
+    Installing at run time is not available: the container has no network by
+    design. So the only workable answer is to point the sandbox at an image
+    that already carries the task's dependencies, which makes the image a
+    setting rather than a constant.
+    """
+
+    def test_the_default_image_is_used_when_nothing_is_configured(self, monkeypatch):
+        from oe_max.execution import runner as runner_mod
+
+        monkeypatch.delenv(runner_mod.ENV_IMAGE, raising=False)
+        r = runner_mod.SandboxedRunner(runner_mod.ResourceLimits())
+
+        assert r.image == runner_mod.DEFAULT_IMAGE
+
+    def test_the_environment_overrides_the_default(self, monkeypatch):
+        from oe_max.execution import runner as runner_mod
+
+        monkeypatch.setenv(runner_mod.ENV_IMAGE, "registry.example/task:1.4")
+        r = runner_mod.SandboxedRunner(runner_mod.ResourceLimits())
+
+        assert r.image == "registry.example/task:1.4"
+
+    def test_an_explicit_argument_beats_the_environment(self, monkeypatch):
+        """
+        A caller that names an image means it; the variable is the fallback for
+        callers that do not.
+        """
+        from oe_max.execution import runner as runner_mod
+
+        monkeypatch.setenv(runner_mod.ENV_IMAGE, "from-env:1")
+        r = runner_mod.SandboxedRunner(runner_mod.ResourceLimits(),
+                                       image="explicit:2")
+
+        assert r.image == "explicit:2"
+
+    def test_the_configured_image_is_what_the_container_runs(
+            self, monkeypatch, tmp_path):
+        """
+        A setting that does not reach the command line is not a setting.
+        """
+        from oe_max.execution import runner as runner_mod
+
+        seen = {}
+
+        class _Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        monkeypatch.setattr(runner_mod, "container_runtime", lambda: "docker")
+        monkeypatch.setattr(runner_mod.subprocess, "run",
+                            lambda argv, **kw: (seen.update(argv=argv), _Completed())[1])
+        monkeypatch.setenv(runner_mod.ENV_IMAGE, "registry.example/task:1.4")
+
+        r = runner_mod.SandboxedRunner(runner_mod.ResourceLimits(),
+                                       backend="container")
+        r._run_container(str(tmp_path), ())
+
+        assert "registry.example/task:1.4" in seen["argv"]
