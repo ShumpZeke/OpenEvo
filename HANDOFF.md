@@ -76,7 +76,7 @@ one — verified again 2026-08-26 — and they sit behind NIM in every chain. A
 route whose credential is absent is filtered out rather than attempted, so a
 checkout with no key falls through to them and still runs.
 
-Tests: `./test.sh` → 431 upstream + 402 control plane + 306 OE-MAX + 34
+Tests: `./test.sh` → 431 upstream + 402 control plane + 317 OE-MAX + 34
 BrainPort. Six upstream tests fail on Windows only; see §9.
 
 ---
@@ -948,7 +948,7 @@ you need the authoritative wording.
 
 ```
 branch     main
-tests      431 upstream + 402 control plane + 306 OE-MAX + 34 BrainPort = 1173 passing
+tests      431 upstream + 402 control plane + 317 OE-MAX + 34 BrainPort = 1184 passing
            + 6 upstream failures that are Windows-only (see below)
 engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
            by tests/evolution/test_patch_surface.py

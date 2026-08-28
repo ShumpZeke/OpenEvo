@@ -116,7 +116,14 @@ def evaluate_in_sandbox(eval_file: str, program_path: str, fn_name: str,
     script = _SCRIPT.format(eval_file=json.dumps(os.path.abspath(eval_file)),
                             program=json.dumps(os.path.abspath(program_path)),
                             fn_name=json.dumps(fn_name))
-    result = runner.run_script(script)
+    # The script above embeds host absolute paths, which a container cannot see
+    # unless they are mounted. Naming them here keeps the exposure minimal and
+    # explicit: the evaluator's directory and the candidate's, read-only, and
+    # nothing else. The subprocess backend already shares the filesystem and
+    # ignores this.
+    result = runner.run_script(
+        script, read_only_paths=(os.path.abspath(eval_file),
+                                 os.path.abspath(program_path)))
     return _payload(result), result
 
 

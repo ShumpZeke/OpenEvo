@@ -35,7 +35,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from .limits import ResourceLimits, container_runtime, describe_backends
 
@@ -80,6 +80,34 @@ def available_backends() -> List[str]:
     return [b["backend"] for b in describe_backends() if b["available"]]
 
 
+def _mount_roots(paths: Sequence[str]) -> List[str]:
+    """
+    The directories to expose, deduplicated and with nested paths collapsed.
+
+    A file is exposed via its directory: an evaluator almost always imports a
+    sibling, and upstream puts the evaluator's directory on `sys.path` before
+    loading it, so mounting the file alone would break exactly the tasks that
+    are not single-file. Nested entries collapse into their ancestor because
+    Docker rejects a mount whose target sits inside another mount.
+    """
+    roots: List[str] = []
+    for raw in paths:
+        if not raw:
+            continue
+        full = os.path.abspath(raw)
+        root = full if os.path.isdir(full) else os.path.dirname(full)
+        if not root or not os.path.exists(root):
+            continue
+        roots.append(root)
+
+    kept: List[str] = []
+    for root in sorted(set(roots), key=len):
+        if any(root == k or root.startswith(k + os.sep) for k in kept):
+            continue
+        kept.append(root)
+    return kept
+
+
 class SandboxedRunner:
     """
     Executes candidate code with resource ceilings.
@@ -110,7 +138,18 @@ class SandboxedRunner:
         script = _RESULT_HARNESS.format(entry=json.dumps(entry)) if entry else ""
         return self.run_script(code + ("\n\n" + script if script else ""))
 
-    def run_script(self, script: str) -> ExecutionResult:
+    def run_script(self, script: str,
+                   read_only_paths: Optional[Sequence[str]] = None) -> ExecutionResult:
+        """
+        Run `script` under the configured ceilings.
+
+        `read_only_paths` names host paths the script must be able to read --
+        an evaluator module and the program under test, typically. The
+        subprocess backend already shares the host filesystem and ignores it;
+        the container backend bind-mounts each one read-only at the same
+        absolute path, so a script written with host paths works unchanged in
+        both. Anything not named here stays invisible to the candidate.
+        """
         backend = self._resolve_backend()
         if backend is None:
             wanted = self.backend
@@ -134,7 +173,7 @@ class SandboxedRunner:
             os.chmod(workdir, 0o755)
             os.chmod(path, 0o644)
             if backend == "container":
-                return self._run_container(workdir)
+                return self._run_container(workdir, read_only_paths or ())
             return self._run_subprocess(workdir)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -199,7 +238,8 @@ class SandboxedRunner:
         return self._classify(proc.returncode, stdout, stderr, duration,
                               workdir, timed_out, "subprocess")
 
-    def _run_container(self, workdir: str) -> ExecutionResult:
+    def _run_container(self, workdir: str,
+                       read_only_paths: Sequence[str] = ()) -> ExecutionResult:
         runtime = container_runtime()
         limits = self.limits
         argv = [
@@ -215,6 +255,13 @@ class SandboxedRunner:
             "-v", f"{workdir}:/work",
             "-w", "/work",
         ]
+        # Each named host path, read-only, at the same absolute path it has on
+        # the host -- the script embeds host paths, so the mount point has to
+        # match or it may as well not be mounted. Directories are mounted whole
+        # because an evaluator is routinely one module among several in its own
+        # directory, and upstream puts that directory on sys.path.
+        for host_path in _mount_roots(read_only_paths):
+            argv += ["-v", f"{host_path}:{host_path}:ro"]
         for key, value in limits.env.items():
             argv += ["-e", f"{key}={value}"]
         argv += [self.image, "python", "-s", "-B", "candidate.py"]

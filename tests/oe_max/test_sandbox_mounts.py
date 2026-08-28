@@ -1,0 +1,138 @@
+"""
+A sandboxed script must be able to read the files it was told to read.
+
+The container backend mounted only its throwaway workdir, while the script it
+runs embeds *host* absolute paths for the evaluator and the candidate program.
+Inside the container those paths do not exist, so a real evaluation died with
+`[Errno 2] No such file or directory` pointing at the evaluator — a "crashed"
+candidate that had never been run.
+
+This went unseen for a simple reason: the sandbox tests skip without POSIX
+resource limits, and the machine they were written on had no container runtime.
+The container path first executed in CI. These tests deliberately exercise the
+*argv construction* rather than a live container, so the wiring stays covered
+on machines with no Docker — which is where it broke.
+"""
+
+import os
+
+import pytest
+
+from oe_max.execution.runner import _mount_roots
+
+
+class TestMountRoots:
+    def test_a_file_is_exposed_through_its_directory(self, tmp_path):
+        """
+        Mounting the file alone would break every task that is not a single
+        module: an evaluator routinely imports a sibling, and upstream puts the
+        evaluator's directory on `sys.path` before loading it.
+        """
+        target = tmp_path / "evaluator.py"
+        target.write_text("x = 1")
+
+        assert _mount_roots([str(target)]) == [str(tmp_path)]
+
+    def test_a_directory_is_exposed_as_itself(self, tmp_path):
+        assert _mount_roots([str(tmp_path)]) == [str(tmp_path)]
+
+    def test_two_files_in_one_directory_collapse_to_one_mount(self, tmp_path):
+        """
+        The common case: evaluator and candidate live side by side. Passing the
+        same target twice would make Docker reject the run.
+        """
+        for name in ("evaluator.py", "initial_program.py"):
+            (tmp_path / name).write_text("x = 1")
+
+        roots = _mount_roots([str(tmp_path / "evaluator.py"),
+                              str(tmp_path / "initial_program.py")])
+
+        assert roots == [str(tmp_path)]
+
+    def test_a_nested_directory_collapses_into_its_ancestor(self, tmp_path):
+        """
+        Docker refuses a mount whose target sits inside another mount, so a
+        nested pair has to become one.
+        """
+        child = tmp_path / "tasks" / "fn_min"
+        child.mkdir(parents=True)
+        (child / "evaluator.py").write_text("x = 1")
+
+        roots = _mount_roots([str(tmp_path), str(child / "evaluator.py")])
+
+        assert roots == [str(tmp_path)]
+
+    def test_a_path_that_does_not_exist_is_dropped(self):
+        """
+        Better a script that fails on its own missing file than a container
+        that refuses to start and reports nothing about the candidate.
+        """
+        assert _mount_roots([os.path.join(os.sep, "nope", "missing.py")]) == []
+
+    @pytest.mark.parametrize("paths", [(), ("",), (None,)])
+    def test_nothing_to_mount_is_not_an_error(self, paths):
+        assert _mount_roots([p for p in paths if p is not None] or []) == []
+
+
+class TestContainerArgv:
+    """
+    The mounts have to actually reach the command line, read-only, at the same
+    absolute path they have on the host — a mount at a different path is no
+    better than no mount, because the script's paths are baked in.
+    """
+
+    def _argv(self, monkeypatch, tmp_path, read_only_paths):
+        from oe_max.execution import runner as runner_mod
+
+        seen = {}
+
+        class _Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            seen["argv"] = argv
+            return _Completed()
+
+        monkeypatch.setattr(runner_mod, "container_runtime", lambda: "docker")
+        monkeypatch.setattr(runner_mod.subprocess, "run", fake_run)
+
+        r = runner_mod.SandboxedRunner(runner_mod.ResourceLimits(), backend="container")
+        r._run_container(str(tmp_path), read_only_paths)
+        return seen["argv"]
+
+    def test_each_named_path_is_mounted_read_only_at_the_same_path(
+            self, monkeypatch, tmp_path):
+        task = tmp_path / "task"
+        task.mkdir()
+        (task / "evaluator.py").write_text("x = 1")
+
+        argv = self._argv(monkeypatch, tmp_path / "work",
+                          [str(task / "evaluator.py")])
+
+        assert f"{task}:{task}:ro" in argv
+
+    def test_the_isolation_flags_are_not_weakened_by_the_mounts(
+            self, monkeypatch, tmp_path):
+        """
+        Exposing task files must not become a way in. The network stays off,
+        the root filesystem stays read-only, capabilities stay dropped.
+        """
+        task = tmp_path / "task"
+        task.mkdir()
+
+        argv = self._argv(monkeypatch, tmp_path / "work", [str(task)])
+
+        assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
+        assert "--read-only" in argv
+        assert "--cap-drop" in argv and argv[argv.index("--cap-drop") + 1] == "ALL"
+        # And the exposure is read-only, never writable.
+        assert not any(a.endswith(f":{task}") for a in argv), \
+            "a task path was mounted writable"
+
+    def test_no_mounts_are_added_when_none_are_asked_for(
+            self, monkeypatch, tmp_path):
+        argv = self._argv(monkeypatch, tmp_path / "work", [])
+        assert sum(1 for a in argv if a == "-v") == 1, \
+            "only the workdir should be mounted"
