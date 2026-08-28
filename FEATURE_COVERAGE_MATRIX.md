@@ -19,7 +19,7 @@ extended · `PARTIAL` built with stated gaps · `DEFERRED` not built, reason giv
 | 7 | OpenCode sandbox as optional backend | PARTIAL | isolation enforced+tested; executors not built |
 | 8 | Sandbox candidate execution | DEFERRED | boundary built; executors not — [SANDBOX.md](SANDBOX.md) |
 | 9 | Pluggable OpenAI-compatible routing | NEW | `providers/` |
-| 10 | Ox Alpha preferred, NIM fallback | NEW | capability-aware; [PROVIDERS.md](PROVIDERS.md) |
+| 10 | NIM preferred, keyless Zen fallback | NEW | capability-aware; NIM leads every chain since 2026-08-27 — [PROVIDERS.md](PROVIDERS.md) |
 | 11 | MAP-Elites/islands/candidates first-class | NEW | dedicated views + projections |
 | 12 | Long runs, large histories | NEW | pagination, downsampling, canvas, indexes |
 | 13 | Reproducibility | NEW | provenance block per run |
@@ -136,10 +136,10 @@ Adapter layer, runtime hooks, isolated frontend package, compatibility tests,
 | 21 | Tests document what was validated | ✅ [TEST_STRATEGY.md](TEST_STRATEGY.md) |
 | 22 | Usable at 1080p and ultrawide | ✅ verified 1920×1080; fluid grid |
 | 23 | Upstream merge documented | ✅ [UPSTREAM_SYNC_STRATEGY.md](UPSTREAM_SYNC_STRATEGY.md) |
-| 24 | No core feature silently removed | ✅ this matrix + 437 tests |
-| 25 | Doctor resolves Ox Alpha first | ✅ priority 0, probed first |
+| 24 | No core feature silently removed | ✅ this matrix + 1184 passing tests |
+| 25 | Doctor resolves the primary first | ✅ NIM at priority 0, probed first |
 | 26 | Automatic fallback when unavailable | ✅ circuit breaker + chains, tested |
-| 27 | Never labels Ox Alpha permanently unlimited | ✅ three-valued status, asserted in tests |
+| 27 | Never labels a free route permanently unlimited | ✅ three-valued status, asserted in tests |
 
 **22 met · 4 partial (13, 18, 19 — verified in principle but not at scale/on
 Windows/for native evaluation) · 1 not met (15).**

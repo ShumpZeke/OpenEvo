@@ -19,12 +19,12 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 | Reuse MAP-Elites, islands, migration, DB, cascade, checkpoints, prompts, visualizer | DONE | upstream, untouched | 437 tests |
 | Build around/above upstream, not a lookalike | DONE | broker + `control_plane/` | OpenEvolve runs unmodified through the broker |
 
-## §3 Ox Alpha primary
+## §3 Primary route (NVIDIA NIM since 2026-08-27)
 
 | Requirement | Status | Location | Evidence |
 |---|---|---|---|
-| Verify live provider data before finalising config | DONE | `providers/registry.py` | 64 models discovered live; `x-preview-f-free` confirmed |
-| Ox Alpha as primary generator/reasoner | DONE | `router.DEFAULT_CHAIN` | Head of every chain |
+| Verify live provider data before finalising config | DONE | `providers/registry.py` | Models discovered live, then smoke-tested; 4 of NIM's 9 configured ids failed that probe |
+| A verified primary generator/reasoner | DONE | `router.DEFAULT_CHAIN`, `oe_max/roles.py` | NVIDIA NIM heads every chain. The spec named Ox Alpha; the provider withdrew it 2026-08-26 and the operator removed it 2026-08-27, so the requirement is met by NIM instead |
 | Never claim permanent availability | DONE | `ModelSpec.ephemeral_preview`, docs | Marked ephemeral; no permanence claimed anywhere |
 | Model slugs never immutable constants | DONE | `providers/registry.py` | IDs are `ModelSpec` data; swapping is a config edit |
 | Startup health checks detect missing/renamed routes | DONE | `/v1/oe-max/verify` | Two-stage: discover, then smoke-test |
