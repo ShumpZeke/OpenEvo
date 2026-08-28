@@ -276,6 +276,7 @@ fork, not merely a control-plane bug.
 |---|---|
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | **clone, build, test, and the rules that are load-bearing** |
 | **[LOCAL_MODE.md](LOCAL_MODE.md)** | **running entirely on your own machine, with no credentials** |
+| [SCIENTIFIC_TOOLS.md](SCIENTIFIC_TOOLS.md) | local computation, and why a result is not a boolean |
 | **[HANDOFF.md](HANDOFF.md)** | **start here if you are continuing this work** |
 | **[NEXT_TASKS.md](NEXT_TASKS.md)** | **prioritised work queue with rationale** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |

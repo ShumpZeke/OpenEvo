@@ -8,6 +8,55 @@ Read `HANDOFF.md` first — especially §3, the traps.
 
 ---
 
+## T0a — Run local mode against a real local LLM
+
+**Priority:** highest. **Effort:** minutes, once a server is installed.
+**Blocked by:** no Ollama/LM Studio/vLLM/llama.cpp on this machine.
+**Status:** the whole path is built and verified; only a real model is missing.
+
+### Why
+
+Local mode is verified end to end *except for the model*. On 2026-08-28 a broker
+started with `OE_MAX_LOCAL_ONLY=1` discovered a local OpenAI-compatible server,
+built its chains from the discovered listing, and ran a 6-iteration evolution to
+`combined_score 1.4198` — 6 requests served, 0 failed, only the four local
+adapters in the process.
+
+That server was `scripts/local_provider.py`: a genuine HTTP server, and a
+deterministic generator rather than a model. So discovery, materialisation,
+chain construction, routing, the offline guarantee and a full evolution cycle
+are proven, and **no local model has generated a mutation here**.
+
+### How
+
+```bash
+ollama pull qwen2.5-coder:7b
+OE_MAX_LOCAL_ONLY=1 ./scripts/start-broker.sh
+curl -s 127.0.0.1:8787/health | grep routes      # the pulled model should appear
+./scripts/run-evolution.sh --config configs/oe_max/local.yaml --iterations 12
+```
+
+### Done when
+
+A run is recorded in BENCHMARKS.md with the local model named, next to the
+hosted numbers and clearly separated. The interesting figure is not the score —
+it is candidates per request, because that is where a small model is expected to
+differ most from a hosted one.
+
+### Careful
+
+Expect to tune `max_tokens` and the timeouts together, never alone
+(§3.3). A small model that reasons before answering hits exactly the truncation
+failure in §3.2, and it will look like "the diff was empty" rather than like a
+budget problem. `configs/oe_max/local.yaml` starts at 4,096 tokens and a 1,800s
+ceiling for that reason.
+
+Do not read a weak score as "local mode does not work". A 7B model producing
+poor mutations is a fact about the model; the plumbing carrying them is what
+was built here, and it is already proven.
+
+---
+
 ## T0 — Record one live BrainPort run against a real OpenCode host
 
 **Priority:** highest. **Effort:** small to run. **Blocked by:** an OpenCode host.
