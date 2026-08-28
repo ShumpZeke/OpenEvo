@@ -226,6 +226,62 @@ _TOOLS_ISSUE = (
 )
 
 
+def local_profiles() -> List[ModelProfile]:
+    """
+    One profile per local OpenAI-compatible server, enabled and role-complete.
+
+    This layer is what the *agent* routes through — `ModelRouter`, not the
+    broker's registry — so without it "fully local" covered evolution and left
+    the tool-using agent unable to reach anything but a commercial endpoint.
+
+    Every role is listed. On a machine running one model there is nothing to
+    specialise between, and omitting a role would strand it with no route at
+    all rather than with a merely imperfect one.
+    """
+    from oe_max.providers.local import LOCAL_SERVERS, base_url_for
+
+    every_role = list(Role)
+    out: List[ModelProfile] = []
+    for name, _var, _default, label in LOCAL_SERVERS:
+        out.append(ModelProfile(
+            id=f"local-{name}",
+            provider=name,
+            # The id is resolved at request time from the server's own listing.
+            # A name written here would be a guess about someone else's machine.
+            model=os.environ.get("EVOLUTION_LOCAL_MODEL", ""),
+            api_base=base_url_for(name),
+            secret_ref=None,
+            display_name=f"{label} (local)",
+            # All four servers implement the OpenAI tools API; whether a given
+            # *model* honours it varies, and that is what the doctor probes.
+            #
+            # Declaring CHAT alone was tried first and is worse: every
+            # tool-requiring role (orchestrator, planning, review, architecture)
+            # then has no route at all, so the agent cannot run locally under
+            # any model. A declaration the doctor can withdraw from measurement
+            # beats a guaranteed dead end -- and the capability filter already
+            # self-corrects downward, which is exactly the case it exists for.
+            declared_capabilities=[
+                Capability.CHAT, Capability.TOOLS, Capability.STREAMING,
+            ],
+            free_status=FreeStatus.FREE,
+            free_note="Runs on the operator's own hardware; no metering.",
+            requires_key=False,
+            priority=0,
+            # One at a time: parallel requests to a single local server queue at
+            # the model rather than running concurrently, and on a saturated GPU
+            # they compete for the same memory.
+            max_concurrency=1,
+            roles=every_role,
+            enabled=True,
+            notes=(
+                f"{label} on {base_url_for(name)}. Reachability is probed, never "
+                "assumed — a server that is not running simply serves nothing."
+            ),
+        ))
+    return out
+
+
 def default_profiles() -> List[ModelProfile]:
     """
     The shipped default routing table.
@@ -236,6 +292,16 @@ def default_profiles() -> List[ModelProfile]:
     install with no NVIDIA_API_KEY still serves rather than failing — a route
     that needs an absent credential is filtered out, not attempted.
     """
+    from oe_max.providers.local import local_only
+
+    if local_only():
+        # The same guarantee the broker's registry makes, made here: the
+        # commercial profiles are never constructed, so the agent's router has
+        # nothing remote to select even if a role chain named it. Disabling
+        # them would leave them selectable by any code path that forgot to
+        # check `enabled`.
+        return local_profiles()
+
     return [
         # ------- Zen, tools-capable (verified working per issue #44300) -------
         ModelProfile(
@@ -574,6 +640,16 @@ def default_role_chains() -> Dict[Role, List[str]]:
         "nim-nemotron-3-ultra", "nim-nemotron-3-super-120b", "nim-kimi-k3",
         "zen-nemotron-3-ultra-free", "zen-laguna-s21-free", "zen-hy3-free",
     ]
+    from oe_max.providers.local import local_only
+
+    if local_only():
+        # Every role gets every local server, in declaration order. There is no
+        # basis for ranking them — which one is "better" depends on what the
+        # operator loaded into each — and inventing an order would read as a
+        # measurement nobody took.
+        local_chain = [profile.id for profile in local_profiles()]
+        return {role: list(local_chain) for role in Role}
+
     def ordered(*groups: List[str]) -> List[str]:
         """
         Concatenate preference groups, keeping first occurrence only.

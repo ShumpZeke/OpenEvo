@@ -82,6 +82,54 @@ things genuinely change:
   local server queue at the model rather than running in parallel, and on a
   saturated GPU they compete for the same memory.
 
+## Both routing layers, not just one
+
+There are two model routers in this repository and the switch has to cover both,
+because they serve different callers:
+
+| Layer | Used by | Local-only behaviour |
+|---|---|---|
+| `oe_max/providers/registry.py` | the broker, i.e. **evolution** | only the four local adapters are constructed |
+| `control_plane/providers/profiles.py` | `ModelRouter`, i.e. the **agent** | only local profiles are constructed, every role |
+
+Covering only the first was the state this landed in first, and it is worse than
+covering neither: the switch reads as covering everything, so an agent quietly
+reaching a commercial endpoint while the run beside it could not would be very
+hard to notice.
+
+## The agent, and its tools
+
+`control_plane/agent/` is a tool-using runtime: a goal is decomposed into tasks,
+each task is a conversation in an isolated execution world, and every tool call
+and result is a typed event so the run replays from its log.
+
+The tools it exposes to a model:
+
+| | |
+|---|---|
+| files | `read_file`, `write_file`, `file_metadata`, `glob`, `search_text` |
+| shell | `shell` (bounded by timeout, inside the world) |
+| git | `git_status`, `git_diff_stat`, and worktree isolation per candidate |
+| processes | `process_start`, `process_read`, `process_write`, `process_wait`, `process_terminate` |
+
+The process tools are the ones worth calling out: they run a *persistent*
+program without a shell, so a model can start a server or a REPL, read its
+output incrementally, write to its stdin and terminate it with its children —
+rather than being limited to one-shot commands.
+
+In local-only mode every role — including the tool-requiring ones
+(`orchestrator`, `planning`, `review`, `architecture`) — routes to a local
+server. The local profiles declare `TOOLS`, which is a claim about the *server*:
+all four implement the OpenAI tools API, while whether a given model honours it
+varies. The doctor probes and can withdraw the capability from measurement. The
+alternative — declaring `CHAT` only — was tried first and leaves every
+tool-requiring role with no route at all, so the agent cannot run locally under
+any model.
+
+`OpenEvolve` gets `run_native_model_agent()` and friends from
+`control_plane.native.install()`, which binds them at runtime. They are
+deliberately *not* methods on upstream's controller — see `PATCH_SURFACE.md`.
+
 ## Scientific tools, also local
 
 `control_plane/scientific/` routes structured problems to whatever computation

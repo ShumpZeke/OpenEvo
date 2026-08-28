@@ -208,3 +208,76 @@ class TestLocalRoutes:
             assert local_mod.is_local_provider(name)
         for name in ("nvidia_nim", "opencode_zen", "openrouter"):
             assert not local_mod.is_local_provider(name)
+
+
+class TestTheAgentLayerIsAlsoLocal:
+    """
+    `OE_MAX_LOCAL_ONLY` has to cover both routing layers, not just one.
+
+    The broker's registry is what *evolution* uses. The control plane's
+    `ModelRouter` is what the tool-using **agent** uses, and it is a separate
+    table with its own profiles. Guaranteeing only the first left the agent able
+    to reach a commercial endpoint while the run beside it could not — the kind
+    of half-guarantee that is worse than none, because the switch reads as
+    covering everything.
+    """
+
+    def test_only_local_profiles_are_constructed(self, monkeypatch):
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        from control_plane.providers import profiles as profiles_mod
+
+        profiles = profiles_mod.default_profiles()
+
+        assert profiles, "local-only produced no profile at all"
+        for profile in profiles:
+            assert profile.id.startswith("local-"), profile.id
+            assert "127.0.0.1" in profile.api_base, profile.api_base
+            assert profile.requires_key is False, profile.id
+
+    def test_every_agent_role_has_a_local_route(self, monkeypatch):
+        """
+        Including the tool-requiring ones. Declaring CHAT alone was tried and
+        left orchestrator, planning, review and architecture with no route at
+        all, so the agent could not run locally under any model.
+        """
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        from control_plane.providers.profiles import Role
+        from control_plane.providers.router import ModelRouter
+
+        router = ModelRouter()
+        for role in Role:
+            chosen = router.select(role)
+            router.release(chosen.id, ok=True, latency_ms=1.0)
+            assert chosen.id.startswith("local-"), (role.value, chosen.id)
+
+    def test_no_role_chain_names_a_commercial_profile(self, monkeypatch):
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        from control_plane.providers import profiles as profiles_mod
+
+        for role, chain in profiles_mod.default_role_chains().items():
+            assert chain, f"{role.value} has no chain"
+            for profile_id in chain:
+                assert profile_id.startswith("local-"), (role.value, profile_id)
+
+    def test_the_commercial_profiles_return_when_the_switch_is_off(self, monkeypatch):
+        """Local mode is a restriction, not a different build."""
+        monkeypatch.delenv(local_mod.ENV_LOCAL_ONLY, raising=False)
+        from control_plane.providers import profiles as profiles_mod
+
+        ids = {p.id for p in profiles_mod.default_profiles()}
+
+        assert any(i.startswith("nim-") for i in ids)
+        assert any(i.startswith("zen-") for i in ids)
+
+    def test_no_local_profile_hardcodes_a_model_name(self, monkeypatch):
+        """
+        Same rule as the broker's registry: a model name written here would be
+        a guess about someone else's machine.
+        """
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        monkeypatch.delenv("EVOLUTION_LOCAL_MODEL", raising=False)
+        from control_plane.providers import profiles as profiles_mod
+
+        for profile in profiles_mod.default_profiles():
+            assert profile.model == "", (
+                f"{profile.id} ships the model name {profile.model!r}")
