@@ -61,6 +61,9 @@ from typing import Any, Dict, List, Optional
 DEFAULT_CPU_SECONDS = 30
 DEFAULT_MEMORY_MB = 1024
 DEFAULT_FILE_SIZE_MB = 64
+# How many processes/threads a candidate may add *beyond* what the user already
+# has. Not an absolute ceiling -- see ResourceLimits._nproc_ceiling for why an
+# absolute one cannot work.
 DEFAULT_PROCESSES = 64
 DEFAULT_WALL_SECONDS = 60.0
 
@@ -72,6 +75,44 @@ DEFAULT_WALL_SECONDS = 60.0
 # the credentials — which is precisely what a sandbox is for.
 ENV_ALLOWLIST = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "PYTHONHASHSEED",
                  "PYTHONDONTWRITEBYTECODE")
+
+
+def _current_user_processes() -> int:
+    """
+    How many processes and threads this user already has, best-effort.
+
+    Only used to offset a ceiling, so an over-estimate costs a little headroom
+    and an under-estimate costs a little strictness; neither is a correctness
+    problem, and both beat refusing to run. Returns a conservative default when
+    it cannot tell, because guessing zero would reintroduce exactly the bug this
+    exists to avoid.
+    """
+    try:
+        import psutil
+
+        # `uids` is a POSIX-only attribute and psutil rejects it outright on
+        # Windows -- from process_iter itself, not per process, so asking for it
+        # unconditionally throws away the whole count.
+        uid = os.getuid() if hasattr(os, "getuid") else None
+        attrs = ["num_threads"] + (["uids"] if uid is not None else [])
+        total = 0
+        for proc in psutil.process_iter(attrs):
+            try:
+                info = proc.info
+                if uid is not None:
+                    uids = info.get("uids")
+                    if uids is None or uids.real != uid:
+                        continue
+                total += info.get("num_threads") or 1
+            except Exception:
+                continue
+        if total:
+            return total
+    except Exception:
+        pass
+    # No psutil, no /proc, or an unreadable one. 1024 is chosen to be larger
+    # than a normal desktop or CI session and still far below a fork bomb.
+    return 1024
 
 
 @dataclass
@@ -91,11 +132,12 @@ class ResourceLimits:
         """(resource, (soft, hard)) pairs, skipping any this platform lacks."""
         import resource
 
+        nproc = self._nproc_ceiling()
         pairs = [
             ("RLIMIT_CPU", (self.cpu_seconds, self.cpu_seconds + 1)),
             ("RLIMIT_AS", (self.memory_mb * 1024 * 1024,) * 2),
             ("RLIMIT_FSIZE", (self.file_size_mb * 1024 * 1024,) * 2),
-            ("RLIMIT_NPROC", (self.processes, self.processes)),
+            ("RLIMIT_NPROC", (nproc, nproc)),
             ("RLIMIT_CORE", (0, 0)),
         ]
         out = []
@@ -104,6 +146,29 @@ class ResourceLimits:
             if limit is not None:
                 out.append((limit, values))
         return out
+
+    def _nproc_ceiling(self) -> int:
+        """
+        The absolute RLIMIT_NPROC value that lets this candidate add
+        `self.processes` and no more.
+
+        RLIMIT_NPROC is a limit on the **user's** total processes and threads,
+        not this process's. Setting it to `self.processes` therefore does not
+        mean "the candidate may create 64"; it means "this user may have 64 in
+        total", which on any machine already past that -- a CI runner, a shared
+        box, a desktop with a browser open -- makes even the first thread fail.
+
+        That failure is not loud. The evaluator's own worker thread is usually
+        what hits it first, so it reports "can't start new thread", returns
+        zeroed metrics, and exits cleanly. A hostile candidate then looks
+        handled while never having run, which is the worst possible reading of
+        a sandbox result.
+
+        Counting the user's current usage and adding the allowance keeps the
+        fork-bomb ceiling a fixed distance away while letting an ordinary
+        evaluator start the threads it needs.
+        """
+        return _current_user_processes() + self.processes
 
     def child_env(self) -> Dict[str, str]:
         """The environment the candidate runs with: allowlisted, then extras."""

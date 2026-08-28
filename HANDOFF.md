@@ -76,7 +76,7 @@ one — verified again 2026-08-26 — and they sit behind NIM in every chain. A
 route whose credential is absent is filtered out rather than attempted, so a
 checkout with no key falls through to them and still runs.
 
-Tests: `./test.sh` → 431 upstream + 402 control plane + 324 OE-MAX + 34
+Tests: `./test.sh` → 431 upstream + 402 control plane + 328 OE-MAX + 34
 BrainPort. Six upstream tests fail on Windows only; see §9.
 
 ---
@@ -204,6 +204,23 @@ so the plain upstream CLI is untouched. Pinned by
 
 If you ever see a run producing candidates with zero model requests, check the
 emitting PID count in `events.ndjson` before anything else.
+
+### 3.5d RLIMIT_NPROC counts the user, and a too-tight one fakes a passing test
+
+`processes: 64` reads as "the candidate may create 64". The kernel applies
+RLIMIT_NPROC **per UID**, counting everything that user already has, so on a
+machine already past 64 the candidate cannot create one thread.
+
+What makes this worth a trap entry is not the failure, it is the *shape* of it.
+The evaluator's own worker thread hits the wall first, so it reports `can't
+start new thread`, returns zeroed metrics and exits 0. The sandbox then reports
+`ok`. Measured on CI: the honest seed program "evaluated normally" with
+combined_score 0.0, and the memory-bomb and infinite-loop tests both reported
+their candidate as **not stopped** — because it had never run.
+
+A limit that silently prevents the evaluation, and thereby makes a containment
+test pass, is worse than no limit. `ResourceLimits.processes` is now an
+allowance above current usage rather than an absolute ceiling.
 
 ### 3.5c A sandboxed candidate cannot import numpy without pinning BLAS threads
 
@@ -966,7 +983,7 @@ you need the authoritative wording.
 
 ```
 branch     main
-tests      431 upstream + 402 control plane + 324 OE-MAX + 34 BrainPort = 1191 passing
+tests      431 upstream + 402 control plane + 328 OE-MAX + 34 BrainPort = 1195 passing
            + 6 upstream failures that are Windows-only (see below)
 engine     openevolve 411fb59c (v0.3.2), byte-identical, Apache-2.0, now enforced
            by tests/evolution/test_patch_surface.py

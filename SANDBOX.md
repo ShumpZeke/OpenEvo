@@ -68,6 +68,25 @@ a time — an evaluator routinely imports a sibling, and upstream puts its
 directory on `sys.path`. Nothing else is exposed, and nothing is writable, so a
 candidate cannot rewrite the task it is being judged against.
 
+### The process ceiling counts the whole user
+
+`RLIMIT_NPROC` is not per-process. The kernel applies it per **UID**, counting
+every process and thread that user already has, so a limit of 64 does not mean
+"this candidate may create 64" — it means "this user may have 64 in total". On
+a laptop that distinction never shows. On a CI runner or any shared machine
+already past the number, the candidate cannot create a single thread.
+
+That failure is quiet and it corrupts the result rather than reporting it. The
+evaluator's own worker thread hits the wall first, reports `can't start new
+thread`, returns zeroed metrics and exits cleanly — at which point a memory bomb
+and an infinite loop both look **handled**, having never run. A sandbox that
+reports a hostile candidate as contained because its own limit stopped the
+evaluator is worse than one with no limit at all, because the test still passes.
+
+`ResourceLimits.processes` is therefore an *allowance*, not an absolute: the
+ceiling is `current user usage + processes`. A fork bomb still meets a wall a
+fixed distance away, and an ordinary evaluator gets the threads it needs.
+
 ### The process ceiling and numeric thread pools
 
 `RLIMIT_NPROC` is the sandbox's defence against a fork bomb, and it interacts

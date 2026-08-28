@@ -260,3 +260,91 @@ class TestSandboxThreadPools:
             assert not any("nvapi-should-not-appear" == v for v in env.values())
         finally:
             os.environ.pop("NVIDIA_API_KEY", None)
+
+
+class TestProcessCeiling:
+    """
+    RLIMIT_NPROC limits the **user**, not the process.
+
+    `processes: 64` reads as "this candidate may create 64 processes". It is
+    not: the kernel applies RLIMIT_NPROC per UID, counting everything that user
+    already has. On a laptop with a few dozen processes the distinction never
+    shows; on a CI runner already well past 64 it means the candidate cannot
+    create even one thread.
+
+    The failure is quiet and it corrupts the result rather than reporting it.
+    The evaluator's own worker thread hits the wall first, so it reports "can't
+    start new thread", returns zeroed metrics and exits 0 — at which point a
+    memory bomb and an infinite loop both look *handled*, having never run. A
+    sandbox that reports a hostile candidate as contained because its own limit
+    stopped the evaluator is worse than one with no limit, because the test
+    still passes.
+    """
+
+    def test_the_ceiling_is_measured_from_current_usage(self, monkeypatch):
+        from oe_max.execution import limits as limits_mod
+
+        monkeypatch.setattr(limits_mod, "_current_user_processes", lambda: 900)
+        ceiling = limits_mod.ResourceLimits(processes=64)._nproc_ceiling()
+
+        assert ceiling == 964, (
+            "the ceiling must leave room above what the user already has, or a "
+            "busy machine cannot start a single thread")
+
+    def test_the_allowance_is_what_the_candidate_may_add(self, monkeypatch):
+        """The knob means headroom, and headroom is what changes with it."""
+        from oe_max.execution import limits as limits_mod
+
+        monkeypatch.setattr(limits_mod, "_current_user_processes", lambda: 500)
+
+        tight = limits_mod.ResourceLimits(processes=8)._nproc_ceiling()
+        loose = limits_mod.ResourceLimits(processes=256)._nproc_ceiling()
+
+        assert loose - tight == 248
+
+    def test_a_fork_bomb_still_meets_a_wall(self, monkeypatch):
+        """
+        Offsetting must not become "no limit". The ceiling stays a fixed
+        distance above current usage, so unbounded spawning still terminates.
+        """
+        from oe_max.execution import limits as limits_mod
+
+        monkeypatch.setattr(limits_mod, "_current_user_processes", lambda: 5_000)
+        ceiling = limits_mod.ResourceLimits(processes=64)._nproc_ceiling()
+
+        assert ceiling == 5_064
+        assert ceiling < 10_000, "the ceiling has to stay a ceiling"
+
+    def test_counting_failure_does_not_produce_an_unusable_ceiling(self, monkeypatch):
+        """
+        If the count cannot be taken, guessing zero would reinstate exactly the
+        bug this exists to avoid, so the fallback is deliberately generous.
+        """
+        import builtins
+
+        from oe_max.execution import limits as limits_mod
+
+        real_import = builtins.__import__
+
+        def no_psutil(name, *a, **kw):
+            if name == "psutil":
+                raise ImportError("no psutil")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", no_psutil)
+
+        assert limits_mod._current_user_processes() >= 1024
+
+    @pytest.mark.skipif(not hasattr(os, "getuid"),
+                        reason="RLIMIT_* is POSIX-only; the ceiling it feeds "
+                               "cannot be asserted where setrlimit does not exist")
+    def test_the_ceiling_reaches_the_rlimit_tuple(self, monkeypatch):
+        """A computed ceiling that never reaches setrlimit is not a ceiling."""
+        import resource
+
+        from oe_max.execution import limits as limits_mod
+
+        monkeypatch.setattr(limits_mod, "_current_user_processes", lambda: 700)
+        pairs = dict(limits_mod.ResourceLimits(processes=64).as_rlimits())
+
+        assert pairs[resource.RLIMIT_NPROC] == (764, 764)

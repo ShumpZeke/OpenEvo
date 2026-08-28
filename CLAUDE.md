@@ -68,7 +68,7 @@ other agent may already have fixed the thing you were about to fix.
 ## Before pushing
 
 ```bash
-./test.sh     # 431 upstream + 402 control plane + 324 OE-MAX + 34 BrainPort
+./test.sh     # 431 upstream + 402 control plane + 328 OE-MAX + 34 BrainPort
               # 6 upstream tests fail on Windows only (platform, not regression)
               # -- see TEST_STRATEGY.md; do NOT 'fix' them by editing openevolve/
 ```
