@@ -14,12 +14,12 @@ extended · `PARTIAL` built with stated gaps · `DEFERRED` not built, reason giv
 | 2 | Preserve upstream behaviour | PRESERVED | 437 upstream tests pass |
 | 3 | Preserve the CLI | PRESERVED | `openevolve-run` unchanged in `[project.scripts]` |
 | 4 | Preserve/expose classic visualizer | PRESERVED | `scripts/visualizer.py` unmodified; `/api/classic`; `./run.sh classic` |
-| 5 | Add a Control Center | NEW | 19 views, React/TS |
+| 5 | Add a Control Center | NEW | 20 views, React/TS |
 | 6 | Structured telemetry at engine boundary | NEW | `telemetry/instrument.py`, 60+ event types |
 | 7 | OpenCode sandbox as optional backend | PARTIAL | isolation enforced+tested; executors not built |
-| 8 | Sandbox candidate execution | DEFERRED | boundary built; executors not — [SANDBOX.md](SANDBOX.md) |
+| 8 | Sandbox candidate execution | DEFERRED | boundary built; executors not — [../sandbox.md](../sandbox.md) |
 | 9 | Pluggable OpenAI-compatible routing | NEW | `providers/` |
-| 10 | NIM preferred, keyless Zen fallback | NEW | capability-aware; NIM leads every chain since 2026-08-27 — [PROVIDERS.md](PROVIDERS.md) |
+| 10 | NIM preferred, keyless Zen fallback | NEW | capability-aware; NIM leads every chain since 2026-08-27 — [../providers.md](../providers.md) |
 | 11 | MAP-Elites/islands/candidates first-class | NEW | dedicated views + projections |
 | 12 | Long runs, large histories | NEW | pagination, downsampling, canvas, indexes |
 | 13 | Reproducibility | NEW | provenance block per run |
@@ -107,7 +107,7 @@ reference, redaction pipeline — **NEW**.
 ## §27 Upstream compatibility
 
 Adapter layer, runtime hooks, isolated frontend package, compatibility tests,
-`PATCH_SURFACE.md`, `UPSTREAM_SYNC_STRATEGY.md` — **NEW**. Patch surface empty.
+`../patch-surface.md`, `../upstream-sync.md` — **NEW**. Patch surface empty.
 
 ## §35 Acceptance criteria
 
@@ -130,12 +130,12 @@ Adapter layer, runtime hooks, isolated frontend package, compatibility tests,
 | 15 | OpenCode sandbox runs a benchmark candidate | ❌ **not implemented** — reported disabled |
 | 16 | OMO optional and dynamically verified | ✅ probed, not hardcoded |
 | 17 | OMO failure doesn't break core | ✅ absence is a normal path |
-| 18 | Candidate can't modify unrelated host files | ⚠️ isolation enforced for OpenCode; native evaluator keeps upstream's model ([SECURITY.md](SECURITY.md)) |
+| 18 | Candidate can't modify unrelated host files | ⚠️ isolation enforced for OpenCode; native evaluator keeps upstream's model ([SECURITY.md](../../SECURITY.md)) |
 | 19 | Windows bootstrap on a clean system | ⚠️ written, **not executed on Windows** |
 | 20 | Linux bootstrap on a clean system | ✅ this environment |
-| 21 | Tests document what was validated | ✅ [TEST_STRATEGY.md](TEST_STRATEGY.md) |
+| 21 | Tests document what was validated | ✅ [../testing.md](../testing.md) |
 | 22 | Usable at 1080p and ultrawide | ✅ verified 1920×1080; fluid grid |
-| 23 | Upstream merge documented | ✅ [UPSTREAM_SYNC_STRATEGY.md](UPSTREAM_SYNC_STRATEGY.md) |
+| 23 | Upstream merge documented | ✅ [../upstream-sync.md](../upstream-sync.md) |
 | 24 | No core feature silently removed | ✅ this matrix + 1280 passing tests |
 | 25 | Doctor resolves the primary first | ✅ NIM at priority 0, probed first |
 | 26 | Automatic fallback when unavailable | ✅ circuit breaker + chains, tested |

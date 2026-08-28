@@ -3,7 +3,7 @@ Bandit state crossing the process boundary.
 
 The bandit was built, tested and unused for one structural reason: selection
 happens in a worker and reward is known in the main process, and they share no
-memory. HANDOFF §3.7 covers worker→main (`Program.metadata`); this is the other
+memory. docs/gotchas.md covers worker→main (`Program.metadata`); this is the other
 direction, which had no channel at all.
 
 These tests treat a fresh `BanditStore` object as a stand-in for a different

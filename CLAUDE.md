@@ -1,14 +1,15 @@
 # Working in this repository
 
-Read `HANDOFF.md` before making changes. `NEXT_TASKS.md` has the prioritised
-queue. This file is the short version of the rules that are load-bearing.
+Documentation index: `docs/README.md`. Read `docs/gotchas.md` before debugging
+anything, and `docs/project/roadmap.md` for the prioritised queue. This file is
+the short version of the rules that are load-bearing.
 
 ## Hard rules
 
 1. **Never edit `openevolve/`.** It is byte-identical to upstream `411fb59c`,
    which is what makes upstream merges fast-forward. Add behaviour by wrapping
    public methods at runtime — `control_plane/telemetry/instrument.py` is the
-   pattern. If you genuinely must edit it, record it in `PATCH_SURFACE.md` with
+   pattern. If you genuinely must edit it, record it in `docs/patch-surface.md` with
    the reason.
 
 2. **No fabricated data in the UI.** There are no fixtures in `web/` and there
@@ -22,7 +23,7 @@ queue. This file is the short version of the rules that are load-bearing.
    catalogue providers are unverified for inference in this repo and labelled
    as such everywhere. NVIDIA NIM is no longer in that set — it was verified
    with a real key on 2026-08-28 and 5 of its 9 configured ids serve
-   (HANDOFF §4i). Keep the discipline in both directions: a label that is stale
+   (`docs/project/handoff.md` §4i). Keep the discipline in both directions: a label that is stale
    in the pessimistic direction is as wrong as one that overclaims.
 
 5. **Credentials stay inside the broker process.** Candidates and evaluators get
@@ -70,7 +71,7 @@ other agent may already have fixed the thing you were about to fix.
 ```bash
 ./test.sh     # 431 upstream + 456 control plane + 359 OE-MAX + 34 BrainPort
               # 6 upstream tests fail on Windows only (platform, not regression)
-              # -- see TEST_STRATEGY.md; do NOT 'fix' them by editing openevolve/
+              # -- see docs/testing.md; do NOT 'fix' them by editing openevolve/
 ```
 
 The upstream suite runs first and is the regression gate: if it breaks, the
@@ -91,7 +92,7 @@ fork is broken, not merely the control plane.
   macOS — there is a second, separate way to lose it: the pool initializer is
   pickled by reference and re-resolves to upstream's unwrapped function in the
   child. Both have the same symptom, `model_requests: 0` on a run that is
-  plainly working. See HANDOFF §3.5 and §3.5b.
+  plainly working. Both are in `docs/gotchas.md`.
 - The rate limiter's epsilon is not cosmetic — removing it makes `acquire()`
   spin forever, and the tests hang rather than fail.
 - Nothing in memory crosses the worker→main process boundary. Anything a worker
@@ -101,20 +102,31 @@ fork is broken, not merely the control plane.
   comes from the `oe_max` stamp on the response body, not from what was asked
   for.
 
-Full detail for each: `HANDOFF.md` §3.
+Full detail for each, plus nine more: `docs/gotchas.md`.
 
 ## Layout
 
 ```
-openevolve/     upstream engine — DO NOT EDIT
-oe_max/         provider broker, rate limiter, gates, search, archives,
-                verification
-oe_max/brain/   BrainPort — the OpenCode path. Its own evolution loop; shares
-                nothing with the upstream engine. See HANDOFF.md §4h.
-packages/       the OpenCode plugin (TypeScript); dist/ is built, not committed
-control_plane/  telemetry, storage, APIs, sandbox isolation, runner
-web/            Control Center (React + TS)
-scripts/        operator scripts (.sh and .ps1)
-tests/          upstream (untouched, root only) + tests/evolution
-                + tests/oe_max + tests/brain
+openevolve/          upstream engine — DO NOT EDIT
+oe_max/              provider broker, rate limiter, gates, search, archives,
+                     verification
+oe_max/providers/    provider adapters, incl. local.py (Ollama/LM Studio/vLLM/
+                     llama.cpp) and the OE_MAX_LOCAL_ONLY offline guarantee
+oe_max/brain/        BrainPort — the OpenCode path. Its own evolution loop;
+                     shares nothing with the upstream engine. See handoff §4h.
+control_plane/       telemetry, storage, APIs, sandbox isolation, runner
+control_plane/agent/     tool-using agent runtime (files, shell, git, processes)
+control_plane/native/    the agent's engine bridge, installed at RUNTIME so the
+                         patch surface stays empty — never move this back
+control_plane/scientific/ local computation, evidence-status results
+packages/            the OpenCode plugin (TypeScript); dist/ is built, not committed
+web/                 Control Center (React + TS) — see docs/design/
+scripts/             operator scripts (.sh and .ps1)
+tests/               upstream (untouched, root only) + tests/evolution
+                     + tests/oe_max + tests/brain
+docs/                all documentation; root keeps only README, CONTRIBUTING,
+                     SECURITY and this file
 ```
+
+Documentation index: `docs/README.md`. The traps that used to live in the
+handoff are now `docs/gotchas.md` — read that before debugging anything.

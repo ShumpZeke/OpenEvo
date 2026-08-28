@@ -3,7 +3,7 @@ The upstream engine must stay byte-identical to the commit it was forked from.
 
 That invariant is what makes an upstream merge a fast-forward instead of a
 conflict resolution. It is rule 1 in CLAUDE.md and is recorded in
-PATCH_SURFACE.md as "no files touched". It is also the rule most easily broken
+docs/patch-surface.md as "no files touched". It is also the rule most easily broken
 by accident: dropping one new module under `openevolve/` looks harmless and
 quietly ends the guarantee, because a patch surface is only empty until it is
 not.
@@ -46,7 +46,7 @@ def test_the_engine_tree_has_no_modified_files(porcelain):
         "openevolve/ is modified, which ends the empty patch surface: "
         + "; ".join(changed)
         + " -- wrap the behaviour at runtime instead, or record the edit in "
-          "PATCH_SURFACE.md with the reason."
+          "docs/patch-surface.md with the reason."
     )
 
 

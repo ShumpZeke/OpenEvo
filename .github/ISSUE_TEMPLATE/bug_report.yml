@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing: `HANDOFF.md` §3 lists the traps that have already cost
+        Before filing: `docs/project/handoff.md` §3 lists the traps that have already cost
         someone a day — a rebuilt telemetry bus after `fork()`, `urllib` vs
         `httpx` against OpenCode Zen, coupled timeout/token settings on a
         reasoning model. If one of those matches, the answer may already be there.
@@ -59,7 +59,7 @@ body:
       label: Does the test suite reproduce it?
       description: |
         `./test.sh` (or `.\test.ps1`). Six upstream tests fail on Windows for
-        platform reasons documented in `TEST_STRATEGY.md` — those are expected
+        platform reasons documented in `docs/testing.md` — those are expected
         and are not what this asks about.
     validations:
       required: false

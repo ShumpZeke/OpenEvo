@@ -14,7 +14,7 @@ is the kind of thing that gets quoted back later as if it were universal.
 | BrainPort | `pytest tests/brain` | **34 passed** |
 | Web typecheck | `npm run typecheck` | clean |
 | Web build | `npm run build` | 254 KB (75 KB gzipped) |
-| Live UI | Chromium via Playwright, all 19 views | **0 JavaScript errors** |
+| Live UI | Chromium via Playwright, all 19 views as of that run | **0 JavaScript errors** |
 
 `./test.sh` (or `.\test.ps1`) runs all four Python suites in that order.
 
@@ -101,7 +101,8 @@ OpenAI-compatible endpoint: 28 candidates, 27 lineage edges, 21 MAP-Elites cells
 across 3 islands, 23 evaluations, 22 model calls, 14.0k tokens, 6 checkpoints,
 261 stored events, fitness improving 1.36363 → 1.49873.
 
-Then the UI itself was driven in Chromium: all 19 views visited and screenshot,
+Then the UI itself was driven in Chromium: all 19 views that existed then
+visited and screenshot (there are 20 now — the Memory view came later),
 the command palette exercised, a candidate selected and every inspector tab
 opened. Zero JavaScript errors.
 
@@ -129,7 +130,7 @@ Stated rather than implied:
   it immediately failed twice, once on workdir permissions a non-root image
   cannot read and once on task files that were never mounted. Treat a green
   local run as saying nothing about the container backend
-  ([SANDBOX.md](SANDBOX.md)).
+  ([sandbox.md](sandbox.md)).
 - **Oh My OpenAgent integration.** Detection is tested for absence; no OMO
   install was available to test presence.
 - **Windows.** No longer wholly unverified. Every `.ps1` script is parsed and

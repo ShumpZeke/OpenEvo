@@ -53,7 +53,7 @@ redaction has already happened by the time an event reaches a file sink.
 - Checkpoint deletion refuses any path outside the run's own output directory,
   even if a crafted iteration value is supplied.
 - Sandbox writes are refused under operator-owned roots — see
-  [SANDBOX.md](SANDBOX.md).
+  [docs/sandbox.md](docs/sandbox.md).
 
 ## Network
 
@@ -71,7 +71,7 @@ evaluator, which executes candidate code in the engine's own process tree with
 the engine's privileges. **That is upstream's model, and Evolution does not
 currently narrow it.** The sandbox backends that would bound it are designed and
 their isolation boundary is enforced, but the executors are not implemented
-([SANDBOX.md](SANDBOX.md)).
+([docs/sandbox.md](docs/sandbox.md)).
 
 Treat evaluator code and evolved programs as you would any code you run locally:
 run experiments you understand, in a workspace you are willing to lose.

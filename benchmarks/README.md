@@ -26,7 +26,7 @@ on a counter. Quoting `best_score: 2.0` as a result would be quoting the
 fixture.
 
 The live numbers this project actually has — real provider, real latency, real
-success rates — are in [`BENCHMARKS.md`](../BENCHMARKS.md) at the repository
+success rates — are in [`../docs/benchmarks.md`](../docs/benchmarks.md) at the repository
 root, and they are measured through the legacy broker rather than through the
 BrainPort. **No BrainPort run against a real model has been recorded yet.** That
 gap is deliberate to state rather than paper over; it is why

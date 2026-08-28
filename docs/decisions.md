@@ -284,7 +284,7 @@ and `httpx` returned 200 against the same endpoint in the same minute.
 **Consequence beyond the broker.** The pre-existing
 `control_plane/providers/doctor.py` probes with `urllib`, so it would report a
 healthy Ox Alpha as unavailable. Recorded as a known defect in
-`REQUIREMENTS_PROGRESS.md` rather than silently fixed, because it belongs to the
+`project/requirements.md` rather than silently fixed, because it belongs to the
 older subsystem and changing it is a separate, testable change.
 
 ---
@@ -369,7 +369,7 @@ run, which §20 explicitly warns against ("do not cargo-cult").
 
 **Migration path.** The event log is the source of truth and projections
 rebuild from it, so moving to PostgreSQL later is a new projector rather than a
-data migration. Recorded as a deviation in `REQUIREMENTS_PROGRESS.md`, not
+data migration. Recorded as a deviation in `project/requirements.md`, not
 hidden.
 
 ---

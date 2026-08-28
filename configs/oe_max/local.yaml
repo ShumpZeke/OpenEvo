@@ -35,7 +35,7 @@ llm:
   # hardware is generating at a fraction of a hosted model's rate, and a
   # 16,000-token budget is minutes of wall clock per mutation rather than
   # seconds. Raise it if your model reasons before answering — but raise the
-  # timeouts with it, never alone (HANDOFF §3.3).
+  # timeouts with it, never alone (docs/gotchas.md).
   max_tokens: 4096
   # Generous because local generation is slow and that is not a fault. The
   # broker's own provider timeout for local servers is 1800s for the same

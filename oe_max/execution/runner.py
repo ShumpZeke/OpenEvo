@@ -133,7 +133,7 @@ class SandboxedRunner:
         # in it. That is inherent to running arbitrary tasks in a container
         # rather than a defect, which is exactly why the image has to be
         # settable: point OE_MAX_SANDBOX_IMAGE at one that has the task's
-        # dependencies. See SANDBOX.md.
+        # dependencies. See docs/sandbox.md.
         self.image = image or os.environ.get(ENV_IMAGE) or DEFAULT_IMAGE
 
     # -- entry points --------------------------------------------------

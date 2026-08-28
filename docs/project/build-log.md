@@ -54,7 +54,7 @@ Two consequences:
    suggests), confirmed rather than assumed.
 2. **The pre-existing `control_plane/providers/doctor.py` uses `urllib`**, so it
    would report Ox Alpha as unavailable when it is healthy. Recorded as a known
-   defect in `REQUIREMENTS_PROGRESS.md`.
+   defect in `requirements.md`.
 
 Live behaviour of `x-preview-f-free` over repeated calls:
 

@@ -50,7 +50,7 @@ ENV_LOCAL_ONLY = "OE_MAX_LOCAL_ONLY"
 # Local generation is slow in a way remote generation is not: a 30B model on
 # CPU can spend several minutes on one mutation, and that is working correctly
 # rather than hanging. A short ceiling here would manufacture timeouts and then
-# blame the model. See HANDOFF §3.3 — this moves with max_tokens.
+# blame the model. See docs/gotchas.md — this moves with max_tokens.
 DEFAULT_TIMEOUT_S = 1800.0
 
 # (name, environment variable, default base URL, human name)

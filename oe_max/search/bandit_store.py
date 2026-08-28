@@ -10,7 +10,7 @@ different processes.
     reward      is known in the MAIN process, after evaluation, in
                 `ProgramDatabase.add`
 
-HANDOFF §3.7 covers the worker→main direction: `Program.metadata` is the one
+docs/gotchas.md covers the worker→main direction: `Program.metadata` is the one
 channel that crosses, which is how a candidate's operator gets home. This is
 the *other* direction, main→worker, and there is no in-memory channel for it at
 all. A ContextVar, a global, a module-level selector — each is correct inside

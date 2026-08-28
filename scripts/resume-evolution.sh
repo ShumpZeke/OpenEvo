@@ -54,7 +54,7 @@ CKPT=$(ls -d "$RUN"/checkpoints/checkpoint_* 2>/dev/null \
 # Through the instrumented entrypoint, not `openevolve-run.py`. The plain CLI
 # installs no telemetry, and every OE-MAX feature is installed BY that
 # telemetry — so a resumed run silently lost operator steering, attribution and
-# the rest, and emitted no events at all. See HANDOFF §3.11.
+# the rest, and emitted no events at all. See docs/gotchas.md.
 export EVOLUTION_RUN_ID="${EVOLUTION_RUN_ID:-run_$(date +%Y%m%d%H%M%S)_$$}"
 export EVOLUTION_TELEMETRY="${EVOLUTION_TELEMETRY:-1}"
 export EVOLUTION_EVENT_LOG="${EVOLUTION_EVENT_LOG:-$RUN/events.ndjson}"

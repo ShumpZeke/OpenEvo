@@ -19,15 +19,15 @@ and each one exists because breaking it cost someone real time.
 
 - [ ] `./test.sh` (or `.\test.ps1`) run, and the upstream suite is still green.
       Six upstream tests fail on Windows for platform reasons documented in
-      `TEST_STRATEGY.md`; those are expected.
+      `../docs/testing.md`; those are expected.
 - [ ] `openevolve/` is untouched. Behaviour is added by wrapping public methods
       at runtime — `control_plane/telemetry/instrument.py` is the pattern. If it
-      genuinely had to be edited, `PATCH_SURFACE.md` records the reason.
+      genuinely had to be edited, `../docs/patch-surface.md` records the reason.
 - [ ] No fixtures or placeholder numbers in `web/`. Where the backend has no
       value the UI renders "no data".
 - [ ] Unsupported controls are disabled with a reason rather than rendered as
       buttons that do nothing.
 - [ ] No credentials leave the broker process, and redaction still runs before
       persistence rather than at render time.
-- [ ] `REQUIREMENTS_PROGRESS.md` updated if a status changed, and `DECISIONS.md`
+- [ ] `../docs/project/requirements.md` updated if a status changed, and `../docs/decisions.md`
       updated if this involved a judgement call worth defending later.

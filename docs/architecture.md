@@ -14,7 +14,7 @@ that disagrees with the engine — and the engine would still be right.
 ```
                       ┌──────────────────────────────┐
                       │   Browser Control Center     │
-                      │   19 views, SSE live stream  │
+                      │   20 views, SSE live stream  │
                       └───────────────┬──────────────┘
                                       │ REST + SSE
                       ┌───────────────┴──────────────┐
@@ -72,7 +72,7 @@ The durable log is the source of truth. SQLite is an index over it.
 **Runtime wrapping, not source edits.** Keeps the patch surface empty so
 upstream merges fast-forward. Cost: hooks depend on method names. Benefit: they
 degrade to a logged warning instead of a merge conflict. See
-[PATCH_SURFACE.md](PATCH_SURFACE.md).
+[patch-surface.md](patch-surface.md).
 
 **Single writer, many readers.** SQLite's weakness is concurrent writers, so
 only the API process writes. Engine and workers never open the database. WAL

@@ -37,7 +37,7 @@ def _pin_the_subprocess_backend(monkeypatch):
 
     The container backend has its own coverage: `tests/oe_max/test_sandbox_mounts.py`
     for what it exposes, and `OE_MAX_SANDBOX_IMAGE` for pointing it at an image
-    that carries a task's dependencies (SANDBOX.md).
+    that carries a task's dependencies (docs/sandbox.md).
     """
     monkeypatch.setenv(sandbox_eval.ENV_BACKEND, "subprocess")
 

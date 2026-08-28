@@ -1,7 +1,7 @@
 """
 Installing the hooks against the real engine.
 
-DECISIONS.md D1 accepts a real cost — hooks depend on upstream *method names*,
+docs/decisions.md D1 accepts a real cost — hooks depend on upstream *method names*,
 so a rename silently stops one firing — and claims it is mitigated by tests
 that assert each hook still produces its events. That claim was not true: no
 test installed the instrumentation at all, and a refactor that moved

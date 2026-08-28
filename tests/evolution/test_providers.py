@@ -54,7 +54,7 @@ def test_every_role_prefers_nvidia_nim(env_keys):
     Operator decision, 2026-08-27: NIM is the primary provider.
 
     NIM is also the only provider in this table whose models were probed
-    individually with a real key (HANDOFF §4i), so leading with it is both what
+    individually with a real key (docs/project/handoff.md §4i), so leading with it is both what
     was asked for and the better-evidenced choice.
     """
     from control_plane.providers.profiles import default_role_chains

@@ -67,7 +67,7 @@ jobs:
       # Six upstream tests fail on Windows for platform reasons that live in
       # upstream's own code -- cp1252 YAML decoding, POSIX path assumptions and
       # os.rename semantics. They are enumerated with their causes in
-      # TEST_STRATEGY.md. Fixing them here would mean editing openevolve/, which
+      # docs/testing.md. Fixing them here would mean editing openevolve/, which
       # is what keeps upstream merges fast-forward, so this job covers the fork's
       # own suites and the linux job above is the gate for upstream.
       - name: Control plane

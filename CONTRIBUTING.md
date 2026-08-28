@@ -22,10 +22,11 @@ Then read, in order:
 | | |
 |---|---|
 | [CLAUDE.md](CLAUDE.md) | the short version of the rules — read before your first change |
-| [HANDOFF.md](HANDOFF.md) | what is true right now, and §3, the traps |
-| [NEXT_TASKS.md](NEXT_TASKS.md) | the prioritised queue, with rationale and counter-arguments |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit |
-| [TEST_STRATEGY.md](TEST_STRATEGY.md) | what is tested, what is not, and the six Windows failures |
+| [docs/gotchas.md](docs/gotchas.md) | **defects that produced no error, or the wrong one — read before debugging** |
+| [docs/project/status.md](docs/project/status.md) | what is built, what is verified, what is not |
+| [docs/project/roadmap.md](docs/project/roadmap.md) | the prioritised queue, with rationale and counter-arguments |
+| [docs/architecture.md](docs/architecture.md) | how the pieces fit |
+| [docs/testing.md](docs/testing.md) | what is tested, what is not, and the six Windows failures |
 
 ## The rules that matter
 
@@ -34,7 +35,7 @@ which is what makes an upstream merge a fast-forward instead of a conflict
 resolution. Add behaviour by wrapping public methods at runtime —
 `control_plane/telemetry/instrument.py` is the pattern, and
 `tests/evolution/test_patch_surface.py` enforces the invariant. If you genuinely
-must edit it, record the reason in [PATCH_SURFACE.md](PATCH_SURFACE.md).
+must edit it, record the reason in [docs/patch-surface.md](docs/patch-surface.md).
 
 **2. No fabricated data in the UI.** There are no fixtures in `web/` and there
 must not be. Where the backend has no value, render "no data" — never a zero, a
@@ -72,7 +73,7 @@ git pull --rebase origin main
 The upstream suite runs first and is the regression gate: if it breaks, the fork
 is broken, not merely the control plane. Six upstream tests fail on Windows for
 platform reasons in upstream's own code — enumerated with their causes in
-[TEST_STRATEGY.md](TEST_STRATEGY.md). Do not "fix" them by editing
+[docs/testing.md](docs/testing.md). Do not "fix" them by editing
 `openevolve/`. CI runs the upstream suite on Linux, where it is green.
 
 Keep commits small and scoped to one subsystem. More than one agent or person

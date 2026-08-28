@@ -4,7 +4,7 @@ A prioritised, self-contained work queue. Each task states why it is worth
 doing, where to start, how to know it worked, and what would make it a bad
 idea. Ordered by expected value, not by convenience.
 
-Read `HANDOFF.md` first — especially §3, the traps.
+Read `handoff.md` first — especially §3, the traps.
 
 ---
 
@@ -38,7 +38,7 @@ curl -s 127.0.0.1:8787/health | grep routes      # the pulled model should appea
 
 ### Done when
 
-A run is recorded in BENCHMARKS.md with the local model named, next to the
+A run is recorded in ../benchmarks.md with the local model named, next to the
 hosted numbers and clearly separated. The interesting figure is not the score —
 it is candidates per request, because that is where a small model is expected to
 differ most from a hosted one.
@@ -195,7 +195,7 @@ operator's choice being withdrawn.
 credential.
 
 **Done.** A key was supplied and all nine were probed; five serve and four do
-not. Results and the corrected ids are in HANDOFF §4i. The headline: two
+not. Results and the corrected ids are in docs/project/handoff.md §4i. The headline: two
 transposed words in `nemotron-3-nano-30b-a3b` separated a working model from a
 404, with both spellings in the catalogue.
 
@@ -229,7 +229,7 @@ each — their model ids are discovered, so nothing else is configured.
 **Blocked by:** nothing.
 
 The operator bandit is now wired end to end (`OE_MAX_OPERATOR_BANDIT=1`,
-HANDOFF §4b-bandit) and **off by default because nobody has measured whether it
+docs/project/handoff.md §4b-bandit) and **off by default because nobody has measured whether it
 helps**. That is the only thing standing between it and being a default.
 
 ```bash
@@ -317,7 +317,7 @@ Watch truncation too. Asking for three alternatives triples the response
 length, and a reasoning model that spends 7,986 of an 8,000-token budget on
 hidden reasoning has nothing left. `MAX_OFFSPRING` is capped at 5 for that
 reason; if truncation rises, lower N before raising `max_tokens` (see
-HANDOFF §3.3 — that is one coupled setting, not three).
+docs/gotchas.md — that is one coupled setting, not three).
 
 ---
 
@@ -328,7 +328,7 @@ HANDOFF §3.3 — that is one coupled setting, not three).
 
 ### Why
 
-Four features are marked PARTIAL in `REQUIREMENTS_PROGRESS.md` for the same
+Four features are marked PARTIAL in `requirements.md` for the same
 reason — they are built, gated and unmeasured. `scripts/ablation.sh` settles
 each one against a shared baseline.
 
@@ -397,7 +397,7 @@ baseline, or you will attribute the whole difference to the policy layer.
 ### Why
 
 The spec requires it before claiming success, and it is currently the largest
-unfilled claim in `BENCHMARKS.md`.
+unfilled claim in `../benchmarks.md`.
 
 ### Where to start
 
@@ -412,7 +412,7 @@ Vary `random_seed` in the two configs across ≥5 seeds.
 
 ### Done when
 
-`BENCHMARKS.md` has a table with ≥5 seeds per arm, reporting area under the
+`../benchmarks.md` has a table with ≥5 seeds per arm, reporting area under the
 best-so-far curve **against requests**, not wall-clock.
 
 ### Careful
@@ -522,7 +522,7 @@ island assignment, and duplicating them would break the empty patch surface.
 - Do not edit `openevolve/`. Wrap at runtime instead.
 - Do not put fixtures in `web/`. No data means "no data".
 - Do not report a live test as passing unless it actually ran.
-- Update `REQUIREMENTS_PROGRESS.md` when a status changes, and add a decision to
-  `DECISIONS.md` when you make a judgement call worth defending.
+- Update `requirements.md` when a status changes, and add a decision to
+  `../decisions.md` when you make a judgement call worth defending.
 - Run `./test.sh` before pushing. The upstream suite runs first and is the
   regression gate.

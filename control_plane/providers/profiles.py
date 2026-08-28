@@ -288,7 +288,7 @@ def default_profiles() -> List[ModelProfile]:
 
     NVIDIA NIM carries the primary routes: the operator asked for NIM, and it is
     the only provider here whose models were probed individually with a real key
-    (HANDOFF §4i). The keyless Zen routes remain as the fallback tail, so an
+    (docs/project/handoff.md §4i). The keyless Zen routes remain as the fallback tail, so an
     install with no NVIDIA_API_KEY still serves rather than failing — a route
     that needs an absent credential is filtered out, not attempted.
     """

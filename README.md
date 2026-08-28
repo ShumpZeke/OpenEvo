@@ -10,7 +10,7 @@
 >
 > - **The shipping path** is unchanged: upstream's engine, driven through the
 >   OE-MAX provider broker on `:8787`. `./scripts/run-evolution.sh` uses this,
->   and every live measurement in [BENCHMARKS.md](BENCHMARKS.md) came from it.
+>   and every live measurement in [docs/benchmarks.md](docs/benchmarks.md) came from it.
 > - **The BrainPort path** (`oe_max/brain/`) makes the *model* someone else's
 >   problem: OpenCode owns provider, credentials, catalog and model switching,
 >   and `brain.mode = inherit` means whatever is selected there is what runs.
@@ -38,11 +38,11 @@ control API, health- and capability-aware model routing, and an isolated agent
 sandbox.
 
 Forked from upstream `411fb59c` (v0.3.2, Apache-2.0). The engine is
-**byte-identical to upstream** — see [PATCH_SURFACE.md](PATCH_SURFACE.md).
+**byte-identical to upstream** — see [docs/patch-surface.md](docs/patch-surface.md).
 
-> **Continuing this work?** Start with **[HANDOFF.md](HANDOFF.md)** — current
+> **Continuing this work?** Start with **[docs/project/handoff.md](docs/project/handoff.md)** — current
 > state, the traps that cost real time to find, and live provider measurements.
-> Then **[NEXT_TASKS.md](NEXT_TASKS.md)** for a prioritised queue.
+> Then **[docs/project/roadmap.md](docs/project/roadmap.md)** for a prioritised queue.
 
 ---
 
@@ -54,14 +54,14 @@ contract, failover, retry and credential ownership all live behind that one
 base URL. Routing is **per role** — reasoner, coder, judge, fast — each with its
 own chain, addressed by model alias so the engine needs no changes.
 
-**Control plane** — telemetry, storage, query/control APIs and a 19-view browser
+**Control plane** — telemetry, storage, query/control APIs and a 20-view browser
 Control Center over live evolution.
 
 Both sit *around* upstream. The engine is byte-identical.
 
 ## What it adds
 
-- **Control Center** — 19 views over live evolution: lineage graph, MAP-Elites
+- **Control Center** — 20 views over live evolution: lineage graph, MAP-Elites
   Lab with a generation scrubber, island and migration analysis, candidate
   inspector with parent diffs, model and evaluator observability, checkpoints,
   traces, run comparison, system health.
@@ -175,7 +175,7 @@ and no code path that can dial one by accident. Model ids are read from each
 server's own `/v1/models` at startup — nothing is written down, because what
 your machine serves is whatever you pulled.
 
-Full detail, including what is and is not verified: **[LOCAL_MODE.md](LOCAL_MODE.md)**.
+Full detail, including what is and is not verified: **[docs/local-mode.md](docs/local-mode.md)**.
 
 ### Using NVIDIA NIM
 
@@ -192,7 +192,7 @@ working route measured on any provider here), `nemotron-3-ultra-550b-a55b`
 (4.5 s, the flagship reasoner), `nemotron-3-nano-30b-a3b`, `kimi-k3` (11.5 s,
 the code specialist) and `deepseek-v4-flash-0731` (51 s). The other four are
 shipped disabled with the reason attached — a hang, a 400, a 404 entitlement
-error and a standing 429. See [PROVIDERS.md](PROVIDERS.md) for the table.
+error and a standing 429. See [docs/providers.md](docs/providers.md) for the table.
 
 Without the key nothing breaks: a route whose credential is absent is filtered
 out rather than attempted, so the chain falls through to the keyless Zen routes
@@ -265,33 +265,26 @@ as cp1252 and dies on a non-ASCII byte; one asserts a POSIX absolute path
 survives unchanged; one expects `ProcessLookupError`, which is POSIX `os.kill`
 semantics. All six pass on Linux, which is what CI runs. They are not fixable
 here — `openevolve/` is byte-identical and stays that way. The full table with
-causes is in [TEST_STRATEGY.md](TEST_STRATEGY.md).
+causes is in [docs/testing.md](docs/testing.md).
 
 The upstream suite runs first: a change that breaks it is a regression in the
 fork, not merely a control-plane bug.
 
 ## Documentation
 
+Everything lives in **[docs/](docs/README.md)**. The ones worth knowing about:
+
 | | |
 |---|---|
-| **[CONTRIBUTING.md](CONTRIBUTING.md)** | **clone, build, test, and the rules that are load-bearing** |
-| **[LOCAL_MODE.md](LOCAL_MODE.md)** | **running entirely on your own machine, with no credentials** |
-| [SCIENTIFIC_TOOLS.md](SCIENTIFIC_TOOLS.md) | local computation, and why a result is not a boolean |
-| **[HANDOFF.md](HANDOFF.md)** | **start here if you are continuing this work** |
-| **[NEXT_TASKS.md](NEXT_TASKS.md)** | **prioritised work queue with rationale** |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |
-| [DECISIONS.md](DECISIONS.md) | engineering decisions and their evidence |
-| [TELEMETRY.md](TELEMETRY.md) | event model, transport, no-fake-data rule |
-| [PROVIDERS.md](PROVIDERS.md) | what each provider actually does, verified; and the dead-endpoint list |
-| [SANDBOX.md](SANDBOX.md) | OpenCode isolation boundary |
-| [SECURITY.md](SECURITY.md) | secret handling and redaction |
-| [PATCH_SURFACE.md](PATCH_SURFACE.md) | every upstream file touched (none) |
-| [UPSTREAM_SYNC_STRATEGY.md](UPSTREAM_SYNC_STRATEGY.md) | merging future releases |
-| [FEATURE_COVERAGE_MATRIX.md](FEATURE_COVERAGE_MATRIX.md) | requirement-by-requirement status |
-| [TEST_STRATEGY.md](TEST_STRATEGY.md) | what is tested and what is not |
-| [REQUIREMENTS_PROGRESS.md](REQUIREMENTS_PROGRESS.md) | OE-MAX spec coverage, gaps and blockers |
-| [BUILD_LOG.md](BUILD_LOG.md) | what was built and what the measurements changed |
-| [BENCHMARKS.md](BENCHMARKS.md) | live measurements from the real primary route |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | clone, build, test, and the rules that are load-bearing |
+| **[docs/gotchas.md](docs/gotchas.md)** | **defects that produced no error, or the wrong one — read before debugging** |
+| **[docs/local-mode.md](docs/local-mode.md)** | running entirely on your own machine, with no credentials |
+| **[docs/design/control-center.md](docs/design/control-center.md)** | the browser UI: colour, type, primitives, and the no-invented-data rule |
+| [docs/architecture.md](docs/architecture.md) | how the pieces fit, and why the engine is untouched |
+| [docs/providers.md](docs/providers.md) | routing policy, and what each provider actually does |
+| [docs/scientific-tools.md](docs/scientific-tools.md) | local computation, and why a result is not a boolean |
+| [docs/project/status.md](docs/project/status.md) | what is built, what is verified, what is not |
+| [docs/project/roadmap.md](docs/project/roadmap.md) | the prioritised queue, with rationale and counter-arguments |
 
 ## Three things worth knowing up front
 
@@ -303,7 +296,7 @@ unlimited, and the model tables are reconciled against each provider's live
 listing on every discovery so a withdrawal disables itself. That is also how
 `openai/gpt-oss-120b` and `mistralai/codestral-22b-instruct-v0.1` came out of the
 NIM chains: probed with a real key, the first hung and the second returned a 404
-entitlement error. See [PROVIDERS.md](PROVIDERS.md).
+entitlement error. See [docs/providers.md](docs/providers.md).
 
 **A reasoning model can spend its whole budget thinking.** One former primary was
 measured using 7,986–7,997 of an 8,000-token budget on *hidden* reasoning,

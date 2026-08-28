@@ -117,7 +117,7 @@ Prefer additive change, in this order:
 2. new runtime hook
 3. new file alongside upstream (never a modification)
 4. **editing an upstream file** — last resort; record it in
-   [PATCH_SURFACE.md](PATCH_SURFACE.md) with the reason and the upstream issue
+   [patch-surface.md](patch-surface.md) with the reason and the upstream issue
    or PR that would let the edit be dropped
 
 The patch surface is currently empty. Keeping it that way is worth real effort;

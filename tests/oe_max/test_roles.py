@@ -105,7 +105,7 @@ def test_nvidia_nim_leads_every_role():
     Operator decision, 2026-08-27: NIM is the primary provider.
 
     It is also the only provider here whose models were probed individually with
-    a real key (HANDOFF §4i), which is why it leads rather than merely appearing.
+    a real key (docs/project/handoff.md §4i), which is why it leads rather than merely appearing.
     """
     chains = build_chains(DEFAULT_CHAIN)
     for role, chain in chains.items():

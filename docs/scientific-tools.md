@@ -2,7 +2,7 @@
 
 Structured scientific computation, routed to whatever backends are installed on
 this machine. Everything here runs locally and needs no credential, which is what
-makes it usable in [fully local mode](LOCAL_MODE.md).
+makes it usable in [fully local mode](local-mode.md).
 
 ```bash
 uv pip install -e ".[scientific]"                        # sympy, scipy, networkx

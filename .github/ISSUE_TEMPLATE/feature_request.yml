@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        `NEXT_TASKS.md` is the prioritised queue and says why each item is worth
+        `docs/project/roadmap.md` is the prioritised queue and says why each item is worth
         doing and what would make it a bad idea. If your idea is already there,
         adding evidence to it is worth more than a new issue.
 

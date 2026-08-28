@@ -77,7 +77,7 @@ things genuinely change:
 - **`max_tokens: 4096`.** A local model generates at a fraction of a hosted
   one's rate, so a 16,000-token budget is minutes of wall clock per mutation.
   Raise it if your model reasons before answering — but raise the timeouts with
-  it, never alone (`HANDOFF.md` §3.3).
+  it, never alone (`project/handoff.md` §3.3).
 - **`parallel_evaluations: 1`, smaller population.** Two workers against one
   local server queue at the model rather than running in parallel, and on a
   saturated GPU they compete for the same memory.
@@ -128,7 +128,7 @@ any model.
 
 `OpenEvolve` gets `run_native_model_agent()` and friends from
 `control_plane.native.install()`, which binds them at runtime. They are
-deliberately *not* methods on upstream's controller — see `PATCH_SURFACE.md`.
+deliberately *not* methods on upstream's controller — see `patch-surface.md`.
 
 ## Scientific tools, also local
 
@@ -176,4 +176,4 @@ chain construction, routing, the offline guarantee, and a complete evolution
 cycle — is verified. Whether a given 7B model produces *useful* mutations is a
 property of that model, and you will find out on your first run. Expect to tune
 `max_tokens` and the timeouts; a small model that reasons before answering hits
-the same truncation failure documented in `HANDOFF.md` §3.2.
+the same truncation failure documented in `project/handoff.md` §3.2.

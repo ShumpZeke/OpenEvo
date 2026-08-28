@@ -15,7 +15,7 @@ Legend — **DONE** built and tested · **PARTIAL** built with a stated gap ·
 |---|---|---|---|
 | Use the official OpenEvolve project | DONE | `openevolve/` | Both named repos resolve to the same commit `411fb59c` |
 | Pin an exact commit and record it | DONE | `upstream/OPENEVOLVE_PIN.txt`, `UPSTREAM.json` | — |
-| Do not rewrite working upstream features | DONE | `PATCH_SURFACE.md` | `openevolve/` byte-identical; 437 upstream tests pass |
+| Do not rewrite working upstream features | DONE | `../patch-surface.md` | `openevolve/` byte-identical; 437 upstream tests pass |
 | Reuse MAP-Elites, islands, migration, DB, cascade, checkpoints, prompts, visualizer | DONE | upstream, untouched | 437 tests |
 | Build around/above upstream, not a lookalike | DONE | broker + `control_plane/` | OpenEvolve runs unmodified through the broker |
 
@@ -149,13 +149,13 @@ measured ~130 s per generation, that is the cascade's whole economic argument.
 | Ablations (10 listed) | PARTIAL — `scripts/ablation.sh` runs each optional behaviour on and off against a shared baseline and reports area under the best-so-far curve *per request*. Four arms exist today (operators, island policies, multi-offspring, verification); the remaining spec arms need the unbuilt subsystems, and the bandit arm needs the bandit to be in the loop |
 | Multiple seeds | DEFERRED |
 
-See `BENCHMARKS.md` for what *was* measured.
+See `../benchmarks.md` for what *was* measured.
 
 ## §18–20 Autonomy, non-interference, quality
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Operate autonomously on routine decisions | DONE | No questions asked; decisions recorded in `DECISIONS.md` |
+| Operate autonomously on routine decisions | DONE | No questions asked; decisions recorded in `../decisions.md` |
 | Never fabricate successful live API tests | DONE | NIM/OpenRouter explicitly marked unverified |
 | Never place fake keys in the repository | DONE | `.env.example` has empty values |
 | Confine work to this project | DONE | Only this repo modified |

@@ -9,7 +9,7 @@ answers it from a `BrainPort` instead of a provider client.
 engine uses, so there is no provider configuration on this side at all.
 
 It lives here, not under `openevolve/`, because that tree is byte-identical to
-upstream and must stay that way -- see PATCH_SURFACE.md. Nothing about this
+upstream and must stay that way -- see docs/patch-surface.md. Nothing about this
 class needs to be inside it: it subclasses upstream's published interface the
 same way any external implementation would.
 """

@@ -8,7 +8,7 @@ not by editing OpenEvolve's source.
 Why: the fork must keep merging upstream (SOURCE_OF_TRUTH section 27). Editing
 call sites across database.py / controller.py / evaluator.py would create a
 patch surface that conflicts on every upstream release. Wrapping keeps
-PATCH_SURFACE.md empty for telemetry, so an upstream merge is a fast-forward.
+docs/patch-surface.md empty for telemetry, so an upstream merge is a fast-forward.
 
 The cost is that we depend on method *names* rather than internals. That is the
 cheaper dependency: `ProgramDatabase.add` is public API and stable, whereas the
@@ -353,7 +353,7 @@ def _reward_operator(db: Any, program: Any, *, accepted: bool,
 
     This half runs in the MAIN process, where the score exists. Selection runs
     in a worker, where it does not. The two never share memory — see
-    HANDOFF §3.7 — so the bandit's evidence goes through a file.
+    docs/gotchas.md — so the bandit's evidence goes through a file.
 
     Migrants are excluded. `_migrate_programs` copies metadata wholesale into
     the copy, so a migrated program carries the operator of the mutation that

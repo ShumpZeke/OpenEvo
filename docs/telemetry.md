@@ -43,7 +43,7 @@ run, `span_id`/`parent_span_id` nest units of work.
 ## Instrumentation
 
 Hooks wrap public engine methods and read real state back afterwards — see
-[PATCH_SURFACE.md](PATCH_SURFACE.md) for the full table. Two details worth
+[patch-surface.md](patch-surface.md) for the full table. Two details worth
 knowing:
 
 **Fitness comes from upstream.** `_fitness()` calls
@@ -118,7 +118,7 @@ child drops the inherited bus *without closing it*, because the parent still
 owns those handles.
 
 Without this, worker telemetry — every model call and most evaluations — is
-lost. See [DECISIONS.md](DECISIONS.md) D4.
+lost. See [decisions.md](decisions.md) D4.
 
 ## Performance
 
