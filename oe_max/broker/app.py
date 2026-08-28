@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from ..health import RetryPolicy, RouteHealth
 from ..providers.registry import Registry, build_default_registry
 from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
+from ..providers.local import local_only
 from ..router import DEFAULT_CHAIN, NoRouteAvailable, Route, Router
 
 # Requests naming a role alias select that role's chain; naming a concrete
@@ -102,6 +103,27 @@ def create_app(registry: Optional[Registry] = None,
             timeout=httpx.Timeout(180.0, connect=15.0),
             limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
         )
+        # In local-only mode the chain starts empty of usable routes: a local
+        # server's model ids are knowable ONLY by asking it, so a broker that
+        # serves before discovering has nothing to route to and fails every
+        # request. Discovery here is four requests to localhost, and a server
+        # that is not running refuses the connection immediately.
+        #
+        # Bounded, because "refused instantly" is the good case: a process
+        # holding the port open without answering would otherwise hold the
+        # socket closed for as long as it liked.
+        if local_only():
+            try:
+                await asyncio.wait_for(
+                    state.registry.discover(state.client), timeout=20.0)
+                state.router.refresh_chains()
+            except Exception:
+                # Same contract as the background probe: a failed startup
+                # discovery must not stop the broker serving. /health reports
+                # the empty chain honestly, and POST /v1/oe-max/verify re-runs
+                # it once the operator starts their server.
+                pass
+
         task: Optional[asyncio.Task] = None
         if verify_on_start:
             # Deliberately NOT awaited. Verification smoke-tests every model on

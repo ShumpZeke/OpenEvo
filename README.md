@@ -81,6 +81,14 @@ Both sit *around* upstream. The engine is byte-identical.
   better mutations, and at what cost?" is answerable from a run's own
   telemetry. `./scripts/route-experiment.sh` runs one arm per route and refuses
   to name a winner on thin evidence.
+- **Fully local mode** — Ollama, LM Studio, vLLM and llama.cpp as first-class
+  providers, with `OE_MAX_LOCAL_ONLY` guaranteeing offline by never
+  constructing a commercial adapter at all. Local model ids are discovered from
+  each server's own listing, never configured.
+- **Scientific tools** — structured problems routed to whatever computation
+  backends are installed locally (SymPy, NumPy, SciPy, NetworkX, and more when
+  present). Results carry a verification status rather than a boolean: there is
+  no `SUCCESS` in the vocabulary, because a numeric result is not a proof.
 - **Agent sandbox** — OpenCode as an optional evaluation backend, in an
   environment that cannot reach the operator's own OpenCode installation.
 - **Everything upstream still works** — the original CLI, configs, examples,
@@ -149,6 +157,25 @@ curl -X POST http://127.0.0.1:8000/api/control/runs \
     "config_path":     "configs/evolution/local_test.yaml",
     "iterations": 24, "name": "first-run" }'
 ```
+
+### Fully local — no key, no account, nothing leaves the machine
+
+```bash
+OE_MAX_LOCAL_ONLY=1 ./scripts/start-broker.sh
+./scripts/run-evolution.sh --config configs/oe_max/local.yaml
+```
+
+Ollama, LM Studio, vLLM and llama.cpp are supported out of the box — all four
+speak the OpenAI protocol, so none needed a new adapter. Point one elsewhere
+with `OE_MAX_OLLAMA_BASE` and friends.
+
+`OE_MAX_LOCAL_ONLY` is a guarantee rather than a preference: the commercial
+adapters are **never constructed**, so there is no object holding a remote URL
+and no code path that can dial one by accident. Model ids are read from each
+server's own `/v1/models` at startup — nothing is written down, because what
+your machine serves is whatever you pulled.
+
+Full detail, including what is and is not verified: **[LOCAL_MODE.md](LOCAL_MODE.md)**.
 
 ### Using NVIDIA NIM
 
@@ -227,8 +254,8 @@ Windows: `.	est.ps1`. Measured on Windows 11 / CPython 3.11.9:
 | Suite | Result |
 |---|---|
 | Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
-| Control plane | **402 passed**, 10 skipped |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **328 passed**, 25 skipped |
+| Control plane | **456 passed**, 10 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **354 passed**, 25 skipped |
 | BrainPort (OpenCode brain, worker, plugin contract) | **34 passed** |
 | Web typecheck | clean |
 
@@ -248,6 +275,7 @@ fork, not merely a control-plane bug.
 | | |
 |---|---|
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | **clone, build, test, and the rules that are load-bearing** |
+| **[LOCAL_MODE.md](LOCAL_MODE.md)** | **running entirely on your own machine, with no credentials** |
 | **[HANDOFF.md](HANDOFF.md)** | **start here if you are continuing this work** |
 | **[NEXT_TASKS.md](NEXT_TASKS.md)** | **prioritised work queue with rationale** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the pieces fit and why |

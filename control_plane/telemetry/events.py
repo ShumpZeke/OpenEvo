@@ -132,6 +132,27 @@ class EventType(str, Enum):
     # control-plane commands (audit trail)
     CONTROL_COMMAND = "control.command"
 
+    # Local agent runtime: a goal decomposed into tasks, each task a
+    # tool-using conversation in an isolated world. Typed rather than logged,
+    # for the same reason as everything else here — a run has to be replayable
+    # from its event log, and "the agent did something" is not replayable.
+    AGENT_RUN_STARTED = "agent.run.started"
+    AGENT_RUN_COMPLETED = "agent.run.completed"
+    AGENT_RUN_LIMIT_REACHED = "agent.run.limit_reached"
+    AGENT_TASK_STARTED = "agent.task.started"
+    AGENT_TASK_COMPLETED = "agent.task.completed"
+    AGENT_TASK_FAILED = "agent.task.failed"
+    AGENT_TASK_BLOCKED = "agent.task.blocked"
+    AGENT_TOOL_CALLED = "agent.tool.called"
+    AGENT_TOOL_COMPLETED = "agent.tool.completed"
+    AGENT_SESSION_CREATED = "agent.session.created"
+    AGENT_SESSION_RESUMED = "agent.session.resumed"
+    AGENT_SESSION_FORKED = "agent.session.forked"
+
+    # Git worktrees, so a candidate's edits are isolated from the live tree.
+    WORKTREE_CREATED = "worktree.created"
+    WORKTREE_REMOVED = "worktree.removed"
+
 
 class Status(str, Enum):
     OK = "ok"

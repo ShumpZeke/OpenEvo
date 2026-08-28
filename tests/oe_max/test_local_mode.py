@@ -1,0 +1,210 @@
+"""
+Fully local mode: the model runs on this machine, and nothing leaves it.
+
+Every provider in this repository used to be a remote endpoint behind a
+credential. The only nod to running locally was one disabled profile in the
+control plane and `scripts/local_provider.py`, which is a deterministic stub
+rather than a model. The broker — the thing OpenEvolve actually talks to — had
+no local provider at all, so "run this offline" was not a supported
+configuration however the routing was set.
+
+Two claims are pinned here, and they are different strengths.
+
+**The weak one, and why it is not enough.** "The cloud routes have no key, so
+they are filtered out." That is a filter, and a filter depends on every future
+code path remembering to apply it. A chain entry, a catalogue file, a refresh
+or a pinned model could each put a request back on the wire.
+
+**The strong one.** Under `OE_MAX_LOCAL_ONLY` the commercial adapters are never
+constructed. There is nothing to filter, nothing to forget, and no code path
+that can reach an endpoint this project configured — because the object holding
+its URL does not exist. These tests assert the strong claim.
+
+Verified end to end on 2026-08-28: a broker started with `OE_MAX_LOCAL_ONLY=1`
+discovered a local OpenAI-compatible server, and a 6-iteration evolution ran to
+`combined_score 1.4198` with 6 requests served, 0 failed, and only the four
+local providers present in the process.
+"""
+
+import importlib
+import os
+
+import pytest
+
+from oe_max.providers import local as local_mod
+
+
+@pytest.fixture
+def fresh_registry(monkeypatch):
+    """
+    Build a registry with the current environment.
+
+    `local_only()` is read at construction rather than per request — a
+    guarantee that can change mid-run is not a guarantee — so a test that wants
+    the other mode has to build a new registry, exactly like a new process.
+    """
+    def build(**env):
+        for key, value in env.items():
+            if value is None:
+                monkeypatch.delenv(key, raising=False)
+            else:
+                monkeypatch.setenv(key, value)
+        registry = importlib.import_module("oe_max.providers.registry")
+        return registry.build_default_registry()
+
+    return build
+
+
+CLOUD = {"opencode_zen", "nvidia_nim", "openrouter", "groq", "cerebras",
+         "gemini", "mistral", "deepseek", "moonshot", "minimax"}
+
+
+class TestOfflineGuarantee:
+    def test_local_only_constructs_no_commercial_provider(self, fresh_registry):
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        assert set(providers) == set(local_mod.LOCAL_PROVIDER_NAMES)
+        assert not (set(providers) & CLOUD), (
+            "a commercial provider was constructed in local-only mode; the "
+            "guarantee is absence, not an unusable route")
+
+    def test_no_remote_url_is_reachable_in_local_only(self, fresh_registry):
+        """
+        The point of absence over filtering: there is no object holding a
+        remote URL, so no code path can dial one by accident.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            assert "127.0.0.1" in adapter.base_url or "localhost" in adapter.base_url, (
+                f"{name} points off this machine: {adapter.base_url}")
+
+    def test_local_providers_are_also_present_in_normal_mode(self, fresh_registry):
+        """
+        Local mode is a restriction, not a separate build. The same adapters
+        exist alongside the cloud ones so a mixed setup — local model, cloud
+        fallback — is a chain ordering question rather than a rebuild.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY=None)
+
+        for name in local_mod.LOCAL_PROVIDER_NAMES:
+            assert name in providers, name
+        assert "nvidia_nim" in providers
+
+    @pytest.mark.parametrize("value,expected", [
+        ("1", True), ("true", True), ("TRUE", True), ("yes", True), ("on", True),
+        ("0", False), ("false", False), ("", False), ("maybe", False),
+    ])
+    def test_the_switch_reads_the_usual_spellings(self, value, expected):
+        assert local_mod.local_only({local_mod.ENV_LOCAL_ONLY: value}) is expected
+
+    def test_the_switch_is_off_when_unset(self):
+        assert local_mod.local_only({}) is False
+
+
+class TestLocalProviders:
+    def test_every_local_server_is_keyless(self, fresh_registry):
+        """
+        A local server needs no credential, and requiring one would defeat the
+        purpose: local mode has to work in a checkout with no keys at all.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            assert adapter.requires_key is False, name
+            assert adapter.api_key_env is None, (
+                f"{name} names a credential variable; there is no key here")
+            assert adapter.usable(), f"{name} is not usable without a key"
+
+    def test_no_local_model_id_is_written_down(self, fresh_registry):
+        """
+        Rule 6, and local is where it is least negotiable: what a machine serves
+        is whatever its operator pulled. Shipping a guess like "llama3.1" would
+        be a remembered id of exactly the kind that has bitten this project
+        three times.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            assert adapter.models == {}, (
+                f"{name} ships model ids; they must come from /v1/models")
+            assert adapter.prefer_patterns, f"{name} would discover nothing"
+
+    def test_the_listing_is_public_so_discovery_doubles_as_liveness(
+            self, fresh_registry):
+        """
+        A local /v1/models needs no authorization, so it is readable exactly
+        when the server is up. That makes "is Ollama running?" answerable by
+        the discovery request already being made, with no extra probe.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            assert adapter.public_listing is True, name
+
+    def test_the_timeout_allows_for_slow_local_generation(self, fresh_registry):
+        """
+        A 30B model on CPU can spend minutes on one mutation and be working
+        correctly. A cloud-sized ceiling would manufacture timeouts and then
+        blame the model.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            assert adapter.timeout_s >= 600, (
+                f"{name} would time out a slow local model at "
+                f"{adapter.timeout_s}s")
+
+    @pytest.mark.parametrize("name,var,port", [
+        ("ollama", "OE_MAX_OLLAMA_BASE", "11434"),
+        ("lmstudio", "OE_MAX_LMSTUDIO_BASE", "1234"),
+        ("vllm", "OE_MAX_VLLM_BASE", "8000"),
+        ("llamacpp", "OE_MAX_LLAMACPP_BASE", "8080"),
+    ])
+    def test_each_server_has_its_conventional_port_and_an_override(
+            self, name, var, port, monkeypatch):
+        monkeypatch.delenv(var, raising=False)
+        assert port in local_mod.base_url_for(name)
+
+        monkeypatch.setenv(var, "http://gpu-box.lan:9999/v1")
+        assert local_mod.base_url_for(name) == "http://gpu-box.lan:9999/v1"
+
+    def test_a_trailing_slash_does_not_produce_a_double_slash(self, monkeypatch):
+        monkeypatch.setenv("OE_MAX_OLLAMA_BASE", "http://127.0.0.1:11434/v1/")
+        assert local_mod.base_url_for("ollama") == "http://127.0.0.1:11434/v1"
+
+    def test_an_unknown_server_is_an_error_not_a_silent_default(self):
+        with pytest.raises(KeyError):
+            local_mod.base_url_for("not-a-server")
+
+
+class TestLocalRoutes:
+    def test_routes_come_from_discovered_models(self, fresh_registry):
+        from oe_max.providers.base import ModelSpec
+
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+        assert local_mod.local_routes(providers) == [], (
+            "routes existed before anything was discovered")
+
+        providers["ollama"].models = {
+            "qwen2_5_coder_7b": ModelSpec(key="qwen2_5_coder_7b",
+                                          id="qwen2.5-coder:7b", priority=100),
+        }
+        assert local_mod.local_routes(providers) == [("ollama", "qwen2_5_coder_7b")]
+
+    def test_a_server_that_is_not_running_contributes_nothing(self, fresh_registry):
+        """
+        Same shape as a provider whose credential is absent: declared, listed
+        nothing, contributes no route. It must not be an error — most people
+        run one of these four, not all of them.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        assert local_mod.local_routes(providers) == []
+        assert len(providers) == 4, "all four stay declared regardless"
+
+    def test_is_local_provider_recognises_exactly_the_local_set(self):
+        for name in local_mod.LOCAL_PROVIDER_NAMES:
+            assert local_mod.is_local_provider(name)
+        for name in ("nvidia_nim", "opencode_zen", "openrouter"):
+            assert not local_mod.is_local_provider(name)

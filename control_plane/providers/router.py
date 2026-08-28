@@ -165,11 +165,27 @@ class ModelRouter:
             caps.append(Capability.TOOLS)
         return caps
 
-    def candidates(self, role: Role) -> Tuple[List[ModelProfile], Dict[str, str]]:
-        """Eligible profiles for a role, best first, plus exclusion reasons."""
+    def candidates(
+        self,
+        role: Role,
+        excluded_ids: Sequence[str] = (),
+    ) -> Tuple[List[ModelProfile], Dict[str, str]]:
+        """
+        Eligible profiles for a role, best first, plus exclusion reasons.
+
+        `excluded_ids` names profiles already tried *within one request*. Health
+        and the circuit breaker work across requests and deliberately move
+        slowly; a caller retrying right now needs the route that just failed
+        skipped immediately, without waiting for a breaker to open or teaching
+        the health model that one failure means the route is bad.
+
+        The exclusion is per call and is never written back into health, so a
+        transient failure costs the route this attempt and nothing more.
+        """
         required = self.required_capabilities(role)
         chain = self.role_chains.get(role, [])
         excluded: Dict[str, str] = {}
+        request_exclusions = frozenset(excluded_ids)
         eligible: List[Tuple[Tuple[int, float, int], ModelProfile]] = []
 
         # Chain members first, then any other profile that lists the role.
@@ -181,6 +197,9 @@ class ModelRouter:
             prof = self.profiles.get(pid)
             if prof is None:
                 excluded[pid] = "not configured"
+                continue
+            if pid in request_exclusions:
+                excluded[pid] = "failed earlier in this request"
                 continue
             if not prof.enabled:
                 excluded[pid] = "disabled"
@@ -240,9 +259,13 @@ class ModelRouter:
 
         return [p for _, p in eligible], excluded
 
-    def select(self, role: Role) -> ModelProfile:
+    def select(
+        self,
+        role: Role,
+        excluded_ids: Sequence[str] = (),
+    ) -> ModelProfile:
         with self._lock:
-            cands, reasons = self.candidates(role)
+            cands, reasons = self.candidates(role, excluded_ids)
             if not cands:
                 raise NoRouteAvailable(role, reasons)
             chosen = cands[0]

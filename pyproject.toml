@@ -28,6 +28,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Local scientific backends. Optional on purpose: the fabric detects what is
+# installed and reports the rest as unavailable rather than pretending, so a
+# minimal install stays usable and a local LLM run does not require any of it.
+scientific = [
+    "sympy>=1.12",
+    "scipy>=1.11",
+    "networkx>=3.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -58,6 +66,7 @@ packages = [
     "control_plane", "control_plane.telemetry", "control_plane.storage",
     "control_plane.api", "control_plane.providers", "control_plane.sandbox",
     "control_plane.runner", "control_plane.analysis", "control_plane.memory",
+    "control_plane.scientific", "control_plane.agent", "control_plane.native",
     "oe_max", "oe_max.brain", "oe_max.providers", "oe_max.broker", "oe_max.evaluation",
     "oe_max.execution", "oe_max.search", "oe_max.verification",
 ]

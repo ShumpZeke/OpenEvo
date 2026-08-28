@@ -54,6 +54,7 @@ import httpx
 from ..limiter import NullLimiter, RateLimiter
 from .base import ChatResult, ModelSpec, Outcome, ProviderAdapter, ProviderRole
 from .catalogue import build_provider, load_catalogue, materialise_models
+from .local import build_local_providers, local_only
 
 # Verified live 2026-08-26.
 OPENCODE_ZEN_BASE = "https://opencode.ai/zen/v1"
@@ -330,9 +331,24 @@ def build_default_registry(
         },
     )
 
+    # Local servers are always declared. One that is not running lists nothing
+    # and contributes no routes, which is the same shape as a provider whose
+    # credential is absent -- so "is Ollama up?" stays a question answered by a
+    # probe rather than by import-time guesswork.
+    locals_ = build_local_providers()
+
+    if local_only():
+        # OE_MAX_LOCAL_ONLY is a hard guarantee, not a preference: the remote
+        # providers are never constructed, so no chain entry, no refresh, no
+        # catalogue file and no operator mistake can put a request on the wire
+        # to a commercial endpoint. Filtering later would leave the routes
+        # reachable and rely on every future code path remembering to check.
+        return dict(locals_)
+
     providers: Dict[str, ProviderAdapter] = {
         p.name: p for p in (zen, openrouter, nim)
     }
+    providers.update(locals_)
 
     # Catalogue providers are additive and never override a built-in: the three
     # above carry hand-checked timeouts, a rate contract and curated model

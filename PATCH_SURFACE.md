@@ -69,6 +69,40 @@ warning and skips a hook whose target is missing. `tests/evolution/` fails loudl
 if a hook stops producing its events, so a rename surfaces in CI rather than as
 quietly missing data.
 
+## The one time it nearly stopped being empty
+
+Worth recording, because the pressure to patch does not arrive as "let us break
+rule 1" — it arrives as working code that happens to sit in the wrong place.
+
+A parallel session built a native agent runtime: seven modules, a tool-using
+loop, git-worktree isolation, durable sessions, 33 passing tests. It put the
+modules under `openevolve/` and bolted five methods onto `OpenEvolve` by editing
+`controller.py`, plus six re-exports from `openevolve/__init__.py` and a change
+to `config.py` — **172 inserted lines** across the three files this fork
+promises never to touch.
+
+The code was sound. Its address was not, and nothing about the capability
+required that address:
+
+- The modules only ever *read* from the engine — `Program`, `ProgramDatabase`.
+  An import reaches those as well from `control_plane/native/` as from inside
+  the package.
+- The five methods bind to the class just as well at runtime as at definition
+  time. `control_plane/native/install()` attaches them; the same pattern
+  `instrument.py` has used all along.
+- The re-exports from `openevolve/__init__.py` bought nothing at all. Adding to
+  upstream's public API conflicts the moment upstream touches that file.
+
+So the runtime landed with the surface still empty. `tests/evolution/
+test_native_install.py` pins both halves — that the methods are genuinely
+present, and that no `native_*` module has reappeared under `openevolve/` — so
+the next person is not tempted back to the edit by a suspicion that the wrapper
+does not really work.
+
+The general lesson, stated once: **when new code needs to live inside
+`openevolve/`, check whether it only reads from the engine. If it does, it does
+not need to live there.**
+
 ## Added files (new only, nothing overwritten)
 
 ```

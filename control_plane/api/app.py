@@ -896,6 +896,107 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
                      "Connection": "keep-alive"},
         )
 
+    # ------------------------------------------------- scientific tools
+    @app.get("/api/scientific/capabilities")
+    def scientific_capabilities() -> Dict[str, Any]:
+        """
+        What scientific computation this machine can actually do, right now.
+
+        Measured by import, not declared: a backend that is not installed is
+        reported `unavailable` with the reason, never omitted and never faked
+        into a success. That is the same rule the UI follows everywhere else —
+        no data means "no data" — applied to capability rather than to metrics.
+
+        Nothing here needs a network or a credential, which is what makes it
+        usable in local-only mode.
+        """
+        from control_plane.scientific import ScientificToolFabric
+
+        fabric = ScientificToolFabric()
+        caps = []
+        for c in fabric.capabilities():
+            caps.append({
+                "name": c.name,
+                "version": c.version,
+                "domain": c.domain,
+                "capabilities": list(c.capabilities),
+                "execution_mode": c.execution_mode,
+                "deterministic": c.deterministic,
+                "gpu_support": c.gpu_support,
+                "license": c.license,
+                "availability": c.availability.value,
+                "unavailable_reason": c.unavailable_reason,
+                "confidence_semantics": c.confidence_semantics,
+            })
+        available = [c for c in caps if c["availability"] == "available"]
+        return {
+            "capabilities": caps,
+            "available_count": len(available),
+            "total_count": len(caps),
+        }
+
+    @app.post("/api/scientific/execute")
+    def scientific_execute(body: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run one structured problem against the first capable local backend.
+
+        The result carries a *verification status*, not a boolean. "numerically
+        supported" and "symbolically verified" are different claims and this
+        deliberately does not collapse them — a float that satisfies an equation
+        to 1e-12 has not been proved, and saying so is the point of the whole
+        module.
+
+        A request no installed backend can serve returns `inconclusive` with the
+        capabilities that would have served it, rather than an error: "we cannot
+        check this here" is information the caller needs.
+        """
+        from control_plane.scientific import Objective, ScientificIR, ScientificToolFabric
+
+        raw_objective = str(body.get("objective") or "compute").lower()
+        try:
+            objective = Objective(raw_objective)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown objective {raw_objective!r}; one of "
+                       + ", ".join(o.value for o in Objective))
+
+        def _tuple(name: str) -> tuple:
+            value = body.get(name) or ()
+            if isinstance(value, str):
+                return (value,)
+            return tuple(str(v) for v in value)
+
+        def _map(name: str) -> Dict[str, str]:
+            value = body.get(name) or {}
+            if not isinstance(value, dict):
+                return {}
+            return {str(k): str(v) for k, v in value.items()}
+
+        problem = ScientificIR(
+            problem=str(body.get("problem") or ""),
+            objective=objective,
+            domain=str(body.get("domain") or "general"),
+            variables=_tuple("variables"),
+            equations=_tuple("equations"),
+            constraints=_tuple("constraints"),
+            solver_requests=_tuple("solver_requests"),
+            candidate_methods=_tuple("candidate_methods"),
+            constants=_map("constants"),
+        )
+        fabric = ScientificToolFabric()
+        result = fabric.execute(problem)
+        return {
+            "tool": result.tool,
+            "status": result.status.value,
+            "value": result.value,
+            "residual": result.residual,
+            "precision": result.precision,
+            "provenance": list(result.provenance),
+            "warnings": list(result.warnings),
+            "routed": [c.name for c in fabric.route(problem)],
+        }
+
     # ------------------------------------------- classic visualizer bridge
     @app.get("/api/classic")
     def classic_info() -> Dict[str, Any]:

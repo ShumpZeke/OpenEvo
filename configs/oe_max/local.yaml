@@ -1,0 +1,77 @@
+# Fully local evolution: the model runs on this machine, nothing leaves it.
+#
+# Start the broker with OE_MAX_LOCAL_ONLY=1 and it constructs *only* the local
+# providers — Ollama, LM Studio, vLLM, llama.cpp. The commercial adapters are
+# never built, so no chain entry, no catalogue file and no operator mistake can
+# put a request on the wire to a paid endpoint. That is a stronger guarantee
+# than "the cloud routes have no key": an absent credential is a filter, and a
+# provider that does not exist is not.
+#
+#   OE_MAX_LOCAL_ONLY=1 ./scripts/start-broker.sh
+#   ./scripts/run-evolution.sh --config configs/oe_max/local.yaml
+#
+# Point a server elsewhere with OE_MAX_OLLAMA_BASE, OE_MAX_LMSTUDIO_BASE,
+# OE_MAX_VLLM_BASE or OE_MAX_LLAMACPP_BASE. Model ids are NOT configured
+# anywhere: the broker reads them from each server's own /v1/models at startup,
+# because what this machine serves is whatever you pulled.
+
+max_iterations: 24
+checkpoint_interval: 6
+random_seed: 42
+
+llm:
+  # The same alias as every other config. It resolves through the reasoner
+  # chain, which in local-only mode contains exactly the models your local
+  # servers reported — the engine still knows nothing about providers.
+  primary_model: "oe-max-primary"
+  primary_model_weight: 1.0
+  api_base: "http://127.0.0.1:8787/v1"
+  # Broker token, not a provider credential. In local-only mode there is no
+  # upstream credential at all.
+  api_key: "oe-max-local"
+  temperature: 0.8
+
+  # Smaller than the cloud config on purpose. A 7B-13B model on consumer
+  # hardware is generating at a fraction of a hosted model's rate, and a
+  # 16,000-token budget is minutes of wall clock per mutation rather than
+  # seconds. Raise it if your model reasons before answering — but raise the
+  # timeouts with it, never alone (HANDOFF §3.3).
+  max_tokens: 4096
+  # Generous because local generation is slow and that is not a fault. The
+  # broker's own provider timeout for local servers is 1800s for the same
+  # reason: a short ceiling manufactures timeouts and then blames the model.
+  timeout: 1800
+
+  evaluator_models:
+    - name: "oe-max-judge"
+      weight: 1.0
+
+prompt:
+  system_message: |
+    You are an expert algorithm designer improving a function-minimization
+    routine. Find the global minimum of
+    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20
+    Escape local minima. Return a SEARCH/REPLACE diff.
+
+database:
+  # Smaller than the cloud config: a local model produces candidates far more
+  # slowly, so a large population spends the whole run being filled rather than
+  # being searched.
+  population_size: 30
+  archive_size: 15
+  num_islands: 2
+  migration_interval: 6
+  migration_rate: 0.1
+  feature_dimensions: ["complexity", "diversity"]
+  feature_bins: 8
+
+evaluator:
+  timeout: 90
+  # One at a time by default. Two workers against a single local server queue
+  # at the model rather than running in parallel, and on a GPU that is already
+  # saturated they compete for the same memory.
+  parallel_evaluations: 1
+  use_llm_feedback: false
+
+diff_based_evolution: true
+max_code_length: 24000
