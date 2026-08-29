@@ -23,7 +23,14 @@ from control_plane.telemetry import seed_hook
 from control_plane.telemetry.bus import EventBus, Sink, reset_bus
 from control_plane.telemetry.events import EventType
 
-EVALUATOR = "examples/function_minimization/evaluator.py"
+# The hook is what is under test, not the evaluator -- but every variant is
+# scored in a child process, and a child that imports `openevolve` pays 2.9s
+# before doing any work (openevolve/__init__ reaches llm.openai reaches openai).
+# The fixture is a real evaluator that returns a plain metrics dict instead of
+# an EvaluationResult, so it needs no such import and the child costs ~0.3s.
+# `test_it_works_with_the_real_example_evaluator` keeps the integration covered.
+EVALUATOR = "tests/evolution/fixtures/fast_evaluator.py"
+REAL_EVALUATOR = "examples/function_minimization/evaluator.py"
 SEED = open("examples/function_minimization/initial_program.py").read()
 
 
@@ -279,3 +286,18 @@ def test_single_variant_helper_still_works(seeding):
     """`_evaluate` is the old single-variant entry point; callers outside the
     forge loop still use it."""
     assert seed_hook.get_hook()._evaluate(SEED, EVALUATOR)
+
+
+def test_it_works_with_the_real_example_evaluator(seeding, monkeypatch):
+    """The other tests use a fast fixture evaluator; this one keeps the
+    integration with a real `EvaluationResult`-returning evaluator covered.
+
+    Deliberately the slow one. It is a single test rather than eleven, which is
+    where the suite time went before.
+    """
+    monkeypatch.setenv(seed_hook.ENV_EVALUATOR, REAL_EVALUATOR)
+    hook = seed_hook.get_hook()
+    scores = hook._evaluate_all([SEED, SEED], REAL_EVALUATOR)
+
+    assert len(scores) == 2
+    assert all(s.get("combined_score") for s in scores)
