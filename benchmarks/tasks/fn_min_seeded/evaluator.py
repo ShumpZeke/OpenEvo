@@ -68,6 +68,7 @@ actually biting, rather than assuming it is not.
 import contextlib
 import importlib.util
 import random
+import threading
 import time
 import traceback
 
@@ -90,6 +91,30 @@ SEEDS = (11, 23, 37, 41, 59, 67, 73, 89, 97, 103)
 STAGE1_SEEDS = SEEDS[:3]
 
 TRIAL_TIMEOUT_S = 5.0
+
+# Pinning works by replacing globals on `np.random`, which is process-wide. Two
+# evaluations running at once in one interpreter therefore trample each other's
+# draws -- and the engine can produce exactly that: `Evaluator` builds a
+# `TaskPool(max_concurrency=config.evaluator.parallel_evaluations)`, so anything
+# above 1 on that path evaluates concurrently in a single process.
+#
+# Measured before this lock existed, the same unchanged program evaluated
+# concurrently:
+#
+#     2 threads -> 2 distinct scores
+#     4 threads -> 4 distinct scores
+#     8 threads -> 8 distinct scores, spanning 1.0503 to 1.4215
+#
+# That is the *whole* noise range this task exists to remove, reintroduced
+# silently by a config value that looks like it only affects throughput.
+#
+# So the pinned region is serialised. It costs nothing worth having: an
+# evaluation is ~36 ms and the parallelism that matters is the model call, which
+# happens elsewhere entirely. Reentrant because `_evaluate_with` holds it across
+# per-seed `_load` and run steps that each enter `pinned_randomness` again --
+# and holding it across both is the point, or another thread interleaves between
+# the import and the call.
+_RNG_LOCK = threading.RLock()
 
 
 class _PinnedMeta(type):
@@ -125,6 +150,11 @@ def pinned_randomness(seed):
     Restores the previous global state on the way out, so importing this
     evaluator cannot quietly derandomise the process that called it.
     """
+    with _RNG_LOCK:
+        yield from _pinned_randomness_locked(seed)
+
+
+def _pinned_randomness_locked(seed):
     py_state = random.getstate()
     np_state = np.random.get_state()
     originals = {
@@ -285,6 +315,14 @@ def evaluate_stage2(program_path):
 
 
 def _evaluate_with(program_path, seeds):
+    # Held across every seed, not per seed: `_load` and the run each enter
+    # `pinned_randomness`, and a thread interleaving between them would import
+    # a candidate under one seed and run it under another.
+    with _RNG_LOCK:
+        return _evaluate_with_locked(program_path, seeds)
+
+
+def _evaluate_with_locked(program_path, seeds):
     try:
         probe = _load(program_path, seeds[0])
         if not hasattr(probe, "run_search"):

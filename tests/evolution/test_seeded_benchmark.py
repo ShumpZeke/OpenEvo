@@ -572,3 +572,69 @@ def test_an_exception_is_not_disguised_as_a_timeout(ev):
 
 def test_the_normal_path_is_untouched(ev):
     assert ev._run_with_timeout(lambda: (1.0, 2.0, 3.0)) == (1.0, 2.0, 3.0)
+
+
+# --------------------------------------------------------------------------
+# Concurrency
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("workers", [2, 4, 8])
+def test_concurrent_evaluations_do_not_corrupt_each_other(ev, workers):
+    """The determinism guarantee has to survive `parallel_evaluations > 1`.
+
+    Pinning replaces globals on `np.random`, which is process-wide, so two
+    evaluations at once in one interpreter trample each other's draws. The
+    engine can produce exactly that: `Evaluator` builds a
+    `TaskPool(max_concurrency=config.evaluator.parallel_evaluations)`, and the
+    shipped cloud config sets 2.
+
+    Measured before the lock, the same unchanged program evaluated concurrently
+    gave 2 distinct scores on 2 threads, 4 on 4, and 8 on 8 spanning
+    1.0503-1.4215 -- the whole noise range this task exists to remove,
+    reintroduced by a config value that reads as a throughput knob.
+
+    Threads rather than processes on purpose: processes each get their own
+    interpreter and could not collide, so they would test nothing here.
+    """
+    import threading
+
+    program = str(TASK / "initial_program.py")
+    expected = ev.evaluate(program).metrics["combined_score"]
+
+    scores, lock = [], threading.Lock()
+
+    def run():
+        score = ev.evaluate(program).metrics["combined_score"]
+        with lock:
+            scores.append(score)
+
+    threads = [threading.Thread(target=run) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(scores) == workers
+    assert set(scores) == {expected}, (
+        "concurrent evaluation produced {} distinct scores: {}".format(
+            len(set(scores)), sorted(set(scores)))
+    )
+
+
+def test_the_lock_is_reentrant():
+    """`_evaluate_with` holds it across per-seed loads and runs that each enter
+    `pinned_randomness` again. A plain Lock would deadlock on the first seed."""
+    import importlib.util
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    spec = importlib.util.spec_from_file_location(
+        "fn_min_seeded_evaluator_lock", TASK / "evaluator.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with module._RNG_LOCK:
+        with module.pinned_randomness(11):
+            pass  # would hang here on a non-reentrant lock
