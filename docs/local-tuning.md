@@ -389,44 +389,72 @@ one. Five discovered routes took over ten minutes here and drove free RAM to
 0.3 GB. Startup discovery — the default — only reads `/v1/models`, is instant,
 and is enough to route. See [gotchas.md](gotchas.md).
 
-## Model size: measured speed, unmeasured quality
+## Model size: what the small model buys, and what it does not
 
-The largest available lever is not a setting, it is which model runs. Measured
-on the same task, prompts built by OpenEvolve's own sampler:
+The largest lever on this box is not a setting. It is which model runs.
 
-| model | gen tok/s | s/call | diffs that apply |
+### Speed
+
+Measured on the same task, prompts built by OpenEvolve's own sampler:
+
+| model | generation | per call | applicable diffs |
 |---|---|---|---|
-| Qwen3.5-27B (tuned) | 3.3 | ~145 | 4 of 4 |
-| qwen3:0.6b | 192.6 | 0.5 | 6 of 12 |
-| qwen2.5:1.5b | 137.6 | 2.4 | **0 of 12** |
-| qwen2.5:0.5b derivative | 267.6 | 1.7 | **0 of 12** |
+| Qwen3.5-27B (tuned) | 3.3 tok/s | ~145 s | 4 of 4 |
+| `qwen3:0.6b` | **192.6 tok/s** | **0.5 s** | 6 of 12 |
+| `qwen2.5:1.5b` | 137.6 tok/s | 2.4 s | 0 of 12 |
+| `qwen2.5:0.5b` derivative | 267.6 tok/s | 1.7 s | 0 of 12 |
 
-Two things stand out before any conclusion about quality.
+Format ability does not track size. `qwen3:0.6b` writes an applicable
+SEARCH/REPLACE diff half the time; `qwen2.5:1.5b`, more than twice the size,
+managed none in twelve attempts. Worth checking before assuming a bigger local
+model behaves better.
 
-**Format ability is not proportional to size.** `qwen3:0.6b` produces an
-applicable SEARCH/REPLACE diff half the time; `qwen2.5:1.5b`, more than twice
-its size, managed none in twelve attempts. Whether a model can quote code
-exactly is a property of the model, not of the parameter count, and it is worth
-five minutes to check before assuming a bigger local model will do better.
+### Quality
 
-**Speed is not the deciding number, and this is where the obvious conclusion
-fails.** A 12-iteration run on `qwen3:0.6b` finished in **26 seconds** against
-roughly thirty minutes for the 27B, reported "new best solution found at
-iteration 9", and ended at 1.4209 — which reads like a 68× speedup for equal
-results.
+Now measurable, because `benchmarks/tasks/fn_min_seeded` fixes the random draws
+— see that directory's README. Thirty iterations each, same task, same config
+apart from the model:
 
-Its best program was **byte-identical to the seed**. Nothing had been improved.
-The "new best" was the same code drawing a luckier sample from a stochastic
-evaluator whose unchanged-seed range is 0.39 — see [gotchas.md](gotchas.md).
+| | best program | score |
+|---|---|---|
+| seed program | random search, budget 1000 | 1.4061 |
+| `qwen3:0.6b`, 30 iterations, **3 minutes** | the same random search, budget **2000** | 1.4513 |
+| Qwen3.5-27B, best found at iteration 6 | **Differential Evolution**, adaptive F/CR, budget 1200 | **1.4987** |
 
-So the honest position: the small model is dramatically faster and does produce
-applicable diffs, and **it has not been shown to produce an accepted
-improvement**. The 27B has not been compared, because one run of it lands inside
-the same noise band and would settle nothing.
+Both improvements are real and reproduce exactly on re-scoring. They are not the
+same kind of thing.
 
-Settling it needs repeated evaluation per candidate, or a task whose evaluation
-is deterministic. Until then, prefer the model whose diffs apply and treat any
-single-run score difference as noise.
+The 0.6B's entire gain came from doubling the search budget — the task scores no
+runtime, so that is free score for no insight. The 27B rewrote the algorithm.
+Holding the budget equal separates them:
+
+| | combined | value | distance |
+|---|---|---|---|
+| seed, budget 1000 | 1.4061 | 0.9692 | 0.8425 |
+| 0.6B's answer (budget 2000) | 1.4513 | 0.9895 | 0.9092 |
+| **27B's answer at budget 1000** | **1.4962** | 0.9995 | 0.9923 |
+| 27B's answer at its own budget 1200 | 1.4987 | 0.9997 | 0.9977 |
+
+At the same budget the algorithm is worth **+0.090**; raising 1000 to 1200 adds
+0.0025. So the 27B's improvement is almost entirely the algorithm, and it is
+twice the size of everything the 0.6B found.
+
+### What that means for going faster
+
+The 0.6B is genuinely usable: it produces applicable diffs, drives the loop end
+to end, and finds real score. It is roughly thirty times cheaper in wall clock
+for the same iteration count. What it did not do in thirty iterations is write a
+different algorithm.
+
+So the honest position is that the small model is the right tool for exercising
+the machinery — a full run in three minutes is worth a great deal when you are
+debugging a pipeline — and has not been shown to substitute for the large one on
+the work the pipeline exists to do.
+
+**Open, and worth running:** whether the 0.6B finds an algorithm given the
+iterations its speed affords. Thirty of its iterations cost three minutes; three
+hundred cost thirty, which is still a third of one 27B run. Nobody has tried it
+here, so nothing above should be read as saying it cannot.
 
 ## Honest expectations
 
