@@ -382,3 +382,69 @@ class TestVerifyIsAffordableLocally:
         assert "probe_max_tokens" in source
         assert source.count("probe_tokens") >= 3, (
             "both the plain probe and the tools probe must use it")
+
+
+class TestRolesShareOneResidentModel:
+    """
+    Every role must select the same local model.
+
+    On a box that can hold exactly one 16 GB model, a role whose preference
+    differs from the previous request's forces an unload and a reload. Measured
+    on this hardware that is 20-90 seconds — against a mutation that takes 165
+    seconds, so a judge call routed to a different model roughly doubles the
+    cost of the iteration, and does it invisibly: every request still succeeds,
+    the run is just mysteriously slower than the token rate predicts.
+
+    Today this holds because the whole chain comes from discovery and the first
+    discovered route wins for every role. That is a property of the current
+    ordering rather than a decision anyone made, which is exactly the kind of
+    thing that stops being true without anyone noticing.
+    """
+
+    def _router_with_discovered_models(self):
+        from oe_max.providers.base import ModelSpec
+        from oe_max.providers.registry import Registry, build_default_registry
+        from oe_max.router import Router, default_chain
+
+        registry = Registry(build_default_registry())
+        registry.providers["ollama"].models = {
+            "model_a": ModelSpec(key="model_a", id="a:latest", priority=100),
+            "model_b": ModelSpec(key="model_b", id="b:latest", priority=100),
+        }
+        registry.providers["lmstudio"].models = {
+            "model_c": ModelSpec(key="model_c", id="c", priority=100),
+        }
+        router = Router(registry, chain=default_chain())
+        router.refresh_chains()
+        return router
+
+    def test_every_role_selects_the_same_model(self, monkeypatch):
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        from oe_max.roles import Role
+
+        router = self._router_with_discovered_models()
+
+        chosen = set()
+        for role in Role:
+            routes, _ = router.candidates(role=role)
+            assert routes, f"{role.value} has no route"
+            chosen.add((routes[0].provider, routes[0].model_key))
+
+        assert len(chosen) == 1, (
+            f"roles select {len(chosen)} different models: {chosen}. On a "
+            "single-model box each switch is a full reload, which silently "
+            "doubles the cost of an iteration")
+
+    def test_a_second_model_is_still_reachable_as_a_fallback(self, monkeypatch):
+        """
+        Sharing one model must not mean the others are unroutable — if the
+        preferred one starts failing, the chain still has somewhere to go.
+        Preference, not exclusion.
+        """
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        from oe_max.roles import Role
+
+        router = self._router_with_discovered_models()
+        routes, _ = router.candidates(role=Role.REASONER)
+
+        assert len(routes) > 1, "no fallback if the preferred model degrades"
