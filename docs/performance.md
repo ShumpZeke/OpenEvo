@@ -249,6 +249,28 @@ A single run would have reported a mild win (an earlier one-off said 1.16×), an
 two of these would have reported a spectacular one. The rule that caught it is
 worth keeping: **when a ratio looks too good, read the denominator.**
 
+## Parallel evaluations barely help on the cloud path
+
+At ~51 s an iteration and a 40 RPM budget, a sequential run uses about 1.2
+requests a minute. That looks like an obvious 4x sitting on the table. It is
+not: the provider throttles concurrency from one account.
+
+Thirty iterations of the seeded task, same config apart from the worker count:
+
+| `parallel_evaluations` | wall | per iteration | best |
+|---|---|---|---|
+| 1 | 25.7 min | 51.3 s | 1.4995 |
+| **4** | **18.6 min** | **37.2 s** | 1.4995 |
+
+**1.38x for four times the workers.** Per-request latency roughly doubled under
+load — the broker recorded 87 s average against ~51 s sequential — so most of
+the concurrency was absorbed by the provider serving each request more slowly.
+One request came back `unavailable`.
+
+Same final score either way, so nothing was lost; there just is not much to win.
+The shipped cloud config stays at 2, which captures most of a small effect
+without pushing the provider.
+
 ## Measured and deliberately not changed
 
 | | |
