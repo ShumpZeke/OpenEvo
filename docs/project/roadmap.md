@@ -8,6 +8,40 @@ Read `handoff.md` first — especially §3, the traps.
 
 ---
 
+## T0-noise — Make the example task's score comparable between runs
+
+**Priority:** highest of the local items — it blocks every other comparison.
+**Effort:** small. **Blocked by:** nothing.
+
+`examples/function_minimization` evaluates a stochastic program and fixes no
+seed, so the untouched seed scores anywhere in **1.0494–1.4431**. That range is
+wider than most real improvements, which makes every single-run comparison on
+this task uninterpretable — including "is a 0.6B model as good as a 27B", which
+was attempted this session and could not be answered.
+
+It also produces false positives: a 12-iteration run reported a new best at
+iteration 9 and finished with a best program byte-identical to the seed.
+
+### How
+
+Either evaluate each candidate N times and compare distributions, or seed the
+candidate's RNG so one program scores one way. The second is cheaper and is a
+config/evaluator change rather than an engine one — note that `random_seed` in
+the config governs the evolution process, not the candidate's execution.
+
+### Done when
+
+Evaluating the unchanged seed twenty times produces a range small enough that a
+real improvement is distinguishable from noise, and that range is written down.
+
+### Careful
+
+Do not "fix" this by averaging inside the evaluator without saying so — a
+metric that silently changed meaning invalidates every number already recorded
+in benchmarks.
+
+---
+
 ## T0a — Run local mode against a real local LLM
 
 **Priority:** highest. **Effort:** minutes, once a server is installed.

@@ -322,6 +322,45 @@ one. Five discovered routes took over ten minutes here and drove free RAM to
 0.3 GB. Startup discovery — the default — only reads `/v1/models`, is instant,
 and is enough to route. See [gotchas.md](gotchas.md).
 
+## Model size: measured speed, unmeasured quality
+
+The largest available lever is not a setting, it is which model runs. Measured
+on the same task, prompts built by OpenEvolve's own sampler:
+
+| model | gen tok/s | s/call | diffs that apply |
+|---|---|---|---|
+| Qwen3.5-27B (tuned) | 3.3 | ~145 | 4 of 4 |
+| qwen3:0.6b | 192.6 | 0.5 | 6 of 12 |
+| qwen2.5:1.5b | 137.6 | 2.4 | **0 of 12** |
+| qwen2.5:0.5b derivative | 267.6 | 1.7 | **0 of 12** |
+
+Two things stand out before any conclusion about quality.
+
+**Format ability is not proportional to size.** `qwen3:0.6b` produces an
+applicable SEARCH/REPLACE diff half the time; `qwen2.5:1.5b`, more than twice
+its size, managed none in twelve attempts. Whether a model can quote code
+exactly is a property of the model, not of the parameter count, and it is worth
+five minutes to check before assuming a bigger local model will do better.
+
+**Speed is not the deciding number, and this is where the obvious conclusion
+fails.** A 12-iteration run on `qwen3:0.6b` finished in **26 seconds** against
+roughly thirty minutes for the 27B, reported "new best solution found at
+iteration 9", and ended at 1.4209 — which reads like a 68× speedup for equal
+results.
+
+Its best program was **byte-identical to the seed**. Nothing had been improved.
+The "new best" was the same code drawing a luckier sample from a stochastic
+evaluator whose unchanged-seed range is 0.39 — see [gotchas.md](gotchas.md).
+
+So the honest position: the small model is dramatically faster and does produce
+applicable diffs, and **it has not been shown to produce an accepted
+improvement**. The 27B has not been compared, because one run of it lands inside
+the same noise band and would settle nothing.
+
+Settling it needs repeated evaluation per candidate, or a task whose evaluation
+is deterministic. Until then, prefer the model whose diffs apply and treat any
+single-run score difference as noise.
+
 ## Honest expectations
 
 At ~3.3 tok/s generation and ~107 tok/s prompt, one mutation is roughly **3–8
