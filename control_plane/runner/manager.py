@@ -185,6 +185,19 @@ class RunManager:
             "PYTHONPATH": _ROOT + os.pathsep + env.get("PYTHONPATH", ""),
             # Unbuffered so the log tail in the UI is live rather than chunked.
             "PYTHONUNBUFFERED": "1",
+            # Without this, Windows loses log lines outright rather than
+            # mangling them. The child inherits the console code page (cp1252
+            # here), `logging` cannot encode the character, and the handler
+            # raises -- so the whole record is dropped. Measured: a line
+            # containing an emoji arrives as 0 bytes without this and 48 with
+            # it. Upstream marks "New best solution found" with a star and
+            # writes score changes with an arrow, so the lines being silently
+            # discarded are the ones a run log exists to carry.
+            #
+            # stdout_fh/stderr_fh below are opened "wb" and the readers use
+            # encoding="utf-8", so the child encoding is the only thing that
+            # was inconsistent.
+            "PYTHONIOENCODING": "utf-8",
         })
         if self.collector_port:
             env[_instr.ENV_COLLECTOR_PORT] = str(self.collector_port)

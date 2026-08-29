@@ -53,6 +53,11 @@ fi
 # The entrypoint requires a run id, so generate one when the caller has not.
 export EVOLUTION_RUN_ID="${EVOLUTION_RUN_ID:-run_$(date +%Y%m%d%H%M%S)_$$}"
 export EVOLUTION_TELEMETRY="${EVOLUTION_TELEMETRY:-1}"
+# Set for parity with the Windows path, where it is load-bearing: without it a
+# log record containing a character the console code page cannot encode is
+# dropped entirely rather than mangled. Harmless where the locale is already
+# UTF-8.
+export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 export EVOLUTION_EVENT_LOG="${EVOLUTION_EVENT_LOG:-$OUT/events.ndjson}"
 
 echo "task=$TASK profile=$PROFILE iterations=$ITER"

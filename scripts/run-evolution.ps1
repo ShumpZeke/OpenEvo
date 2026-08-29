@@ -52,6 +52,12 @@ if (-not $env:EVOLUTION_RUN_ID) {
   $env:EVOLUTION_RUN_ID = "run_$(Get-Date -Format 'yyyyMMddHHmmss')_$PID"
 }
 if (-not $env:EVOLUTION_TELEMETRY) { $env:EVOLUTION_TELEMETRY = "1" }
+# Without this the run log silently loses lines on Windows rather than mangling
+# them: the child inherits the console code page, `logging` cannot encode the
+# character, and the handler drops the whole record. Upstream marks "New best
+# solution found" with a star and writes score changes with an arrow, so the
+# discarded lines are the ones worth having. Measured: 0 bytes without, 48 with.
+$env:PYTHONIOENCODING = "utf-8"
 if (-not $env:EVOLUTION_EVENT_LOG) { $env:EVOLUTION_EVENT_LOG = Join-Path $Output "events.ndjson" }
 
 Write-Host "task=$Task profile=$Profile iterations=$Iterations"
