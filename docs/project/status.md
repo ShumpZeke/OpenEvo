@@ -127,5 +127,9 @@ The honest list. Detail and rationale in [roadmap.md](roadmap.md).
 - The 44-per-60s rate contract is proven on a virtual clock only; the live NIM
   run peaked at 0 of 44, so it has never been under real pressure.
 - Several features are built, gated and unmeasured: multi-offspring, operator
-  steering, island policies, Seed Forge. They are opt-in for that reason.
+  steering, island policies. They are opt-in for that reason. **Seed Forge is
+  no longer among them**: measured 2026-08-29 against the seeded task, two of
+  six variants beat the seed and all six score differently — and one of them is
+  the exact change, at the exact score, that a 0.6B model took thirty iterations
+  to find. See roadmap T8.
 - Stock-vs-MAX has not been benchmarked across enough seeds to report.

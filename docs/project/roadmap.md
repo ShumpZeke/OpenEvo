@@ -556,6 +556,54 @@ rolling-window gauge across a broker restart.
 
 **Priority:** low until T1–T3 land. **Effort:** medium.
 
+### Seed Forge is no longer unmeasured (2026-08-29)
+
+It could be measured without a model at all: the variants are deterministic AST
+mutations, and `benchmarks/tasks/fn_min_seeded` scores a program identically
+every time. Seven variants from the shipped seed, evaluated directly:
+
+| variant | score | vs seed |
+|---|---|---|
+| the seed | 1.4061 | — |
+| `scale_effort ×10.0` | **1.4742** | **+0.0681** |
+| `scale_effort ×2.0` | 1.4513 | +0.0452 |
+| `scale_literals ×2.0` | 1.3675 | −0.0386 |
+| `scale_literals ×0.5` | 1.3391 | −0.0670 |
+| `scale_effort ×0.5` | 0.9875 | −0.4185 |
+| `scale_literals ×10.0` | 0.7439 | −0.6621 |
+
+**Head start: yes.** Two of six beat the seed, the best by +0.068.
+
+**Diversity: yes.** Six distinct scores spanning 0.74 to 1.47, so islands seeded
+from this do not all start in the same basin — which is the stated rationale and
+did not require any variant to be better.
+
+The sharpest result is the comparison it invites. `scale_effort ×2.0` is exactly
+`iterations=1000 → 2000`, and scores exactly 1.4513 — **the identical change, at
+the identical score, that `qwen3:0.6b` took 30 iterations and three minutes of
+model time to find.** The forge produces it in milliseconds, deterministically,
+for free. A run seeded from the forge does not spend model calls rediscovering
+the budget lever.
+
+It is not a substitute for a model: the 27B's differential evolution scores
+1.4987 and no forge variant approaches it. Head start, not answer.
+
+### One defect found while measuring it
+
+The forge round-trips through `ast.unparse`, which keeps docstrings and **drops
+every comment**. On the shipped seed that loses all three:
+
+    # EVOLVE-BLOCK-START
+    # EVOLVE-BLOCK-END
+    # This part remains fixed (not evolved)
+
+Nothing breaks today — `parse_evolve_blocks` has no caller inside `openevolve/`
+in the pinned version, so the markers are advisory rather than enforced. But the
+third comment is an instruction addressed to the model, and a variant seeded into
+the population is a program that no longer carries it. Whoever picks T8 up should
+decide deliberately whether to preserve comments through the mutation rather than
+inherit this by accident.
+
 Generate multiple conceptually distinct starting families, and attach policies
 (exploitation, structural, novelty, crossover, deep reasoning, wildcard) *above*
 upstream's existing island mechanics.
