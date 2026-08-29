@@ -27,6 +27,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -40,6 +41,8 @@ from ..providers.registry import Registry, build_default_registry
 from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
 from ..providers.local import local_only
 from ..router import NoRouteAvailable, Route, Router, default_chain
+
+logger = logging.getLogger(__name__)
 
 # Requests naming a role alias select that role's chain; naming a concrete
 # model pins that route; anything unrecognised falls to the default role.
@@ -145,6 +148,25 @@ def create_app(registry: Optional[Registry] = None,
                 # the empty chain honestly, and POST /v1/oe-max/verify re-runs
                 # it once the operator starts their server.
                 pass
+
+        # If OE_MAX_SINGLE_MODEL named something unresolvable, say so now.
+        # The mode is on from the first request, so without this the operator
+        # discovers a typo as a 503 minutes later, in a run they have already
+        # started -- and the message arrives per request rather than once.
+        # Logged rather than fatal: the selection can become resolvable after
+        # discovery, and refusing to start over an env var would be worse than
+        # the problem.
+        seeded = single_model.selection()
+        if seeded is not None:
+            route, why = single_model.resolve(state.registry, seeded)
+            if route is None:
+                logger.warning(
+                    "%s=%r is set but cannot be served: %s. Every request will "
+                    "fail until it is fixed or cleared "
+                    "(POST /v1/oe-max/single-model {\"model\": null}).",
+                    single_model.ENV_SINGLE_MODEL, seeded, why)
+            else:
+                logger.info("single-model mode: every role -> %s", route.model_id)
 
         task: Optional[asyncio.Task] = None
         if verify_on_start:

@@ -285,3 +285,65 @@ def test_the_endpoint_refuses_a_disabled_model_with_its_reason():
         detail = str(r.json())
         assert "disabled" in detail
         assert "404" in detail
+
+
+# -- the environment seed ---------------------------------------------------
+
+
+def test_an_unresolvable_env_selection_warns_at_startup(monkeypatch, caplog):
+    """A typo in OE_MAX_SINGLE_MODEL must not first surface as a 503.
+
+    The mode is on from the first request, so without a startup warning the
+    operator discovers the typo minutes into a run they have already started,
+    once per request rather than once.
+    """
+    import logging
+
+    monkeypatch.setenv(single_model.ENV_SINGLE_MODEL, "laguuna")
+    single_model.reset_for_tests()
+
+    with caplog.at_level(logging.WARNING, logger="oe_max.broker.app"):
+        with _client():
+            pass
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("OE_MAX_SINGLE_MODEL" in w and "laguuna" in w for w in warnings), warnings
+    # And it says how to get out of it, because that is the next thing needed.
+    assert any("single-model" in w for w in warnings), warnings
+
+
+def test_a_resolvable_env_selection_says_what_it_pinned(monkeypatch, caplog):
+    """The other half: an operator who set it on purpose should see it took."""
+    import logging
+
+    monkeypatch.setenv(single_model.ENV_SINGLE_MODEL, "hy3")
+    single_model.reset_for_tests()
+
+    with caplog.at_level(logging.INFO, logger="oe_max.broker.app"):
+        with _client() as (client, provider):
+            assert _ask(client).status_code == 200
+            assert provider.calls == ["hy3-free"]
+
+    assert any("hy3-free" in r.getMessage() for r in caplog.records), \
+        [r.getMessage() for r in caplog.records]
+
+
+def test_the_env_seed_is_not_re_read_after_clearing(monkeypatch):
+    """Clearing the mode at runtime must stick.
+
+    If the environment were consulted per request, a `POST {"model": null}`
+    would be silently undone by the next one -- the operator turns it off and it
+    turns itself back on.
+    """
+    monkeypatch.setenv(single_model.ENV_SINGLE_MODEL, "hy3")
+    single_model.reset_for_tests()
+
+    with _client() as (client, provider):
+        assert _ask(client).status_code == 200
+        assert provider.calls == ["hy3-free"]
+
+        client.post("/v1/oe-max/single-model", json={"model": None})
+        provider.calls.clear()
+
+        assert _ask(client, "oe-max-reasoner").status_code == 200
+        assert provider.calls == ["nemotron-3-ultra-free"], provider.calls
