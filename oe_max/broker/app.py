@@ -72,6 +72,24 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+def _retry_policy() -> RetryPolicy:
+    """
+    Retry limits sized for the mode this process is in.
+
+    The defaults were measured against cloud routes averaging 90 s per request.
+    A local generation is 154 s, which makes four attempts a poor bound and the
+    240 s ceiling shorter than two attempts -- so it fires after the first retry
+    whatever else happens.
+
+    Locally there is also usually one model. "Move on to the next route" then
+    means unloading 14 GB and loading another, so a retry is not buying a
+    different outcome, only the same model another two and a half minutes.
+    """
+    if local_only():
+        return RetryPolicy(max_attempts=2, max_route_seconds=900.0)
+    return RetryPolicy(max_attempts=4)
+
+
 class BrokerState:
     def __init__(self, registry: Optional[Registry] = None) -> None:
         self.registry = registry or Registry(build_default_registry())
@@ -81,7 +99,7 @@ class BrokerState:
             # is then exactly what startup discovery found, so what /health
             # reports is what will actually be tried.
             chain=default_chain(),
-            retry=RetryPolicy(max_attempts=4),
+            retry=_retry_policy(),
             health=RouteHealth(),
         )
         self.started_at = time.time()

@@ -506,3 +506,60 @@ class TestTheLocalPromptKeepsItsOutputRules:
 
         assert "<<<<<<< SEARCH" not in message, (
             "the format is duplicated; upstream's template already carries it")
+
+
+class TestRetryLimitsMatchLocalCosts:
+    """
+    The shipped retry policy is `max_attempts=4`, `max_route_seconds=240`, and
+    its own docstring says why: measured against cloud routes averaging 90 s per
+    request, four attempts is six minutes and the ceiling stops that.
+
+    A local generation is 154 s measured, which breaks both numbers at once. The
+    240 s ceiling is shorter than two attempts, so it fires after the first
+    retry regardless of anything else. And four attempts is not a bound worth
+    having when there is one local model: "move on to the next route" either
+    does not exist or means unloading 14 GB and loading another, so the retry is
+    not buying a different outcome — only the same model another 2.5 minutes.
+    """
+
+    def test_local_mode_retries_fewer_times(self, monkeypatch):
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        import importlib
+
+        broker = importlib.import_module("oe_max.broker.app")
+        policy = broker._retry_policy()
+
+        assert policy.max_attempts <= 2, (
+            f"{policy.max_attempts} attempts at ~154 s each spends most of an "
+            "iteration re-asking one model the same question")
+
+    def test_the_wall_clock_ceiling_can_actually_be_reached(self, monkeypatch):
+        """
+        A ceiling shorter than two attempts is not a ceiling on retries, it is
+        a guarantee that the second one is the last. It has to leave room for
+        the escalated retry it exists to bound.
+        """
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        import importlib
+
+        broker = importlib.import_module("oe_max.broker.app")
+        policy = broker._retry_policy()
+
+        one_generation_s = 154.0
+        assert policy.max_route_seconds > 2 * one_generation_s, (
+            f"{policy.max_route_seconds}s cannot contain two "
+            f"{one_generation_s}s attempts")
+
+    def test_the_cloud_policy_is_untouched(self, monkeypatch):
+        """
+        Those numbers were measured too, against providers where they are
+        right. Local mode is not an excuse to change them.
+        """
+        monkeypatch.delenv(local_mod.ENV_LOCAL_ONLY, raising=False)
+        import importlib
+
+        broker = importlib.import_module("oe_max.broker.app")
+        policy = broker._retry_policy()
+
+        assert policy.max_attempts == 4
+        assert policy.max_route_seconds == 240.0
