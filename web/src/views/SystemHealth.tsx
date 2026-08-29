@@ -13,7 +13,7 @@ import {
   useAsync,
 } from "../lib/hooks";
 import {
-  Badge, Empty, KV, Mono, Panel, Stat, fmtNum, shortId,
+  Badge, Empty, KV, Mono, Panel, Stat, fmtAgo, fmtNum, shortId,
 } from "../components/ui";
 
 export const SystemHealth: React.FC<ViewProps> = () => {
@@ -137,7 +137,12 @@ export const SystemHealth: React.FC<ViewProps> = () => {
       </Panel>
 
       <Panel title="OpenCode isolation"
-             footer="Evolution redirects HOME and every XDG path into its own tree, so it cannot read or write the operator's OpenCode state.">
+             footer={
+               "Evolution redirects HOME and every XDG path into its own tree, so it "
+               + "cannot read or write the operator's OpenCode state. Establishing this "
+               + "runs two subprocesses (~0.9s), so it is checked at most every 30s "
+               + "rather than on each poll."
+             }>
         <div className="p-2">
           {!iso ? <Empty>Unavailable.</Empty> : (
             <>
@@ -145,6 +150,12 @@ export const SystemHealth: React.FC<ViewProps> = () => {
                 <Badge tone={iso.ok ? "ok" : "warn"}>{iso.level}</Badge>
                 <span className="text-2xs text-ink-dim">
                   {iso.ok ? "isolation active" : "sandbox backend disabled"}
+                </span>
+                {/* The rest of this panel is polled every 5s but cached for 30,
+                    so say when it was actually established rather than letting
+                    it read as current. */}
+                <span className="text-2xs text-ink-faint ml-auto">
+                  checked {fmtAgo(iso.checked_at)}
                 </span>
               </div>
               <KV k="binary" v={iso.binary ?? "not found"} />
