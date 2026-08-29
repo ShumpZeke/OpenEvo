@@ -306,3 +306,48 @@ def test_an_absent_broker_says_it_is_absent_not_that_it_is_slow(client, monkeypa
     assert not detail.rstrip().endswith(":"), f"empty exception message: {detail!r}"
     assert "no broker listening" in detail or "could not connect" in detail, detail
     assert "127.0.0.1:9" in detail
+
+
+def test_a_reachable_broker_is_reported_from_its_own_payload(client, monkeypatch):
+    """The other broker tests all cover the absent case. This covers the
+    present one, because the timeout split could just as easily have broken it:
+    a 250ms connect budget applied to the whole request would turn a working
+    broker into a reported outage.
+
+    Uses a stub server rather than the real broker, so the test needs no
+    provider, no model and no port that something else might hold.
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    payload = {"router": {"chain": ["oe-max-primary"]}, "registry": {"providers": 1}}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[:2]
+        monkeypatch.setenv("OE_MAX_BASE", f"http://{host}:{port}")
+
+        body = client.get("/api/broker").json()
+
+        assert body["reachable"] is True
+        assert body["router"] == payload["router"]
+        assert body["registry"] == payload["registry"]
+        assert body["base"].endswith(str(port))
+    finally:
+        server.shutdown()
+        server.server_close()
