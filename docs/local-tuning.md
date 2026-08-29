@@ -496,6 +496,66 @@ the tool. Which is only sayable because the evaluator stopped moving — the
 unseeded task's spread is 0.39, and every difference discussed above is smaller
 than that.
 
+## The cloud path is about three times quicker, and it finishes
+
+Everything above is about fitting a model to this GPU. With a provider key the
+question changes, and it is worth stating plainly because all of that tuning can
+read as advocacy for local.
+
+Same task, same seeded evaluator, thirty iterations each:
+
+| | iterations | wall | per iteration | best | what it wrote |
+|---|---|---|---|---|---|
+| `qwen3:0.6b` local | 300 | 30 min | 6 s | 1.4061 | nothing that survived |
+| Qwen3.5-27B local | **19 of 30**, stopped | ~2.5 h | ~180 s | 1.4987 | differential evolution |
+| **NVIDIA NIM** | **30 of 30** | **33 min** | **66 s** | **1.4989** | **simulated annealing** |
+
+Against the seed's 1.4061, every score re-scored independently at spread 0.
+
+The cloud run wrote *multi-start simulated annealing with adaptive cooling, step
+size tied to temperature, periodic restarts and local refinement*. That is a
+more elaborate answer than the 27B's, at the same score, in a third of the time
+per iteration — and, unlike the 27B run, it **finished**. The local run stopped
+at 19 because a 16 GB model on a 16 GB box has no headroom for anything else.
+
+So the honest summary of this whole document: local mode works, is worth tuning,
+and is the right tool when there is no key or the work must not leave the
+machine. When a key exists, the cloud path is quicker per iteration and far more
+likely to complete a run.
+
+### One trap on the way there
+
+`nvidia/nemotron-3-ultra-550b-a55b` answers a two-word probe in **3.13 s** and a
+real mutation prompt in **66 s**. The same twenty-fold gap this repository
+already recorded when setting NIM's timeout, walked into again from the other
+direction — a latency table built from probes will tell you the cloud path is
+instant. It is not; it is three times quicker than a tuned 27B on this box.
+
+### What the hidden reasoning costs
+
+The flagship spends most of its output thinking. Measured on one real mutation
+prompt: `content` 1587 characters, `reasoning` **13148** — 89% of the request.
+
+A separate reasoning channel means the thinking does not eat the *answer*, which
+is what makes the model safe to use here. It does not mean the thinking is free:
+those tokens are generated and take time. Measured across three settings, n=3
+each, through the broker:
+
+| `reasoning_effort` | applicable | wall | output | reasoning chars |
+|---|---|---|---|---|
+| default (on) | 3/3 | 93.4 s | 3017 tok | 10060 |
+| `"low"` | 3/3 | 92.2 s | 3266 tok | 10972 |
+| `"none"` | 3/3 | **69.1 s** | 2314 tok | 7315 |
+
+`"none"` is 26% quicker and does **not** stop the thinking — it reduces it by
+about a quarter. `"low"` is indistinguishable from the default.
+
+Diff quality is identical at 3/3 everywhere, which is a ceiling rather than a
+result: the test cannot detect a small regression when no arm fails. Whether
+suppressing a reasoning model's reasoning costs *mutation* quality is a
+different question, and one the seeded task can actually answer — a full run
+under each setting, compared on final score.
+
 ## Honest expectations
 
 At ~3.3 tok/s generation and ~107 tok/s prompt, one mutation is roughly **3–8
