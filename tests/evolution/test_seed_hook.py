@@ -186,3 +186,96 @@ def test_a_forge_failure_never_costs_the_run_its_seed(seeding, monkeypatch):
     db = _db()
     db.add(_seed_program(), iteration=0)
     assert "seed" in db.programs
+
+
+# -- batching ---------------------------------------------------------------
+
+def test_the_batch_is_one_child_process(seeding, monkeypatch):
+    """Three variants must cost one interpreter startup, not three.
+
+    Startup dwarfs the work here: a bare interpreter is 0.10s, importing
+    `openevolve` takes it to 2.97s -- almost all of that the OpenAI SDK's
+    pydantic types, pulled in transitively whether or not the child will ever
+    call a model -- and one evaluation of the example task is 0.10s. Per-variant
+    children spent 4.6s each to do 0.1s of work.
+    """
+    import subprocess
+
+    calls = []
+    real_run = subprocess.run
+
+    def counting_run(*args, **kwargs):
+        calls.append(args[0] if args else None)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+
+    hook = seed_hook.get_hook()
+    scores = hook._evaluate_all([SEED, SEED, SEED], EVALUATOR)
+
+    assert len(scores) == 3
+    assert all(s for s in scores), "every variant should have scored"
+    assert len(calls) == 1, f"expected one child, got {len(calls)}"
+
+
+def test_one_bad_variant_does_not_cost_the_batch(seeding):
+    """A variant that raises is dropped; the rest still score.
+
+    Per-variant children gave this for free. The batch has to earn it, and this
+    is the test that says it did.
+    """
+    hook = seed_hook.get_hook()
+    broken = "def run_search():\n    raise ValueError('no')\n"
+    scores = hook._evaluate_all([SEED, broken, SEED], EVALUATOR)
+
+    assert len(scores) == 3
+    assert scores[0], "first variant should have scored"
+    assert scores[2], "third variant should have scored"
+    # The broken one either scores zero or does not score; both are "dropped".
+    assert not scores[1] or scores[1].get("combined_score") == 0.0
+
+
+def test_a_variant_that_will_not_import_is_dropped_not_fatal(seeding):
+    hook = seed_hook.get_hook()
+    scores = hook._evaluate_all([SEED, "this is not python\n"], EVALUATOR)
+    assert len(scores) == 2
+    assert scores[0]
+    assert not scores[1] or scores[1].get("combined_score") == 0.0
+
+
+def test_a_dead_batch_falls_back_to_one_child_per_variant(seeding, monkeypatch):
+    """The isolation the batch gave up is bought back only when it is needed.
+
+    A native crash or the batch timeout kills every variant at once. Retrying
+    individually recovers all of them except the one that actually killed the
+    process -- which is what the per-variant path did, at 4.6s each, always.
+    """
+    hook = seed_hook.get_hook()
+    sizes = []
+    real_batch = hook._evaluate_subprocess_batch
+
+    def batch_that_dies_in_bulk(paths, evaluator):
+        # Stands in for a native crash: the whole child is lost, so nothing
+        # comes back -- but the same variants run one at a time are fine.
+        sizes.append(len(paths))
+        if len(paths) > 1:
+            return []
+        return real_batch(paths, evaluator)
+
+    monkeypatch.setattr(hook, "_evaluate_subprocess_batch", batch_that_dies_in_bulk)
+
+    scores = hook._evaluate_all([SEED, SEED], EVALUATOR)
+
+    # One attempt at the whole batch, then one child per variant.
+    assert sizes == [2, 1, 1], sizes
+    assert all(s for s in scores), "the retry should recover every variant"
+
+
+def test_empty_input_asks_for_no_process_at_all(seeding):
+    assert seed_hook.get_hook()._evaluate_all([], EVALUATOR) == []
+
+
+def test_single_variant_helper_still_works(seeding):
+    """`_evaluate` is the old single-variant entry point; callers outside the
+    forge loop still use it."""
+    assert seed_hook.get_hook()._evaluate(SEED, EVALUATOR)

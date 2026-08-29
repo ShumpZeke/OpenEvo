@@ -245,6 +245,73 @@ OpenAI's `usage.completion_tokens_details`, and Ollama reports the text in
 an empty answer said `reasoning_tokens: 0`. It now reads all three spellings of
 the field and flags `answered_only_in_reasoning`.
 
+### On a real mutation prompt, it is the difference between output and none
+
+The measurement above used a one-word probe. Repeated on a full prompt built by
+the engine's own sampler, on the 27B, once each:
+
+| `reasoning_effort` | wall | completion | `content` | diff |
+|---|---|---|---|---|
+| absent | 308.7 s | 978 tok | **0 chars** (3247 chars of reasoning) | none |
+| `"none"` | **99.3 s** | 320 tok | 1029 chars | applicable |
+
+Three times the wall clock for nothing usable. `finish_reason` is `stop` both
+times, so it does not read as truncation and raising `max_tokens` does not help.
+This is the largest single lever measured on this box — larger than every
+Ollama setting in this document put together.
+
+### Set it in the config as well as the adapter
+
+The broker's local adapter has always sent it, so a run through
+`127.0.0.1:8787` was fine. But `api_base` is a config field, and pointing it at
+`http://127.0.0.1:11434/v1` — the obvious move when you want the broker out of
+the picture — takes the adapter out of the path along with its setting. The
+symptom is every iteration failing with **"No valid diffs found in response"**,
+minutes apart, while the model works perfectly.
+
+`configs/oe_max/local.yaml` now sets `llm.reasoning_effort: "none"` too, so
+neither path can lose it. Keep both halves; a test fails if either is removed.
+
+---
+
+## Prompt processing is cached, and the prompt defeats the cache
+
+Re-sending a prefix the server has already processed is close to free. Measured
+on the tuned 27B, a 2078-token prompt sent cold and then again with a different
+tail, on two independent prefixes:
+
+| | prompt processing |
+|---|---|
+| cold | 15.0 s / 15.1 s |
+| prefix already seen | 3.6 s / 3.5 s |
+
+**4×**, consistent across both. A KV cache is a *prefix* cache, though: one
+changed token near the beginning throws away everything after it.
+
+Upstream's `diff_user` template opens with
+
+```
+# Current Program Information
+- Fitness: {fitness_score}
+```
+
+so consecutive prompts diverge at **character 44**, and the ~1100-character
+format specification — which never changes — is re-processed every iteration.
+Measured across four consecutive rounds with the program and metrics changing as
+they would in a run, only 591 characters of a 3938-character prompt are a
+reusable prefix.
+
+Reordering the invariant block to the front takes that to 1609 characters
+(15% → 41%), worth about **1.4 s per call**.
+
+That is ~1% of a 145 s call, because prompt processing is only ~5% of the cost
+here and generation dominates — so it is filed as a measured hypothesis rather
+than shipped. Moving the output-format spec from the end of the prompt to the
+beginning may change how often the model emits an applicable diff, and one
+wasted call is 145 s, a hundred times the saving. The reordered template and the
+full numbers are in `configs/local/prompts/`; it is not wired into any config
+until that quality question is answered.
+
 ---
 
 ## Sizing the token budget from the measured rate

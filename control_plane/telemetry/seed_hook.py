@@ -48,7 +48,7 @@ _SUBPROCESS_SCRIPT = """
 import importlib.util, json, os, sys
 
 _eval_file = {eval_file}
-_program = {program}
+_programs = {programs}
 _out = {out}
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(_eval_file)))
@@ -56,14 +56,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(_eval_file)))
 _spec = importlib.util.spec_from_file_location("evaluation_module", _eval_file)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
-
-_result = _module.evaluate(_program)
-
-# EvaluationResult carries metrics plus artifacts; a plain dict is metrics
-# only. Both shapes are flattened so the parent has one thing to parse.
-_metrics = getattr(_result, "metrics", None)
-if _metrics is None and isinstance(_result, dict):
-    _metrics = _result
 
 
 def _plain(value):
@@ -74,8 +66,27 @@ def _plain(value):
         return repr(value)
 
 
+_results = []
+for _program in _programs:
+    try:
+        _result = _module.evaluate(_program)
+    except Exception as _exc:
+        # One bad variant must not cost the batch the other results. The parent
+        # reads a null as "this one did not score" and drops it, which is the
+        # same outcome it would have reached from a failed single run.
+        sys.stderr.write("variant {{!r}} raised {{!r}}\\n".format(_program, _exc))
+        _results.append(None)
+        continue
+
+    # EvaluationResult carries metrics plus artifacts; a plain dict is metrics
+    # only. Both shapes are flattened so the parent has one thing to parse.
+    _metrics = getattr(_result, "metrics", None)
+    if _metrics is None and isinstance(_result, dict):
+        _metrics = _result
+    _results.append({{k: _plain(v) for k, v in (_metrics or {{}}).items()}})
+
 with open(_out, "w", encoding="utf-8") as _fh:
-    json.dump({{"metrics": {{k: _plain(v) for k, v in (_metrics or {{}}).items()}}}}, _fh)
+    json.dump({{"results": _results}}, _fh)
 """
 
 
@@ -149,8 +160,10 @@ class SeedForgeHook:
         # would be a duplicate that the novelty gate has to reject.
         variants = [v for v in report.accepted if v.origin != "seed"]
 
-        for index, variant in enumerate(variants[:requested()]):
-            metrics = self._evaluate(variant.code, evaluator)
+        chosen = variants[:requested()]
+        scores = self._evaluate_all([v.code for v in chosen], evaluator)
+
+        for index, (variant, metrics) in enumerate(zip(chosen, scores)):
             if not metrics:
                 continue
             child = Program(
@@ -172,48 +185,103 @@ class SeedForgeHook:
                 logger.debug("seed variant rejected by the database: %r", exc)
         return added
 
-    def _evaluate(self, code: str, evaluator: str) -> Dict[str, float]:
+    def _evaluate_all(self, codes: List[str], evaluator: str) -> List[Dict[str, float]]:
         """
-        Score one variant, preferring the sandbox when it is enabled.
+        Score every variant, preferring the sandbox when it is enabled.
 
         An unscored variant is dropped rather than added with zeros: a zeroed
         program occupies a MAP-Elites cell it did not earn, and displaces one
-        that might have.
+        that might have. A dropped variant is `{}` here, and the list is always
+        as long as `codes` so the caller can zip it against them.
+
+        The sandbox path stays one call per variant -- its whole purpose is a
+        per-variant limit, and batching would make one runaway variant spend
+        the whole set's budget. The unsandboxed path batches, because there the
+        per-variant process buys no isolation worth 4.6s each.
         """
         from control_plane.telemetry import sandbox_eval
         from oe_max.execution import available_backends
 
+        if not codes:
+            return []
+
         with tempfile.TemporaryDirectory(prefix="oe-max-seed-") as tmp:
-            path = os.path.join(tmp, "variant.py")
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(code)
+            paths = []
+            for index, code in enumerate(codes):
+                path = os.path.join(tmp, f"variant_{index}.py")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(code)
+                paths.append(path)
 
             # The sandbox is preferred whenever it can actually run. On a host
             # with no POSIX rlimits and no container runtime there is no
             # backend at all, and calling it would fail every variant rather
             # than score it -- which reads as "the forge produced nothing".
             if sandbox_eval.enabled() and available_backends():
-                try:
-                    payload, result = sandbox_eval.evaluate_in_sandbox(
-                        evaluator, path, "evaluate", 120.0)
-                    if result.ok and payload:
-                        return {
-                            k: float(v)
-                            for k, v in (payload.get("metrics") or {}).items()
-                            if isinstance(v, (int, float, bool))
-                        }
-                    logger.debug("seed variant sandbox did not return metrics: %s",
-                                 result.status)
-                except Exception as exc:
-                    logger.debug("seed variant sandbox failed: %r, falling back "
-                                 "to subprocess", exc)
+                return [self._evaluate_sandboxed(p, evaluator) for p in paths]
 
-            return self._evaluate_subprocess(path, evaluator)
+            scores = self._evaluate_subprocess_batch(paths, evaluator)
+            if scores:
+                return scores
+
+            # The batch died as a whole -- a native crash, or the timeout. Fall
+            # back to one child per variant, which is what this cost before and
+            # is worth paying once it is known to be needed: it recovers every
+            # variant except the one that actually killed the process.
+            logger.debug("seed batch failed; retrying %d variants individually",
+                         len(paths))
+            return [self._evaluate_subprocess(p, evaluator) for p in paths]
+
+    def _evaluate_sandboxed(self, path: str, evaluator: str) -> Dict[str, float]:
+        """Score one variant under the sandbox, or `{}` if it did not score."""
+        from control_plane.telemetry import sandbox_eval
+
+        try:
+            payload, result = sandbox_eval.evaluate_in_sandbox(
+                evaluator, path, "evaluate", 120.0)
+            if result.ok and payload:
+                return {
+                    k: float(v)
+                    for k, v in (payload.get("metrics") or {}).items()
+                    if isinstance(v, (int, float, bool))
+                }
+            logger.debug("seed variant sandbox did not return metrics: %s",
+                         result.status)
+        except Exception as exc:
+            logger.debug("seed variant sandbox failed: %r, falling back "
+                         "to subprocess", exc)
+        return self._evaluate_subprocess(path, evaluator)
+
+    def _evaluate(self, code: str, evaluator: str) -> Dict[str, float]:
+        """Score a single variant. Kept for callers outside the forge loop."""
+        scores = self._evaluate_all([code], evaluator)
+        return scores[0] if scores else {}
 
     def _evaluate_subprocess(self, program_path: str,
                              evaluator_path: str) -> Dict[str, float]:
+        """Score one variant. Thin wrapper over the batch path."""
+        results = self._evaluate_subprocess_batch([program_path], evaluator_path)
+        return results[0] if results else {}
+
+    def _evaluate_subprocess_batch(self, program_paths: List[str],
+                                   evaluator_path: str) -> List[Dict[str, float]]:
         """
-        Score a variant in a plain child process, when no sandbox backend exists.
+        Score variants in one plain child process, when no sandbox backend exists.
+
+        One child for the whole batch, not one per variant, because the startup
+        cost dwarfs the work. Measured on this repo: a bare interpreter is
+        0.10s, importing `openevolve` takes it to 2.97s -- almost all of that
+        the OpenAI SDK's pydantic model definitions, pulled in transitively by
+        `openevolve/__init__` whether or not the child will ever call a model --
+        and one evaluation of the example task is 0.10s on top. So per-variant
+        children spent 4.6s each to do 0.1s of work, and three variants cost
+        14.5s of which 13.7s was Python starting up.
+
+        A variant that raises is reported as `None` by the child and dropped by
+        the caller, so one bad variant costs only itself. A child that dies
+        outright -- a segfault in a native library, or the batch timeout -- is
+        retried one variant at a time by the caller, which restores the old
+        isolation exactly when it is needed rather than paying for it always.
 
         This path enforces a wall clock and nothing else -- no memory ceiling,
         no process-group kill, no network or filesystem restriction. That is a
@@ -234,24 +302,33 @@ class SeedForgeHook:
         # sandbox script does it: an evaluator that prints is entirely normal,
         # and mixing the two makes a diagnostic indistinguishable from a
         # measurement.
-        result_path = os.path.join(os.path.dirname(program_path),
+        if not program_paths:
+            return []
+
+        result_path = os.path.join(os.path.dirname(program_paths[0]),
                                    "oe_max_seed_result.json")
         script = _SUBPROCESS_SCRIPT.format(
             eval_file=json.dumps(os.path.abspath(evaluator_path)),
-            program=json.dumps(os.path.abspath(program_path)),
+            programs=json.dumps([os.path.abspath(p) for p in program_paths]),
             out=json.dumps(os.path.abspath(result_path)))
+
+        # The wall clock is per variant, so the batch gets the sum. Otherwise
+        # batching would tighten the limit every variant runs under, and a set
+        # of variants that each scored fine alone would start timing out purely
+        # because they were measured together.
+        timeout = _SUBPROCESS_TIMEOUT_S * len(program_paths)
 
         try:
             completed = subprocess.run(
                 [sys.executable, "-c", script],
-                capture_output=True, timeout=_SUBPROCESS_TIMEOUT_S)
+                capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            logger.debug("seed variant exceeded %ss in the subprocess fallback",
-                         _SUBPROCESS_TIMEOUT_S)
-            return {}
+            logger.debug("seed batch of %d exceeded %ss in the subprocess fallback",
+                         len(program_paths), timeout)
+            return []
         except OSError as exc:
             logger.debug("seed variant subprocess could not start: %r", exc)
-            return {}
+            return []
 
         if completed.returncode != 0:
             # Decoded defensively: an evaluator's stderr is arbitrary bytes,
@@ -259,17 +336,26 @@ class SeedForgeHook:
             stderr = (completed.stderr or b"").decode("utf-8", "replace").strip()
             logger.debug("seed variant subprocess failed (exit %d): %s",
                          completed.returncode, stderr[-500:])
-            return {}
+            return []
 
         try:
             with open(result_path, encoding="utf-8") as fh:
                 payload = json.load(fh)
         except (OSError, ValueError) as exc:
             logger.debug("seed variant produced no readable result: %r", exc)
-            return {}
+            return []
 
-        return {k: float(v) for k, v in (payload.get("metrics") or {}).items()
-                if isinstance(v, (int, float, bool))}
+        results = payload.get("results")
+        if not isinstance(results, list) or len(results) != len(program_paths):
+            logger.debug("seed batch returned %r results for %d variants",
+                         type(results).__name__, len(program_paths))
+            return []
+
+        return [
+            {} if not isinstance(m, dict) else
+            {k: float(v) for k, v in m.items() if isinstance(v, (int, float, bool))}
+            for m in results
+        ]
 
 
 _hook: Optional[SeedForgeHook] = None
