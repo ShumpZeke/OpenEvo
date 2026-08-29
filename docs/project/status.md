@@ -52,11 +52,21 @@ to be dialled.
 Verified end to end 2026-08-28 against a local OpenAI-compatible server: 6
 requests, 0 failed, `combined_score` 1.4198, every request on the local route.
 
-**Not verified: a real local LLM.** That run used `scripts/local_provider.py` —
-a genuine HTTP server, a deterministic generator rather than a model. No Ollama,
-LM Studio, vLLM or llama.cpp is installed on the machine this was built on, so
-no local model has generated a mutation here. The plumbing is proven; the model
-is the open question. See [../local-mode.md](../local-mode.md) and roadmap T0a.
+**A real local LLM now serves.** Verified 2026-08-28 on
+`Qwen3.8-27B-Uncensored:iq4_xs` (27.3B, IQ4_XS, 14.26 GB) through Ollama on an
+RTX 3050 8 GB / 16 GB RAM box: the broker discovered it from `/v1/models`,
+routed to it, and it returned a valid SEARCH/REPLACE diff for the shipped
+function-minimization task.
+
+Measured after tuning: **106.8 tok/s prompt, 3.27 tok/s generation**, 39% of the
+model resident in VRAM. Method and every intermediate number in
+[../local-tuning.md](../local-tuning.md).
+
+**Still not verified: a full evolution run driven by a local model.** The model
+generates correct mutations, and no multi-iteration run has been recorded on it
+— deliberately, since at ~3.3 tok/s a 24-iteration run is a couple of hours. So
+the plumbing, the routing and the model's output are each proven; the loop over
+them is not. Roadmap T0a.
 
 ## Measurable since the last revision
 
@@ -77,7 +87,8 @@ on a live run rather than only in tests:
 
 The honest list. Detail and rationale in [roadmap.md](roadmap.md).
 
-- A real local LLM has not generated a mutation here (T0a).
+- No full evolution run has been driven by a local model (T0a). A local
+  model does generate correct mutations — that part is measured.
 - The BrainPort has never run against a live OpenCode host — every one of its
   34 tests runs against a stub.
 - The 44-per-60s rate contract is proven on a virtual clock only; the live NIM
