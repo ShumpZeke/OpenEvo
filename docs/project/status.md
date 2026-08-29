@@ -50,7 +50,9 @@ vLLM and llama.cpp, in **both** routing layers, so no commercial adapter exists
 to be dialled.
 
 Verified end to end 2026-08-28 against a local OpenAI-compatible server: 6
-requests, 0 failed, `combined_score` 1.4198, every request on the local route.
+requests, 0 failed, every request on the local route. (The score is not quoted:
+on this task the unchanged seed spans 0.39 between evaluations, so one run's
+number is evidence the machinery ran and nothing more — see ../gotchas.md.)
 
 **A real local LLM now serves.** Verified 2026-08-28 on
 `Qwen3.8-27B-Uncensored:iq4_xs` (27.3B, IQ4_XS, 14.26 GB) through Ollama on an

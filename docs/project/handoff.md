@@ -674,7 +674,7 @@ local      FULLY SUPPORTED. OE_MAX_LOCAL_ONLY=1 constructs only Ollama,
            LM Studio, vLLM and llama.cpp — in BOTH routing layers — so no
            commercial adapter exists to be dialled. Verified end to end
            2026-08-28 against a local OpenAI-compatible server: 6 requests,
-           0 failed, combined_score 1.4198. See ../local-mode.md
+           0 failed. See ../local-mode.md
 primary    NVIDIA NIM — leads every role chain (operator decision 2026-08-27),
            when not in local-only mode
 verified   NVIDIA NIM — real key, 2026-08-28; 5 of 9 configured ids serve (§4i)

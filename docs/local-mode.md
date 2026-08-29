@@ -168,7 +168,7 @@ backend.
 
 **Verified end to end, 2026-08-28.** A broker started with `OE_MAX_LOCAL_ONLY=1`
 discovered a local OpenAI-compatible server on this machine, and a 6-iteration
-evolution ran to `combined_score 1.4198` — 6 requests served, 0 failed, every
+evolution completed — 6 requests served, 0 failed, every
 one routed to the local provider, with only the four local adapters present in
 the process.
 

@@ -166,6 +166,36 @@ right default independently of the crash.
 Measured on a 16-core CI runner. It cannot reproduce on Windows, where the
 POSIX-limits tests skip entirely — which is the same reason the trap above went unseen.
 
+## The example task's score is noisier than most improvements
+
+`examples/function_minimization` evaluates a *stochastic* program: the seed uses
+`np.random.uniform` and neither it nor the evaluator fixes a seed. The config's
+`random_seed` governs the evolution process, not the candidate's execution.
+
+So the same unmodified program does not score the same twice. Measured, five
+evaluations of the untouched seed:
+
+    1.4184   1.4431   1.4060   1.4229   1.0494        range 0.3937
+
+Three consequences, all of which have caught someone here.
+
+**"New best solution found" fires on noise.** A 12-iteration run reported a new
+best at iteration 9 and finished at 1.4209 — and its best program was
+byte-identical to the seed. Nothing had been improved; the same code drew a
+luckier sample.
+
+**Single-run score comparisons between models or configs are worthless** unless
+the difference exceeds ~0.4, which is larger than most real improvements. Two
+runs finishing at 1.4198 and 1.4209 have told you nothing.
+
+**A mutation can be accepted for being lucky rather than better**, which means
+even "the best program changed" is weak evidence on its own.
+
+When comparing anything on this task, evaluate repeatedly and compare
+distributions, or use a task whose evaluation is deterministic. A score quoted
+from one run is evidence that the machinery ran, not that the search worked —
+which is the only claim this repository has ever made from one.
+
 ## A model paraphrases the code it is quoting, and the diff matches nothing
 
 A SEARCH/REPLACE diff only applies if the SEARCH block is byte-identical to the

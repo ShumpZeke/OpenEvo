@@ -19,7 +19,7 @@ Read `handoff.md` first — especially §3, the traps.
 Local mode is verified end to end *except for the model*. On 2026-08-28 a broker
 started with `OE_MAX_LOCAL_ONLY=1` discovered a local OpenAI-compatible server,
 built its chains from the discovered listing, and ran a 6-iteration evolution to
-`combined_score 1.4198` — 6 requests served, 0 failed, only the four local
+completion — 6 requests served, 0 failed, only the four local
 adapters in the process.
 
 That server was `scripts/local_provider.py`: a genuine HTTP server, and a

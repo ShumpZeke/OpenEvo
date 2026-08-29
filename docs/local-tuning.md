@@ -299,6 +299,22 @@ a fact about a build, not about llama.cpp; a CUDA build would rank differently.
 
 ---
 
+## Leave `use_mmap` alone
+
+Tried and abandoned. With mmap on (the default) the OS maps the 14 GB file and
+pages it, so the ~10 GB of CPU-resident layers can in principle be evicted and
+faulted back mid-inference. Turning it off loads everything up front, which
+removes that risk — if it fits.
+
+It does not fit here, and it does not fail cleanly. Free RAM went to **0.1 GB**
+and the machine began thrashing before the first measurement completed; the test
+was killed rather than finished. A 14 GB model on 16 GB of RAM has no headroom
+for a resident copy once the OS, the GPU driver and everything else are counted.
+
+No number for this one — the experiment was abandoned, not completed, and that
+is the honest state. Worth knowing only so nobody repeats it expecting a quick
+win.
+
 ## Do not sweep-verify a local setup
 
 `--verify` smoke-tests every configured model, which locally means loading each
