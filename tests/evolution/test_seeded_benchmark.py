@@ -351,3 +351,137 @@ def test_patched_types_answer_isinstance_like_the_real_ones(ev):
         assert issubclass(type(real_instance), np.random.RandomState)
         # The check that actually crashed before the fix.
         np.random.default_rng(7)
+
+
+def test_score_can_be_bought_with_compute(ev, tmp_path):
+    """Raising the search budget raises the score, with no better algorithm.
+
+    A documented property of upstream's metric, pinned here because it changes
+    how results from this task must be read. Nothing scores runtime, so the
+    cheapest available improvement is "do more sampling" -- and that is exactly
+    what the first real run found: a 0.6B model's only accepted change in 30
+    iterations was `iterations=1000` -> `iterations=2000`.
+
+    The consequence is that a score rise on this task is evidence the loop
+    works, and is NOT by itself evidence that the model can improve an
+    algorithm. Read `average_seconds` in the artifacts alongside the score.
+
+    Not fixed here: reweighting would make every number already recorded
+    against this task incomparable, and the same property is true of
+    `examples/function_minimization`.
+    """
+    seed_source = (TASK / "initial_program.py").read_text(encoding="utf-8")
+    assert "iterations=1000" in seed_source
+
+    def score_with(budget):
+        path = tmp_path / "budget_{}.py".format(budget)
+        path.write_text(
+            seed_source.replace("iterations=1000", "iterations={}".format(budget)),
+            encoding="utf-8",
+        )
+        return ev.evaluate(str(path)).metrics["combined_score"]
+
+    assert score_with(2000) > score_with(1000) > score_with(500)
+
+
+# --------------------------------------------------------------------------
+# Cascade evaluation
+# --------------------------------------------------------------------------
+
+
+def test_cascade_functions_exist(ev):
+    """The shipped local config enables cascade; without these it warns and
+    silently falls back, making the setting useless."""
+    assert hasattr(ev, "evaluate_stage1")
+    assert hasattr(ev, "evaluate_stage2")
+
+
+def test_cascade_score_matches_direct_score(ev):
+    """A cascade run and a direct run must report the same number.
+
+    The engine merges stage 2's metrics *over* stage 1's, so stage 1 being a
+    cheaper subset is invisible in the result. If that ever stops holding, two
+    runs of the same program become incomparable depending on a config flag --
+    exactly the disease this whole task was built to cure.
+    """
+    program = str(TASK / "initial_program.py")
+    direct = ev.evaluate(program).metrics
+
+    # Reproduce _cascade_evaluate's merge: stage 1, then stage 2 over the top.
+    merged = {}
+    for stage in (ev.evaluate_stage1(program), ev.evaluate_stage2(program)):
+        merged.update(
+            {k: float(v) for k, v in stage.metrics.items() if k != "error"}
+        )
+
+    assert merged["combined_score"] == direct["combined_score"]
+
+
+def test_stage1_passes_the_default_cascade_threshold(ev):
+    """Stage 1 must report combined_score on the full scale, not a gate flag.
+
+    `_passes_threshold` compares `combined_score` against `cascade_thresholds[0]`
+    (0.5 by default). A stage that returned only a pass/fail metric, or a score
+    on a different scale, would gate out working programs before stage 2 ever
+    ran.
+    """
+    score = ev.evaluate_stage1(str(TASK / "initial_program.py")).metrics
+    assert score["combined_score"] >= 0.5
+    assert set(score) == {
+        "value_score",
+        "distance_score",
+        "reliability_score",
+        "combined_score",
+    }
+
+
+def test_stage1_rejects_a_broken_program(ev, tmp_path):
+    """A broken candidate must fail the gate rather than reach stage 2."""
+    program = write(
+        tmp_path,
+        """
+        def run_search():
+            raise ValueError("no")
+        """,
+    )
+    assert ev.evaluate_stage1(program).metrics["combined_score"] < 0.5
+
+
+def test_stage1_is_cheaper_than_the_full_evaluation(ev):
+    """Otherwise the cascade is pure overhead."""
+    assert len(ev.STAGE1_SEEDS) < len(ev.SEEDS)
+    assert tuple(ev.STAGE1_SEEDS) == tuple(ev.SEEDS[: len(ev.STAGE1_SEEDS)])
+
+
+def test_stage1_is_deterministic_too(ev):
+    program = str(TASK / "initial_program.py")
+    assert (
+        ev.evaluate_stage1(program).metrics["combined_score"]
+        == ev.evaluate_stage1(program).metrics["combined_score"]
+    )
+
+
+def test_gate_failure_reports_the_subset_score(ev, tmp_path):
+    """Below the gate, cascade reports stage 1's number rather than the full one.
+
+    That is what a cascade is for, and it only touches candidates already being
+    rejected -- but it means "cascade agrees with direct" is a claim about
+    accepted candidates. Pinned so the caveat in the README stays true.
+    """
+    program = write(
+        tmp_path,
+        """
+        import random
+
+        def run_search():
+            if random.random() < 0.5:
+                raise ValueError("unlucky")
+            return 4.9, 4.9
+        """,
+    )
+    stage1 = ev.evaluate_stage1(program).metrics["combined_score"]
+    full = ev.evaluate(program).metrics["combined_score"]
+    assert stage1 < 0.5, "this fixture is meant to fail the gate"
+    # Both are reproducible; they simply need not be equal.
+    assert stage1 == ev.evaluate_stage1(program).metrics["combined_score"]
+    assert full == ev.evaluate(program).metrics["combined_score"]

@@ -74,6 +74,42 @@ that flatters a particular answer. Recording the property is the useful part.
 `refined_program.py` exists as the worked example of it and is not a target to
 beat.
 
+## The score can be bought with compute
+
+Nothing here scores runtime, so the cheapest available improvement is to sample
+more. Measured on the seed program with only the budget changed:
+
+| `iterations` | `combined_score` | evaluation |
+|---|---|---|
+| 500 | 0.9875 | 0.06 s |
+| 1000 (seed) | 1.4061 | 0.04 s |
+| 2000 | 1.4513 | 0.06 s |
+| 5000 | 1.4600 | 0.16 s |
+| 20000 | 1.4805 | 0.57 s |
+
+It is bounded only by the 5-second trial timeout, and the returns diminish, but
+it is free score for no algorithmic insight.
+
+This is not hypothetical. The first real run against this task -- 30 iterations
+of `qwen3:0.6b`, about three minutes -- produced exactly one accepted change:
+
+```diff
+-def search_algorithm(iterations=1000, bounds=(-5, 5)):
++def search_algorithm(iterations=2000, bounds=(-5, 5)):
+```
+
+1.406051 to 1.451256, reproducible on re-scoring. A genuine improvement on the
+metric, and the laziest one available.
+
+**So read a score rise here as evidence the loop works, not as evidence the
+model can improve an algorithm.** Check `average_seconds` in the artifacts
+beside the score: a candidate that bought its score with sampling took longer
+to evaluate, and that shows up there.
+
+Like the averaging behaviour above, this is a property of upstream's metric,
+recorded rather than fixed -- reweighting would make every number already
+recorded incomparable.
+
 ## Running evolution against it
 
 ```bash
@@ -112,3 +148,10 @@ Rather than assume none of that is biting, `check_determinism.py` measures it.
 | `check_determinism.py` | proves the spread is zero; gate-able |
 | `compare.py` | paired per-seed comparison of two programs |
 | `refined_program.py` | worked example of the outlier sensitivity described above |
+
+`evaluator.py` also defines `evaluate_stage1` / `evaluate_stage2`, because the
+shipped local config enables cascade evaluation and an evaluator without them
+makes that setting silently useless. Stage 1 screens on three seeds; stage 2
+is the full ten. The engine merges stage 2 over stage 1, so a cascade run and
+a direct run report the **same** number — a test holds that, because
+otherwise a config flag would quietly make two runs incomparable.

@@ -228,6 +228,20 @@ majority winner is the lower scorer. The weights are deliberately left as
 upstream's — changing them would make every number already recorded
 incomparable.
 
+## A score rise on the benchmark task may just be a bigger budget
+
+Neither `examples/function_minimization` nor `benchmarks/tasks/fn_min_seeded`
+scores runtime, so raising the candidate's own search budget raises the score
+for free: 1.4061 at `iterations=1000`, 1.4513 at 2000, 1.4805 at 20000.
+
+The first real run against the seeded task found precisely that and nothing
+else -- 30 iterations of `qwen3:0.6b` in about three minutes, whose one accepted
+change was `iterations=1000` -> `iterations=2000`. The improvement is real and
+reproducible; it is also the cheapest move on the board.
+
+Before reporting that a model improved a program, read the diff. `average_seconds`
+in the artifacts moves when a candidate has bought score with sampling.
+
 ## Replacing a `np.random` factory with a function breaks `default_rng`
 
 Only bites code that pins randomness by monkeypatching, which

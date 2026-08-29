@@ -76,6 +76,11 @@ GLOBAL_MIN_VALUE = -1.519
 # this benchmark has ever produced, so treat the list as a published constant.
 SEEDS = (11, 23, 37, 41, 59, 67, 73, 89, 97, 103)
 
+# The cascade's cheap screen. Three seeds is ~11 ms against ~36 ms, which is
+# nothing beside a model call -- the point is to reject a broken candidate
+# without running the full set, not to save meaningful time on a good one.
+STAGE1_SEEDS = SEEDS[:3]
+
 TRIAL_TIMEOUT_S = 5.0
 
 
@@ -206,8 +211,40 @@ def _zero(reason, **artifacts):
 
 def evaluate(program_path):
     """Score the program at ``program_path``. Same input twice gives the same output."""
+    return _evaluate_with(program_path, SEEDS)
+
+
+def evaluate_stage1(program_path):
+    """Cheap screen: the first few seeds only.
+
+    The engine's cascade runs this first and only proceeds past
+    ``cascade_thresholds[0]`` (0.5 by default), so it has to report
+    ``combined_score`` on the same scale as the full evaluation -- a gate metric
+    alone would be compared against that threshold and reject everything.
+
+    A subset score is not the score, and does not need to be: ``_cascade_evaluate``
+    merges stage 2's metrics *over* stage 1's, so a candidate that gets past this
+    gate is reported with the full ten-seed number and is directly comparable to
+    a run with cascade switched off. ``test_cascade_score_matches_direct_score``
+    is what holds that.
+
+    A candidate that *fails* the gate is reported with this subset score instead,
+    which for a broken program is 0.0 either way but need not match the ten-seed
+    number in general. That is what a cascade is for, and it only affects
+    candidates already being rejected -- but it does mean "cascade agrees with
+    direct" is a claim about accepted candidates, not about every candidate.
+    """
+    return _evaluate_with(program_path, STAGE1_SEEDS)
+
+
+def evaluate_stage2(program_path):
+    """The real evaluation, over all ten seeds."""
+    return _evaluate_with(program_path, SEEDS)
+
+
+def _evaluate_with(program_path, seeds):
     try:
-        probe = _load(program_path, SEEDS[0])
+        probe = _load(program_path, seeds[0])
         if not hasattr(probe, "run_search"):
             return _zero(
                 "Missing run_search function",
@@ -223,7 +260,7 @@ def evaluate(program_path):
         last_x = last_y = None
         failures = []
 
-        for seed in SEEDS:
+        for seed in seeds:
             # Reload per trial so a module-level RNG is rebuilt under this
             # trial's seed. Without it every trial after the first would share
             # the first trial's generator, and the ten trials would collapse
@@ -249,7 +286,7 @@ def evaluate(program_path):
             return _zero(
                 "All trials failed",
                 error_type="AllTrialsFailed",
-                error_message="All {} trials failed".format(len(SEEDS)),
+                error_message="All {} trials failed".format(len(seeds)),
                 failures="\n".join(failures),
                 suggestion=(
                     "Check for infinite loops, ensure run_search returns (x, y) or "
@@ -263,7 +300,7 @@ def evaluate(program_path):
 
         value_score = float(1.0 / (1.0 + abs(avg_value - GLOBAL_MIN_VALUE)))
         distance_score = float(1.0 / (1.0 + avg_distance))
-        reliability_score = float(len(values) / len(SEEDS))
+        reliability_score = float(len(values) / len(seeds))
 
         if avg_distance < 0.5:
             quality = 1.5
@@ -278,7 +315,7 @@ def evaluate(program_path):
         combined_score = float(base * quality)
 
         artifacts = {
-            "trials": "{} of {} seeds succeeded".format(len(values), len(SEEDS)),
+            "trials": "{} of {} seeds succeeded".format(len(values), len(seeds)),
             "best_position": "x={:.4f}, y={:.4f}".format(last_x, last_y),
             "average_distance_to_global": "{:.4f}".format(avg_distance),
             "average_value": "{:.4f}".format(avg_value),
