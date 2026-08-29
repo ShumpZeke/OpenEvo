@@ -33,6 +33,28 @@ def test_local_config_disables_reasoning(local_config):
     assert local_config["llm"]["reasoning_effort"] == "none"
 
 
+def test_the_cloud_config_does_too_but_for_a_different_reason():
+    """Same setting, different justification, and both worth keeping.
+
+    Locally it is mandatory: without it the model answers entirely in
+    `message.reasoning` and returns an empty `content`, so the run produces
+    nothing. On NIM's flagship the reasoning is already in a separate channel
+    and never ate the answer -- there it is a speed choice, measured 2026-08-29
+    on a full 30-iteration run of the seeded task:
+
+        default (on)   32m54s   best 1.4989    6 accepted improvements
+        "none"         25m40s   best 1.4995   14 accepted improvements
+
+    Asserted separately from the local one so that removing it from either
+    config fails on its own terms rather than being covered by the other.
+    """
+    import yaml
+
+    cloud = yaml.safe_load(
+        (ROOT / "configs" / "oe_max" / "evolution.yaml").read_text(encoding="utf-8"))
+    assert cloud["llm"]["reasoning_effort"] == "none"
+
+
 def test_engine_propagates_it_to_the_model(local_config):
     """The engine reads it off the per-model config, not the top-level one.
 

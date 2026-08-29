@@ -31,6 +31,38 @@ llm:
   # the broker process.
   api_key: "oe-max-local"
   temperature: 0.8
+
+  # Turn the flagship's hidden reasoning down. Measured 2026-08-29, two ways,
+  # and both favour it.
+  #
+  # Per request, n=3 each through the broker:
+  #
+  #   default (on)   3/3 applicable   93.4s   10,060 reasoning chars
+  #   "low"          3/3              92.2s   10,972
+  #   "none"         3/3              69.1s    7,315
+  #
+  # And a full 30-iteration run on benchmarks/tasks/fn_min_seeded, which is the
+  # only reason a comparison like this means anything -- the unseeded task's
+  # spread is 0.39, wider than every difference below:
+  #
+  #   default (on)   32m54s   best 1.4989    6 accepted improvements
+  #   "none"         25m40s   best 1.4995   14 accepted improvements
+  #
+  # 22% quicker, a marginally better score, and more than twice the accepted
+  # improvements. Both winners were re-scored independently at spread 0.
+  #
+  # Note what "none" does NOT do: it does not stop the thinking. Reasoning
+  # output fell by about a quarter, not to zero. And the reason this is safe at
+  # all is that NIM's flagship keeps reasoning in a separate channel, so it
+  # never ate the visible answer -- the failure that made this setting
+  # mandatory for local models. Here it is a speed choice, not a correctness
+  # one.
+  #
+  # Evidence limits, stated: one run per arm. The per-request measurement is
+  # 3/3 in every arm, which is a ceiling and cannot detect a small regression.
+  # Nothing measured points the other way.
+  reasoning_effort: "none"
+
   # Measured, not guessed. A reasoning model can spend its whole budget
   # thinking: one former primary here spent 7,986-7,997 of an 8,000-token
   # budget on hidden reasoning and left nothing for the visible diff — five of
