@@ -425,7 +425,7 @@ mode, `ollama/qwen3:0.6b` serving 10 of 10 requests with no errors, on the route
 `OE_MAX_LOCAL_MODELS` named. Broker overhead against calling Ollama directly is
 **+2 ms**.
 
-Tests 1310 → 1436.
+Tests 1310 → 1449.
 
 ## Blocked
 

@@ -24,7 +24,11 @@ import {
 
 export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   const [busy, setBusy] = useState(false);
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
   const p = useAsync(() => api.providers(), [liveTick]);
+  // Single-model mode. Lives in the broker; this is a view of it.
+  const single = useAsync(() => api.singleModel(), [liveTick]);
   // The broker is a different process and the one that actually routes.
   const broker = useAsync(() => api.broker(), [liveTick]);
   const reqs = useAsync(
@@ -47,6 +51,22 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
     finally { setBusy(false); }
   };
 
+  const setSingle = async (model: string | null) => {
+    setPinBusy(true);
+    setPinError(null);
+    try {
+      await api.setSingleModel(model);
+      single.refresh();
+      broker.refresh();
+    } catch (e: any) {
+      // The broker's own refusal is the useful half -- "matches 3 models" tells
+      // the operator what to do next, and a generic failure does not.
+      setPinError(e?.message ?? String(e));
+    } finally {
+      setPinBusy(false);
+    }
+  };
+
   const freeBadge = (s: string) => {
     if (s === "free_limited_time") return <Badge tone="warn" title="Free for a limited time per the provider's own documentation — not guaranteed to remain free">free (limited time)</Badge>;
     if (s === "free") return <Badge tone="ok">free</Badge>;
@@ -57,6 +77,8 @@ export const Models: React.FC<ViewProps> = ({ runId, liveTick }) => {
   return (
     <div className="h-full grid grid-rows-[auto_auto_auto_auto_1fr] gap-2 min-h-0
                     overflow-y-auto">
+      <SingleModelPicker
+        state={single} busy={pinBusy} error={pinError} onSet={setSingle} />
       <BrokerRoutes state={broker} />
       <Panel title="Model profiles" loading={p.loading && !p.data} error={p.error}
              actions={<Button size="xs" tone="primary" onClick={runDoctor} disabled={busy}>
@@ -504,6 +526,122 @@ const RouteQuality: React.FC<{ state: any; runId: string | null }> = ({ state, r
           ))}
         </div>
       )}
+    </Panel>
+  );
+};
+
+/**
+ * Single-model mode.
+ *
+ * Normally each role has its own chain and failover keeps a run alive. That is
+ * the right default and the wrong shape for judging a model: "is kimi-k3 any
+ * good here?" cannot be answered by a run where three others also served.
+ *
+ * The mode is a pin, so an unsatisfiable selection fails the request rather
+ * than falling back — and this panel has to make that visible, because a run
+ * that reports one model while three answered is the failure the mode exists
+ * to prevent.
+ */
+const SingleModelPicker: React.FC<{
+  state: any;
+  busy: boolean;
+  error: string | null;
+  onSet: (model: string | null) => void;
+}> = ({ state, busy, error, onSet }) => {
+  const d: Json | undefined = state.data;
+  const candidates: Json[] = d?.candidates ?? [];
+  const enabled = Boolean(d?.enabled);
+  const ok = Boolean(d?.ok);
+
+  return (
+    <Panel
+      title="Single-model mode"
+      loading={state.loading && !state.data}
+      error={state.error}
+      footer={
+        "Off by default: each role uses its own chain, with failover. Turned on, "
+        + "every role goes to the one model and nothing else — a selection that "
+        + "cannot be served fails the request rather than quietly using a chain."
+      }
+      actions={
+        enabled ? (
+          <Button size="xs" onClick={() => onSet(null)} disabled={busy}>
+            {busy ? "…" : "use role chains"}
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className="p-2">
+        {!d ? (
+          <div className="text-xs text-ink-faint">
+            The broker is not reachable, so the mode cannot be read or changed.
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 mb-2">
+              {enabled ? (
+                <Badge tone={ok ? "ok" : "bad"}>
+                  {ok ? "one model" : "selection unusable"}
+                </Badge>
+              ) : (
+                <Badge tone="info">role chains</Badge>
+              )}
+              {enabled && (
+                <Mono className="text-2xs">
+                  {d.route?.model_id ?? String(d.selected)}
+                </Mono>
+              )}
+              {enabled && !ok && (
+                // Loud on purpose: every request is failing until this is fixed.
+                <span className="text-2xs text-bad">{String(d.reason)}</span>
+              )}
+            </div>
+
+            {error && <div className="text-2xs text-bad mb-2">{error}</div>}
+
+            {candidates.length === 0 ? (
+              <div className="text-2xs text-ink-faint">
+                No routes to choose from. A provider with no usable credential is
+                not offered, because picking it would produce a confusing failure
+                rather than an obvious one.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1">
+                {candidates.map((c) => {
+                  const chosen = enabled && d.route?.model_id === c.model_id;
+                  // `available === false` is a model disabled for a recorded
+                  // reason; `null` means nobody has probed it, which is not the
+                  // same thing and must not be shown as if it were.
+                  const disabled = c.available === false;
+                  return (
+                    <button
+                      key={String(c.label)}
+                      onClick={() => onSet(String(c.model_id))}
+                      disabled={busy || chosen}
+                      title={String(c.notes ?? "")}
+                      className={
+                        "text-left px-2 py-1 rounded border text-2xs "
+                        + (chosen
+                          ? "border-ok text-ok"
+                          : "border-line text-ink-dim hover:text-ink")
+                      }
+                    >
+                      <Mono>{String(c.model_id)}</Mono>
+                      <span className="text-ink-faint"> · {String(c.provider)}</span>
+                      {disabled && (
+                        <span className="text-warn"> · disabled</span>
+                      )}
+                      {c.available === null && (
+                        <span className="text-ink-faint"> · unprobed</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </Panel>
   );
 };

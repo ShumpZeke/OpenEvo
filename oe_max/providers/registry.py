@@ -293,7 +293,15 @@ def build_default_registry(
                       "property that makes a thinking model safe here at all "
                       "(see the reasoning-channel trap in docs/gotchas.md). "
                       "The 11.5s recorded on 2026-08-28 no longer reproduces; "
-                      "it is 7x quicker than that measurement.",
+                      "it is 7x quicker than that measurement. "
+                      "ALLOWANCE IS TIGHT: roughly ten calls over twenty "
+                      "minutes exhausted it, after which it returned HTTP 429 "
+                      "instantly (0.2s, not a queue) for at least five minutes "
+                      "-- while nemotron-super, -ultra and -nano all returned "
+                      "200 in the same minute, so it is a per-model allowance "
+                      "and not an account-wide rate limit or our own limiter. "
+                      "Leading the chain is still right: a 429 here fails over "
+                      "to the 120B on attempt 2, verified. Expect it to.",
             ),
             "deepseek_v4_flash": ModelSpec(
                 key="deepseek_v4_flash", id="deepseek-ai/deepseek-v4-flash-0731",

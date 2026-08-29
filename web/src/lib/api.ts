@@ -111,6 +111,16 @@ export const api = {
   // The broker is a separate process and the one that actually routes;
   // this reports "not reachable" rather than an invented table when it is down.
   broker: () => req<Json>("/api/broker"),
+  // Single-model mode: one model answers every role. Proxied to the broker,
+  // which is where routing actually happens -- a second copy of the decision
+  // here would be a second thing to disagree with the first.
+  singleModel: () => req<Json>("/api/single-model"),
+  setSingleModel: (model: string | null) =>
+    req<Json>("/api/single-model", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+    }),
   // Project memory: derived history plus the stored journal.
   memory: () => req<Json>("/api/memory"),
   journal: (p: Json = {}) => req<Json>(`/api/memory/journal${qs(p)}`),

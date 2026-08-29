@@ -869,6 +869,50 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         payload["base"] = base
         return payload
 
+    # ------------------------------------------------- single-model mode
+    #
+    # Proxied rather than reimplemented. The mode lives in the broker because
+    # that is where routing happens, and a second copy of the decision in the
+    # control plane is a second thing to disagree with the first -- which is
+    # exactly the bug the broker panel was added to fix, where the UI showed
+    # this process's router while a different process did the routing.
+
+    async def _broker_call(method: str, path: str,
+                           json_body: Optional[Dict[str, Any]] = None
+                           ) -> Dict[str, Any]:
+        base = os.environ.get("OE_MAX_BASE", "http://127.0.0.1:8787")
+        try:
+            async with httpx.AsyncClient(timeout=_broker_timeout(base)) as client:
+                r = await client.request(method, f"{base}{path}", json=json_body)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={
+                "message": "the broker is not reachable",
+                "base": base,
+                "detail": _broker_failure_detail(base, exc),
+            })
+        if r.status_code >= 400:
+            # Pass the broker's own refusal through unchanged. It knows why --
+            # "matches 3 models" is the useful half, and flattening it to a
+            # generic 502 would throw away the only part the operator can act on.
+            try:
+                detail = r.json()
+            except ValueError:
+                detail = {"message": r.text[:400]}
+            raise HTTPException(status_code=r.status_code, detail=detail)
+        return r.json()
+
+    @app.get("/api/single-model")
+    async def single_model_get() -> Dict[str, Any]:
+        """Current selection and everything selectable, for the picker."""
+        return await _broker_call("GET", "/v1/oe-max/single-model")
+
+    @app.post("/api/single-model")
+    async def single_model_set(body: Dict[str, Any]) -> Dict[str, Any]:
+        """Pick a model, or clear the mode with a null/empty `model`."""
+        return await _broker_call(
+            "POST", "/v1/oe-max/single-model",
+            {"model": (body or {}).get("model")})
+
     @app.post("/api/providers/doctor")
     async def run_doctor(probe_tools: bool = True) -> Dict[str, Any]:
         profiles = list(state.router.profiles.values())

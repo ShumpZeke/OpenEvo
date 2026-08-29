@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..health import RetryPolicy, RouteHealth
+from .. import single_model
 from ..providers.registry import Registry, build_default_registry
 from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
 from ..providers.local import local_only
@@ -277,7 +278,24 @@ def create_app(registry: Optional[Registry] = None,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        pinned = _resolve_pinned(state.registry, req.model)
+        # Single-model mode overrides everything, including a per-request
+        # pin. That is the point: "only this model answers" is not a preference
+        # the caller gets to argue with, or the mode cannot be trusted to mean
+        # what it says.
+        single_route, single_reason = single_model.active_route(state.registry)
+        if single_reason != "off" and single_route is None:
+            # The mode is ON and cannot be satisfied. Fail loudly rather than
+            # serving from a chain -- a run that reports one model while three
+            # answered is the exact failure this mode exists to prevent.
+            state.requests_failed += 1
+            raise HTTPException(status_code=503, detail={
+                "message": "single-model mode is on but its selection cannot "
+                           "be served",
+                "selected": single_model.selection(),
+                "reason": single_reason,
+            })
+
+        pinned = single_route or _resolve_pinned(state.registry, req.model)
         role = None if pinned is not None else role_for_alias(req.model)
         try:
             if pinned is not None:
@@ -329,7 +347,47 @@ def create_app(registry: Optional[Registry] = None,
             "router": state.router.snapshot(),
             "registry": state.registry.snapshot(),
             "stats_by_route": state.router.stats_by_route(),
+            "single_model": single_model.describe(state.registry),
         }
+
+    @app.get("/v1/oe-max/single-model")
+    async def single_model_get() -> Dict[str, Any]:
+        """Current selection, plus everything that could be selected.
+
+        The candidate list is here rather than in a separate endpoint because a
+        picker needs both in the same breath, and because a selection is only
+        meaningful against the routes that exist right now -- discovery can
+        withdraw one between a page load and a click.
+        """
+        state_ = single_model.describe(state.registry)
+        state_["candidates"] = [
+            c.to_dict() for c in single_model.candidates(state.registry)
+        ]
+        return state_
+
+    @app.post("/v1/oe-max/single-model")
+    async def single_model_set(body: Dict[str, Any]) -> Dict[str, Any]:
+        """Turn the mode on for one model, or off with a null/empty `model`.
+
+        Validates before storing, so a typo is refused at the point the operator
+        made it rather than at the next request. `409` for a query that matches
+        nothing or several things -- the message names which, because "no route"
+        when you meant to be more specific wastes the next five minutes.
+        """
+        query = (body or {}).get("model")
+        if query is None or not str(query).strip():
+            single_model.clear()
+            return single_model.describe(state.registry)
+
+        route, reason = single_model.resolve(state.registry, str(query))
+        if route is None:
+            raise HTTPException(status_code=409, detail={
+                "message": "cannot select that model",
+                "requested": query,
+                "reason": reason,
+            })
+        single_model.select(str(query))
+        return single_model.describe(state.registry)
 
     @app.post("/v1/oe-max/verify")
     async def verify(check_tools: bool = True) -> Dict[str, Any]:
