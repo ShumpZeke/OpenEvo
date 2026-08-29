@@ -59,6 +59,22 @@ on a box this tight: every byte the KV cache does not use is a byte of weights
 that stays on the GPU instead of being evicted to system RAM. VRAM in use went
 from 5.44 GB to 6.27 GB — the same 8 GB card holding measurably more model.
 
+Measured across the three cache types:
+
+| `OLLAMA_KV_CACHE_TYPE` | resident | prompt/s | generation |
+|---|---|---|---|
+| **q8_0** | 39% | **74.3** | 3.35 tok/s |
+| q4_0 | 39% | 74.3 | 3.41 tok/s |
+| f16 (the default) | 34% | 14.7 | 2.98 tok/s |
+
+Two things to take from that. The default f16 cache is **5× slower on prompt
+evaluation**, which is most of the gain usually credited to flash attention
+alone — the two are set together and it is the quantised cache doing the heavy
+lifting. And `q4_0` buys essentially nothing over `q8_0`: identical prompt rate,
+a generation difference inside the noise, and the same 39% resident. Since a
+smaller cache costs attention precision, there is no reason to take it. **Stop
+at q8_0.**
+
 ### 2. Drop what the workload cannot use
 
 The packaged model carries a 0.87 GB CLIP vision projector. OpenEvolve mutates
