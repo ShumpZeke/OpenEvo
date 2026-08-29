@@ -133,6 +133,14 @@ hand-rolled clock seed such as `default_rng(int(time.time()))`;
 wall-clock-dependent logic such as "stop after N seconds"; and set/dict
 iteration order across processes via `PYTHONHASHSEED`.
 
+One more, and it is the evaluator's own: each trial has a five-second wall-clock
+limit. A candidate whose trials land near it can finish on an idle machine and
+time out on a busy one. It stays because the alternative is an unbounded loop
+hanging the run for good, and because nothing near that boundary is a program
+worth keeping — the seed's trials are about three milliseconds. The limit bounds
+the *wait*, not the work: Python cannot kill a thread, so a timed-out trial keeps
+running in the background until it finishes on its own.
+
 Wall clock is reported in the artifacts but deliberately **not** scored — it is
 the one quantity here that is not reproducible, and folding it into
 `combined_score` would put the noise straight back in.

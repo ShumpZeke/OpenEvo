@@ -485,3 +485,90 @@ def test_gate_failure_reports_the_subset_score(ev, tmp_path):
     # Both are reproducible; they simply need not be equal.
     assert stage1 == ev.evaluate_stage1(program).metrics["combined_score"]
     assert full == ev.evaluate(program).metrics["combined_score"]
+
+
+# --------------------------------------------------------------------------
+# The trial timeout
+# --------------------------------------------------------------------------
+
+
+def test_the_timeout_actually_gives_up_on_time(ev):
+    """It has to bound the *wait*, not just raise on schedule.
+
+    Written with `with ThreadPoolExecutor(...)`, __exit__ calls
+    shutdown(wait=True) and blocks until the runaway thread finishes -- so the
+    TimeoutError fires at 5s and the call still returns at 12s. Measured before
+    the fix: 12.0s under a 5s limit.
+    """
+    import time
+
+    started = time.perf_counter()
+    with pytest.raises(TimeoutError):
+        ev._run_with_timeout(lambda: time.sleep(12), timeout_seconds=1.0)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5.0, f"waited {elapsed:.1f}s for a 1s timeout"
+
+
+def test_the_worker_thread_cannot_block_interpreter_exit(ev):
+    """A runaway trial must not leave a process that cannot terminate.
+
+    ThreadPoolExecutor's threads are non-daemon and joined by an atexit hook, so
+    even shutdown(wait=False) leaves the interpreter waiting. Evaluating a
+    candidate with a huge search budget produced a process that printed its
+    results and then hung.
+    """
+    import subprocess
+    import sys
+
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import importlib.util, sys, time;"
+         "sys.path.insert(0, '.');"
+         "s = importlib.util.spec_from_file_location("
+         "'ev', 'benchmarks/tasks/fn_min_seeded/evaluator.py');"
+         "m = importlib.util.module_from_spec(s); s.loader.exec_module(m);"
+         "\ntry:\n    m._run_with_timeout(lambda: time.sleep(60), timeout_seconds=1.0)"
+         "\nexcept TimeoutError:\n    pass\nprint('done')"],
+        capture_output=True, text=True, timeout=45,
+    )
+    assert child.returncode == 0, child.stderr
+    assert "done" in child.stdout
+
+
+def test_a_timed_out_trial_does_not_take_the_evaluation_with_it(ev, tmp_path, monkeypatch):
+    """A candidate that hangs scores zero rather than hanging the run.
+
+    The real limit is 5s, so ten seeds would make this a 50s test. The value is
+    read at call time precisely so it can be lowered here -- what is under test
+    is that a timeout is survivable, not how long it is.
+    """
+    monkeypatch.setattr(ev, "TRIAL_TIMEOUT_S", 0.3)
+    program = write(
+        tmp_path,
+        """
+        import time
+
+        def run_search():
+            time.sleep(30)
+            return 0.0, 0.0
+        """,
+    )
+    result = ev.evaluate(program)
+    assert result.metrics["combined_score"] == 0.0
+    assert result.artifacts["error_type"] == "AllTrialsFailed"
+    assert "TimeoutError" in result.artifacts["failures"]
+
+
+def test_an_exception_is_not_disguised_as_a_timeout(ev):
+    """The worker runs on another thread; its exception has to be re-raised on
+    the caller's, or a broken candidate would be reported as a slow one."""
+    def boom():
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError, match="kaboom"):
+        ev._run_with_timeout(boom)
+
+
+def test_the_normal_path_is_untouched(ev):
+    assert ev._run_with_timeout(lambda: (1.0, 2.0, 3.0)) == (1.0, 2.0, 3.0)

@@ -52,6 +52,14 @@ Not pinned, and therefore still able to make a score vary:
   different amounts of work on a busy machine.
 * Set and dict iteration order across processes, via PYTHONHASHSEED. Fixed
   within one process; only the launcher can fix it across processes.
+* This evaluator's own ``TRIAL_TIMEOUT_S``. It is wall clock, so a candidate
+  whose trials land near five seconds can complete on an idle machine and time
+  out on a busy one, and time out on some seeds and not others. It stays
+  because the alternative is a candidate with an unbounded loop hanging the run
+  for good, and because nothing near the boundary is a program worth keeping --
+  the seed's trials are about three milliseconds. Worth knowing before
+  concluding that two machines disagree about a slow candidate for an
+  interesting reason.
 
 ``check_determinism.py`` in this directory measures whether any of that is
 actually biting, rather than assuming it is not.
@@ -155,22 +163,56 @@ def _load(program_path, seed):
     return program
 
 
-def _run_with_timeout(func, timeout_seconds=TRIAL_TIMEOUT_S):
+def _run_with_timeout(func, timeout_seconds=None):
     """Call ``func`` on a worker thread, giving up after ``timeout_seconds``.
 
-    A thread is used rather than a process because the pinned RNG state lives in
-    this interpreter -- a subprocess would not inherit the patches. The cost is
-    that a timed-out trial's thread keeps running; that is the same tradeoff the
-    upstream evaluator makes, and the trial is scored as a failure either way.
-    """
-    import concurrent.futures
+    Defaults to ``TRIAL_TIMEOUT_S`` read at call time rather than bound into the
+    signature, so a caller -- a test, mostly -- can lower it without patching
+    this function. A default argument would freeze the value at import.
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(func)
+    A thread is used rather than a process because the pinned RNG state lives in
+    this interpreter -- a subprocess would not inherit the patches, and would
+    also pay 2.9 s to import the engine, eighty times what an evaluation costs.
+
+    A bare daemon thread rather than ``ThreadPoolExecutor``, for two reasons
+    that both cost real time to find:
+
+    * ``with ThreadPoolExecutor(...)`` calls ``shutdown(wait=True)`` on exit and
+      blocks until the runaway thread finishes. The timeout raises on schedule
+      and then the call sits there anyway -- measured before this was fixed, a
+      12 s function under a 5 s timeout returned after 12.0 s.
+    * Its threads are non-daemon and joined by an ``atexit`` hook, so even with
+      ``shutdown(wait=False)`` the *interpreter* will not exit while a runaway
+      trial is alive. Evaluating a candidate with a huge search budget left a
+      process that had printed its results and could not terminate.
+
+    Python cannot kill a thread, so a timed-out trial does keep burning CPU
+    until it finishes on its own. What this bounds is how long the evaluation
+    waits for it -- a runaway candidate costs a fixed 5 s per trial instead of
+    however long it likes -- and that the process can still exit.
+    """
+    import threading
+
+    if timeout_seconds is None:
+        timeout_seconds = TRIAL_TIMEOUT_S
+
+    outcome = {}
+
+    def run():
         try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError("trial exceeded {}s".format(timeout_seconds))
+            outcome["value"] = func()
+        except BaseException as exc:  # reported on the calling thread instead
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout_seconds)
+
+    if worker.is_alive():
+        raise TimeoutError("trial exceeded {}s".format(timeout_seconds))
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def _unpack(result):
