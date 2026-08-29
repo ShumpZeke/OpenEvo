@@ -450,22 +450,49 @@ At the same budget the algorithm is worth **+0.090**; raising 1000 to 1200 adds
 0.0025. So the 27B's improvement is almost entirely the algorithm, and it is
 twice the size of everything the 0.6B found.
 
+### Given ten times the iterations, the small model still found nothing
+
+That was the obvious objection to the table above — thirty iterations is not
+many — so it was run. **300 iterations of `qwen3:0.6b`, about thirty minutes,
+zero new bests.** Three distinct scores across the whole run: 0.0 for candidates
+that would not evaluate, 0.1817 once, and 1.4061, the seed's own score, for
+everything else. The final best differs from the seed textually and scores
+identically, which is the signature of edits that change code without changing
+behaviour.
+
+So the earlier thirty-iteration run that found `iterations=2000` was a lucky
+draw, not a capability. Ten times the sampling did not reproduce it.
+
+One confounder had to be eliminated first, because the two 0.6B runs differed by
+more than length: the later one had `reasoning_effort: "none"`, added to the
+config after the 27B measurement. Thinking might be exactly what a small model
+needs to produce a well-formed diff, in which case the null result would be an
+artefact of a setting chosen for a much larger model. Measured on the 0.6B,
+n=16 each:
+
+| `reasoning_effort` | applicable | per call | output | per usable diff |
+|---|---|---|---|---|
+| absent (thinks) | 8/16 | 3.87 s | 762 tok | 7.7 s |
+| `"none"` | 7/16 | **0.61 s** | 100 tok | **1.4 s** |
+
+8 against 7 out of 16 is noise; 6.3× the speed is not. So the setting costs the
+small model nothing in diff quality and buys it a great deal of throughput —
+it is right for both sizes, and it does not explain the null result.
+
 ### What that means for going faster
 
-The 0.6B is genuinely usable: it produces applicable diffs, drives the loop end
-to end, and finds real score. It is roughly thirty times cheaper in wall clock
-for the same iteration count. What it did not do in thirty iterations is write a
-different algorithm.
+The 0.6B is genuinely usable for exercising the machinery: it produces
+applicable diffs about half the time, drives the loop end to end, and a full
+run costs three minutes. That is worth a lot when the thing being debugged is a
+pipeline.
 
-So the honest position is that the small model is the right tool for exercising
-the machinery — a full run in three minutes is worth a great deal when you are
-debugging a pipeline — and has not been shown to substitute for the large one on
-the work the pipeline exists to do.
+It has not, in 330 iterations across two runs, produced an improvement that
+survived. The 27B produced one at iteration 6.
 
-**Open, and worth running:** whether the 0.6B finds an algorithm given the
-iterations its speed affords. Thirty of its iterations cost three minutes; three
-hundred cost thirty, which is still a third of one 27B run. Nobody has tried it
-here, so nothing above should be read as saying it cannot.
+So on this task the small model is a development instrument and the large one is
+the tool. Which is only sayable because the evaluator stopped moving — the
+unseeded task's spread is 0.39, and every difference discussed above is smaller
+than that.
 
 ## Honest expectations
 
