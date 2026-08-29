@@ -41,9 +41,18 @@ param(
     # Not the model's 262144. KV cache scales with context, and on this box
     # every megabyte of KV evicts a megabyte of weights to system RAM.
     [int]$Ctx = 8192,
-    # Physical cores, not logical. Hyperthreads contend for the same vector
-    # units and measurably hurt token generation.
-    [int]$Threads = 6,
+    # All twelve logical cores, not the six physical ones.
+    #
+    # An earlier version of this file said the opposite -- "hyperthreads contend
+    # for the same vector units and measurably hurt token generation" -- which
+    # is the usual advice and was written here without being measured. Measured
+    # on Ollama with this model it is wrong, and monotonically so: 4 threads
+    # 3.14 tok/s, 6 threads 3.26, 8 threads 3.38, 12 threads 3.41.
+    #
+    # The advice holds for workloads that saturate the vector units. Roughly
+    # 60% of this model runs on the CPU and is memory-bandwidth bound, where a
+    # stalled thread leaves units idle for its sibling to use.
+    [int]$Threads = 12,
     [int]$Port = 8080,
     [string]$ModelPath = ""
 )

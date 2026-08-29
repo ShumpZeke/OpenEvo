@@ -92,7 +92,29 @@ existing code *verbatim*; punish repetition harder and the restatement drifts,
 the diff stops applying, and it looks like a bad mutation rather than a bad
 setting.
 
-### 5. Do NOT force the GPU layer count
+### 5. Use every logical core, not just the physical ones
+
+The standard advice is that hyperthreads hurt inference, because two logical
+cores share one physical core's vector units. Measured here it is the reverse,
+and monotonically:
+
+| `num_thread` | prompt/s | generation |
+|---|---|---|
+| 4 | 64.6 | 3.14 tok/s |
+| 6 (Ollama's default) | 63.8 | 3.26 tok/s |
+| 8 | 69.6 | 3.38 tok/s |
+| **12** | **72.4** | **3.41 tok/s** |
+
+About +4.6% generation and +13% prompt over the default, for a config line.
+
+The advice is not wrong in general — it is written for workloads that saturate
+the vector units. Roughly 60% of this model runs on the CPU and is
+memory-bandwidth bound, so threads spend much of their time stalled on memory,
+and a stalled thread leaves units its sibling can use. Which regime you are in
+is a property of the model/hardware ratio, not of hyperthreading, so it is worth
+the five minutes to check rather than inherit.
+
+### 5b. Do NOT force the GPU layer count
 
 The most counterintuitive result here, and worth the space. Ollama picks a
 GPU/CPU split automatically. Overriding it with `num_gpu` was **monotonically

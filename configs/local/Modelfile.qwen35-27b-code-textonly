@@ -23,6 +23,23 @@ PARAMETER min_p 0
 PARAMETER repeat_penalty 1.05
 PARAMETER num_ctx 8192
 
+# All twelve logical cores, not the six physical ones Ollama defaults to.
+#
+# The usual advice is that hyperthreads hurt, because two logical cores share a
+# physical core's vector units. Measured here it is the other way round, and
+# monotonically:
+#
+#     num_thread  4    64.6 prompt/s   3.14 gen/s
+#     num_thread  6    63.8            3.26      <- Ollama's default
+#     num_thread  8    69.6            3.38
+#     num_thread 12    72.4            3.41
+#
+# +4.6% generation and +13% prompt over the default. Modest, and free. The
+# advice is written for workloads that saturate the vector units; ~60% of this
+# model runs on the CPU and is memory-bandwidth bound, where a stalled thread
+# leaves units idle for its sibling to use.
+PARAMETER num_thread 12
+
 # DO NOT add `PARAMETER num_gpu`. Measured on this box, forcing it is
 # monotonically worse -- every step up costs throughput:
 #
