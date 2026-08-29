@@ -12,18 +12,51 @@ is cheap, safe, and catches the whole class of "I edited a script and broke it".
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SKIP_DIRS = {".venv", "node_modules", ".git", "build", "dist"}
+
+# `examples/` and `openevolve/` are upstream and byte-identical. Their scripts
+# are not ours to keep parsing, and a failure there would be a finding about
+# upstream rather than about this fork.
+SKIP_DIRS = {
+    ".venv", "node_modules", ".git", "build", "dist",
+    "examples", "openevolve", "upstream",
+}
 
 
 def _scripts(suffix):
     for path in sorted(ROOT.rglob(f"*{suffix}")):
         if not any(part in SKIP_DIRS for part in path.parts):
             yield path
+
+
+def _bash_can_parse():
+    """Whether the `bash` on PATH actually works, not merely whether it exists.
+
+    On a GitHub Windows runner `bash` resolves to the WSL launcher, which is on
+    PATH with no distribution behind it and fails on everything -- so
+    `shutil.which("bash")` said yes and every script "did not parse", with an
+    empty stderr to explain it. Prove the tool works on a script known to be
+    valid before trusting its verdict on ours.
+    """
+    if shutil.which("bash") is None:
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "probe.sh"
+        probe.write_text("#!/usr/bin/env bash\ntrue\n", encoding="utf-8")
+        try:
+            return subprocess.run(
+                ["bash", "-n", str(probe)], capture_output=True, timeout=60
+            ).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+
+BASH_WORKS = _bash_can_parse()
 
 
 POWERSHELL_SCRIPTS = list(_scripts(".ps1"))
@@ -64,7 +97,7 @@ def test_powershell_scripts_parse(script):
     )
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="no bash available")
+@pytest.mark.skipif(not BASH_WORKS, reason="no working bash on PATH")
 @pytest.mark.parametrize(
     "script", SHELL_SCRIPTS, ids=lambda p: str(p.relative_to(ROOT))
 )
