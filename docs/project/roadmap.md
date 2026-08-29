@@ -328,13 +328,51 @@ Measured on a local run: raw yield **1.00 → 2.42 candidates per request**, but
 same program again. The mechanism works; whether it *pays* is the open
 question, and the raw number is the one that will mislead you.
 
-### What is not measured
+### Partly measured now (2026-08-29), on a small real model
 
-**Whether a real model's alternatives are actually different.** The local
-provider draws from a fixed pool of five mutations, so its duplicate rate says
-nothing about a real one. The failure mode this feature has is precisely three
-near-identical alternatives collapsing to one AST hash — throughput that is not
-real — and only a real provider can show it.
+The open question was whether a *real* model's alternatives are actually
+different — the stub draws from a fixed pool of five mutations, so its duplicate
+rate said nothing. Measured on `qwen3:0.6b` through the feature's own
+`prompt_instruction` and its own `split_alternatives`, ten rounds asking for
+three:
+
+| | per request |
+|---|---|
+| alternatives returned | 3.10 |
+| diffs that applied | 0.20 |
+| **distinct programs** | **0.20** |
+| identical to the parent | 2.90 |
+
+**94% collapsed** — against 69% for the stub. And 0.20 distinct per request is
+worse than this model manages when asked for one alternative (7 of 16 applied in
+a separate measurement), so on this model the feature is a net loss: the extra
+instruction appears to cost it the format it was already only half managing.
+
+The harness was checked against a hand-written well-formed response first, where
+both alternatives split and applied to distinct programs — so the collapse is
+the model, not the parser.
+
+### What is still not measured
+
+**Whether a *capable* model's alternatives are different.** A 0.6B is a real
+model but a weak one, and the result above is as easily read as "the extra
+instruction overwhelmed a small model" as "alternatives collapse". That reading
+matters, because the feature is for the case where the model is good enough for
+three answers to be worth having.
+
+Attempted on the tuned 27B and abandoned twice. A single three-alternative
+request did not complete in fifty minutes on this box, and the plain-request
+baseline measured **2.51 tok/s against the usual 3.4** at the same moment — so
+the machine, not the feature, was what any number would have described. See the
+memory trap in `../gotchas.md`: a 27B run is exclusive use of a 16 GB machine,
+and asking it for three times the output is the wrong experiment to run there.
+
+**To settle it**, run the 0.6B measurement again against a capable model on a
+machine with headroom. The harness is small: build a prompt with the sampler,
+append `prompt_instruction(3)`, split with `split_alternatives`, apply each with
+`apply_diff`, and count distinct ASTs of the results. The number that matters is
+*distinct programs per request*; at or below 1.00 the feature buys nothing over
+asking for one.
 
 ```bash
 ./scripts/start-broker.sh
