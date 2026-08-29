@@ -144,6 +144,61 @@ improves when credentials are added.
 
 ---
 
+## Single-model mode
+
+Every role normally has its own chain, and failover keeps a run alive when a
+route dies. That is the right default and the wrong shape for three things:
+
+* **Judging a model.** "Is kimi-k3 any good here?" cannot be answered by a run
+  where three other models also served requests.
+* **Comparing two.** Every arm of an A/B has to be one model, or the comparison
+  measures the chain.
+* **Wanting a specific model.** Sometimes there is nothing to argue about.
+
+So it is a mode. Off by default; on, every role resolves to the one chosen route.
+
+```bash
+curl -s 127.0.0.1:8787/v1/oe-max/single-model            # state + candidates
+```
+
+```bash
+curl -s -X POST 127.0.0.1:8787/v1/oe-max/single-model \
+  -H 'Content-Type: application/json' -d '{"model":"kimi"}'
+```
+
+```bash
+curl -s -X POST 127.0.0.1:8787/v1/oe-max/single-model \
+  -H 'Content-Type: application/json' -d '{"model":null}'   # back to chains
+```
+
+`OE_MAX_SINGLE_MODEL` seeds it at startup. The Control Center's **Models** page
+has a picker, which is the same thing with fewer quotes.
+
+### It pins, and a pin fails rather than substituting
+
+If the chosen model cannot be served, requests fail with a 503 naming it. They
+do **not** quietly fall back to a chain. A run that reports "single model:
+kimi-k3" while three others answered is worse than a run that stops, and
+preventing that is the whole reason the mode exists.
+
+The status endpoint reports the mode, so a recorded result can be interpreted
+later — `single_model.enabled`, the resolved route, and `ok`, which is false
+when the mode is on and its selection has become unservable.
+
+### Matching is by substring, and ambiguity is refused
+
+Operators type `kimi`, not `moonshotai/kimi-k3`. A query matching more than one
+route is refused with what it matched, rather than guessed at:
+
+```
+'nemotron' matches 6 models (nemotron-3-ultra-free, nvidia/nemotron-3-nano-30b-a3b, …);
+be more specific
+```
+
+An exact `model_id` or `model_key` always wins over a longer substring, so a
+fully-typed id is never ambiguous. Refusal happens when you type it, not at the
+next request.
+
 ## NVIDIA NIM
 
 CATALOGUE-VERIFIED 2026-08-26: 83 models, read from the public listing.
