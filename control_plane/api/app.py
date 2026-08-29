@@ -133,6 +133,68 @@ class JournalEntryRequest(BaseModel):
     source: str = "user"
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})
+
+
+def _broker_timeout(base: str) -> httpx.Timeout:
+    """
+    Timeouts for the broker status probe, split by phase.
+
+    The read budget stays generous -- a broker that is up may be busy. The
+    *connect* budget does not, because when the broker is down the connect is
+    the entire cost of the answer.
+
+    Measured on Windows: a connect to a closed port on 127.0.0.1 takes 2.03s to
+    fail. That is the OS retrying the SYN, not httpx and not TLS -- a raw
+    `socket.connect` costs the same 2.03s, and constructing the client is only
+    0.32s of it. So `/api/broker` spent 2.35s to report "not reachable", on
+    every poll, while the Models view sat on a spinner.
+
+    A broker on loopback completes a handshake in single-digit milliseconds or
+    is not listening, so 250ms is two orders of magnitude of headroom. A remote
+    `OE_MAX_BASE` gets 2s, which is a long time for a TCP handshake but not for
+    an unlucky one.
+    """
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(base).hostname or "").lower()
+    connect = 0.25 if host in _LOOPBACK_HOSTS else 2.0
+    return httpx.Timeout(5.0, connect=connect)
+
+
+def _broker_failure_detail(base: str, exc: BaseException) -> str:
+    """
+    Why the probe failed, in terms an operator can act on.
+
+    `str(ConnectTimeout())` is the empty string, so the obvious
+    `f"{type(exc).__name__}: {exc}"` renders as a bare "ConnectTimeout:" -- and
+    reads as "the broker is slow" when it actually means nothing is listening.
+    Windows drops the SYN for a closed port rather than refusing it, so on
+    loopback a connect timeout is the *normal* way "not running" presents.
+    """
+    name = type(exc).__name__
+    message = str(exc).strip()
+
+    if isinstance(exc, httpx.ConnectTimeout):
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(base).hostname or "").lower()
+        if host in _LOOPBACK_HOSTS:
+            return (
+                f"no broker listening on {base} "
+                f"(connect timed out after {_broker_timeout(base).connect:g}s; "
+                f"on Windows a closed port times out rather than refusing)"
+            )
+        return (
+            f"could not reach {base}: no answer to the TCP handshake within "
+            f"{_broker_timeout(base).connect:g}s"
+        )
+    if isinstance(exc, httpx.ConnectError):
+        return f"could not connect to {base}: {message or name}"
+
+    return f"{name}: {message}"[:200] if message else name
+
+
 def create_app(workspace: Optional[str] = None) -> FastAPI:
     state = AppState(workspace)
     app = FastAPI(title="Evolution Control Plane", version="1.0.0")
@@ -791,7 +853,7 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
         """
         base = os.environ.get("OE_MAX_BASE", "http://127.0.0.1:8787")
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=_broker_timeout(base)) as client:
                 r = await client.get(f"{base}/v1/oe-max/status")
                 r.raise_for_status()
                 payload = r.json()
@@ -799,7 +861,7 @@ def create_app(workspace: Optional[str] = None) -> FastAPI:
             return {
                 "reachable": False,
                 "base": base,
-                "detail": f"{type(exc).__name__}: {exc}"[:200],
+                "detail": _broker_failure_detail(base, exc),
                 "router": None,
                 "registry": None,
             }

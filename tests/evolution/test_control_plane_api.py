@@ -251,3 +251,58 @@ def test_system_reports_gpu_presence_honestly(client):
         assert body["gpu"]["reason"], "absence must explain itself"
         assert body["gpu"]["gpus"] == []
         assert body["gpu"]["count"] == 0
+
+
+def test_broker_probe_does_not_wait_out_a_windows_syn_retry(client, monkeypatch):
+    """The Models view refetches this on every live tick; it must answer fast.
+
+    Measured before this was bounded: 2352ms at the median, of which 2030ms was
+    the operating system retrying the SYN. Windows drops the packet for a closed
+    port rather than refusing it, so `connect` runs to its full budget -- and a
+    raw `socket.connect` costs the same 2030ms, which is what rules out httpx
+    and TLS as the cause.
+
+    The read budget stays at 5s, because a broker that is up may be busy. Only
+    the connect is short, and only on loopback.
+    """
+    import time
+
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")   # discard port
+
+    started = time.perf_counter()
+    response = client.get("/api/broker")
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert response.json()["reachable"] is False
+    # Generous against a loaded CI box; the point is that it is not ~2.3s.
+    assert elapsed < 1.5, f"broker probe took {elapsed:.2f}s"
+
+
+def test_the_connect_budget_is_short_only_for_a_local_broker():
+    """A remote OE_MAX_BASE must not inherit a 250ms handshake budget."""
+    from control_plane.api.app import _broker_timeout
+
+    for local in ("http://127.0.0.1:8787", "http://localhost:8787", "http://[::1]:8787"):
+        assert _broker_timeout(local).connect == 0.25, local
+
+    remote = _broker_timeout("https://broker.internal.example:8787")
+    assert remote.connect == 2.0
+    # The read budget is unchanged either way -- a busy broker is not a missing one.
+    assert remote.read == 5.0
+    assert _broker_timeout("http://127.0.0.1:8787").read == 5.0
+
+
+def test_an_absent_broker_says_it_is_absent_not_that_it_is_slow(client, monkeypatch):
+    """`str(ConnectTimeout())` is empty, so the obvious formatting renders a bare
+    "ConnectTimeout:" -- which reads as a slow broker when it means there is
+    none. On loopback a connect timeout is the normal way "not running"
+    presents, and the detail has to say so."""
+    monkeypatch.setenv("OE_MAX_BASE", "http://127.0.0.1:9")
+
+    detail = client.get("/api/broker").json()["detail"]
+
+    assert detail.strip(), "an unreachable broker must say why"
+    assert not detail.rstrip().endswith(":"), f"empty exception message: {detail!r}"
+    assert "no broker listening" in detail or "could not connect" in detail, detail
+    assert "127.0.0.1:9" in detail
