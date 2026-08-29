@@ -6,8 +6,14 @@ import argparse
 import os
 import sys
 
+from oe_max.console import use_utf8_stdio
+
 
 def main() -> int:
+    # Before any print: a character the console code page cannot encode
+    # raises rather than mangling, and kills the process. See
+    # oe_max/console.py.
+    use_utf8_stdio()
     parser = argparse.ArgumentParser(
         prog="evolution-server",
         description="Run the Evolution control plane (API + Control Center).",

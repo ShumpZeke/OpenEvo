@@ -151,6 +151,12 @@ def _wait(run_id: str, poll_s: float, timeout_s: float) -> str:
 
 
 def main() -> int:
+    sys.path.insert(0, ROOT)
+    from oe_max.console import use_utf8_stdio
+    # Before any print: a character the console code page cannot encode
+    # raises rather than mangling, and kills the process. See
+    # oe_max/console.py.
+    use_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--routes", required=True,

@@ -2,8 +2,13 @@
 from __future__ import annotations
 import argparse, os, sys
 
+from ..console import use_utf8_stdio
+
 
 def main() -> int:
+    # Before any print: a banner character the console code page cannot
+    # encode kills the broker before uvicorn starts. See oe_max/console.py.
+    use_utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="oe-max-broker",
         description="Run the OE-MAX OpenAI-compatible provider broker.")

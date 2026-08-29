@@ -11,7 +11,16 @@ smoke-test table full of failures tells you something is wrong; a
 reconciliation line tells you what.
 """
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from oe_max.console import use_utf8_stdio
+
+# Before any print: this script's own output contains an em dash, and a
+# console code page that cannot encode it raises rather than mangling.
+# See oe_max/console.py.
+use_utf8_stdio()
 
 d = json.load(sys.stdin)
 
