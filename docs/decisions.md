@@ -542,3 +542,77 @@ candidate on a plateau, which is where a run spends most of its time.
 Flagged jumps are still recorded into the history. Excluding them would make a
 genuine breakthrough permanently suspicious — and every real improvement after
 it, since the distribution would never learn the new scale.
+
+---
+
+## D33 — Seed the benchmark task's draws rather than averaging more runs
+
+**Decision.** `benchmarks/tasks/fn_min_seeded` fixes one seed per trial, so a
+program scores the same number every time. It sits beside
+`examples/function_minimization` rather than replacing it, because `examples/`
+is upstream and byte-identical.
+
+**Why.** The upstream task's *unchanged seed program* scored 1.0330–1.4188, a
+spread of 0.39 — wider than any improvement worth making. A run had already
+reported "new best solution found" and finished with a best program
+byte-identical to the seed. The alternative, evaluating N times and comparing
+distributions, costs N× and still cannot separate two programs whose difference
+is smaller than the noise. Fixing the draws also makes the comparison *paired*:
+two programs meet the same ten draws, so the draw-to-draw variance leaves the
+difference as well.
+
+**Cost, stated honestly.** Scores are no longer comparable to the upstream
+task's — this is one particular sample of that metric, not an estimate of its
+mean, and both READMEs say so. And `TRIAL_TIMEOUT_S` is wall clock, so a
+candidate whose trials land near five seconds can still complete on an idle
+machine and time out on a busy one. It stays, because the alternative is an
+unbounded loop hanging the run.
+
+**Would change if.** Upstream's evaluator grew a seed parameter. Then this
+directory would be a thin config rather than a copy.
+
+---
+
+## D34 — Set `reasoning_effort` in the config as well as the adapter
+
+**Decision.** Both `configs/oe_max/local.yaml` and the broker's local adapter
+send `reasoning_effort: "none"`.
+
+**Why.** Belt and braces is usually a smell, but here the two cover different
+paths. `api_base` is a config field: pointing it at Ollama's own `/v1` — the
+obvious move to take the broker out of the picture — removes the adapter and its
+setting together. Without it a local reasoning model answers entirely in
+`message.reasoning` and returns an empty `content`: 308.7 s per iteration
+producing nothing, against 99.3 s producing an applicable diff, with
+`finish_reason: stop` both times so it does not present as truncation.
+
+**Checked for the small-model case**, because the config applies to whatever
+model runs and a small model's thinking fits the budget: on `qwen3:0.6b`, n=16
+each, 8/16 applicable while thinking against 7/16 without — noise — at 3.87 s
+against 0.61 s. Right for both sizes, for different reasons.
+
+**Would change if.** A role wanted thinking. `OE_MAX_LOCAL_REASONING` already
+turns it back on, and a judge is the obvious candidate.
+
+---
+
+## D35 — Cache what a subprocess answers, not what a sensor reads
+
+**Decision.** `OpenCodeIsolation.status()` caches per workspace for 30 s.
+`gpu_probe()` and `psutil.cpu_percent()` do not cache at all.
+
+**Why.** `/api/system` is polled every five seconds and took 959 ms, of which
+874 ms was two subprocesses — `opencode --version` at 553 ms and a
+container-runtime probe at 256 ms — re-establishing that OpenCode is still
+installed and Docker still is not. Those answers do not change between polls.
+Utilisation does, and a cached utilisation figure would be a number nothing
+measured, which is the one thing this codebase does not do.
+
+**Cost, stated honestly.** A status can be 30 s stale. `checked_at` is the time
+of the underlying check rather than of the call, and the System Health panel now
+renders "checked 12s ago" — a cache whose staleness is invisible is a worse
+trade than the second it saved. `preflight()` stays uncached because it has side
+effects a caller may rely on, and `max_age=0` forces a fresh check.
+
+**Would change if.** The check got cheap. It is two process spawns; nothing
+about that is going to change.
