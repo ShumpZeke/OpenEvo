@@ -191,10 +191,62 @@ runs finishing at 1.4198 and 1.4209 have told you nothing.
 **A mutation can be accepted for being lucky rather than better**, which means
 even "the best program changed" is weak evidence on its own.
 
-When comparing anything on this task, evaluate repeatedly and compare
-distributions, or use a task whose evaluation is deterministic. A score quoted
-from one run is evidence that the machinery ran, not that the search worked —
-which is the only claim this repository has ever made from one.
+**Use `benchmarks/tasks/fn_min_seeded` instead.** It is the same task with
+the draws pinned, so the same program scores 1.406051 every time — measured
+over twenty evaluations, spread exactly 0.0. `examples/` is upstream and
+byte-identical, which is why the deterministic evaluator lives beside it rather
+than replacing it.
+
+Everything above still applies to `examples/function_minimization` itself, and
+scores from the two are **not** interchangeable: fixing the draws makes the
+seeded one a particular sample of the upstream metric, not an estimate of its
+mean. A score quoted from one run of the upstream task is evidence that the
+machinery ran, not that the search worked.
+
+## A metric that averages can prefer the worse program
+
+Found the first time the seeded task was used for a real comparison, and it is
+a property of upstream's metric rather than of the seeding.
+
+`combined_score` averages the distance-to-optimum over ten trials. A
+local-refinement variant lands about five times closer than the seed program on
+**9 of 10 seeds** — and scores *lower*, 1.3564 against 1.4061. On the tenth it
+refines into the wrong basin at distance 3.99, and that single trial moves the
+mean from 0.19 to 0.43.
+
+So evolution on this task will reject a program that is excellent nine times in
+ten in favour of one that is mediocre throughout. If a promising-looking
+mutation is being rejected, check the per-seed record before concluding the
+model produced something bad:
+
+```bash
+python benchmarks/tasks/fn_min_seeded/compare.py A.py B.py
+```
+
+It prints the ten trials behind the aggregate and says so explicitly when the
+majority winner is the lower scorer. The weights are deliberately left as
+upstream's — changing them would make every number already recorded
+incomparable.
+
+## Replacing a `np.random` factory with a function breaks `default_rng`
+
+Only bites code that pins randomness by monkeypatching, which
+`benchmarks/tasks/fn_min_seeded/evaluator.py` does — but it fails in a way that
+gives no hint of the cause:
+
+    TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+
+NumPy's `default_rng` resolves `RandomState` out of the `np.random` namespace
+*at call time* and hands it to `isinstance`. Replace that name with a plain
+function and `np.random.default_rng(7)` — an ordinary, correctly-seeded call
+that has nothing to do with the patch — raises from inside NumPy. Measured on
+NumPy 2.4.6.
+
+The stand-in has to be a real type, and has to answer `isinstance` and
+`issubclass` by delegating to the original, or the patch silently changes
+behaviour for anything that passes a real instance. `_PinnedMeta` in that
+evaluator is the pattern; `test_patched_types_answer_isinstance_like_the_real_ones`
+fails if it regresses.
 
 ## A model paraphrases the code it is quoting, and the diff matches nothing
 

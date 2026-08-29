@@ -8,39 +8,47 @@ Read `handoff.md` first — especially §3, the traps.
 
 ---
 
-## T0-noise — Make the example task's score comparable between runs
+## T0-noise — Make the task's score comparable between runs — DONE (2026-08-29)
 
-**Priority:** highest of the local items — it blocks every other comparison.
-**Effort:** small. **Blocked by:** nothing.
+Solved by `benchmarks/tasks/fn_min_seeded`, a fork-owned copy of the function
+minimization task whose evaluator fixes the random draws. `examples/` is
+upstream and byte-identical, so the deterministic evaluator lives beside it
+rather than replacing it.
 
-`examples/function_minimization` evaluates a stochastic program and fixes no
-seed, so the untouched seed scores anywhere in **1.0494–1.4431**. That range is
-wider than most real improvements, which makes every single-run comparison on
-this task uninterpretable — including "is a 0.6B model as good as a 27B", which
-was attempted this session and could not be answered.
+Measured on the unchanged seed program, twenty evaluations each:
 
-It also produces false positives: a 12-iteration run reported a new best at
-iteration 9 and finished with a best program byte-identical to the seed.
+| evaluator | spread |
+|---|---|
+| `examples/function_minimization` | **0.3857** (1.0330–1.4188) |
+| `benchmarks/tasks/fn_min_seeded` | **0.0000** (1.406051 every time) |
 
-### How
+Reproduce with `check_determinism.py` in that directory; it exits non-zero when
+the evaluator under test is not deterministic, so it can gate a change.
 
-Either evaluate each candidate N times and compare distributions, or seed the
-candidate's RNG so one program scores one way. The second is cheaper and is a
-config/evaluator change rather than an engine one — note that `random_seed` in
-the config governs the evolution process, not the candidate's execution.
+The metric names and weights are deliberately identical to upstream's, so the
+meaning did not silently change — but scores from the two are not
+interchangeable. Fixing the draws makes this one particular sample of the
+upstream metric rather than an estimate of its mean, and the README says so.
 
-### Done when
+### What it found on first use
 
-Evaluating the unchanged seed twenty times produces a range small enough that a
-real improvement is distinguishable from noise, and that range is written down.
+`compare.py` prints the ten trials behind the aggregate. A local-refinement
+variant lands closer to the global minimum on **9 of 10 seeds**, about five
+times closer — and scores *lower* (1.3564 vs 1.4061). On the tenth seed it
+refines into the wrong basin at distance 3.99, and `combined_score` averages
+distances, so one trapped trial outweighs nine near-perfect ones.
 
-### Careful
+So the task's metric is outlier-dominated: it prefers a program that is mediocre
+everywhere to one that is excellent nine times in ten. That is a property of
+upstream's metric, recorded rather than fixed — changing the weights would make
+every recorded number incomparable. `tests/evolution/test_seeded_benchmark.py`
+pins the finding so the README cannot rot.
 
-Do not "fix" this by averaging inside the evaluator without saying so — a
-metric that silently changed meaning invalidates every number already recorded
-in benchmarks.
+### Follow-on
 
----
+The unanswerable comparisons are now answerable and worth actually running:
+27B vs 0.6B on quality, and whether the shipped prompt's rules arm helps or only
+shortens.
 
 ## T0a — Run local mode against a real local LLM
 
