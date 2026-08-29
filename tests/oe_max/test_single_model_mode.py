@@ -224,3 +224,64 @@ def test_a_broken_selection_is_visible_in_status_rather_than_silent():
         assert reported["ok"] is False
         assert reported["route"] is None
         assert "laguna" in reported["reason"]
+
+
+def test_a_disabled_model_cannot_be_selected():
+    """The mode must not report `ok` for a route the router will skip.
+
+    `Router` filters `spec.available is False` before attempting anything, so
+    selecting one gives a mode that says it is fine while every request 503s --
+    the "says one thing, does another" failure this mode exists to prevent,
+    pointed at itself. Found by asking whether the picker could offer the 183s
+    deepseek that was deliberately disabled.
+
+    The refusal carries the recorded reason, because "why can I not pick this"
+    is the next question.
+    """
+    from oe_max.providers.base import ModelSpec
+    from oe_max.providers.registry import Registry
+
+    models = {
+        "good": ModelSpec(key="good", id="good-model"),
+        "slow": ModelSpec(key="slow", id="slow-model", available=False,
+                          notes="183.5s on a one-word prompt; disabled by choice"),
+    }
+    registry = Registry({"opencode_zen": Scripted("opencode_zen", models)})
+
+    route, reason = single_model.resolve(registry, "slow-model")
+    assert route is None
+    assert "disabled" in reason
+    assert "183.5s" in reason, "the recorded reason was dropped"
+
+    # And the usable one still resolves, so this is not just refusing everything.
+    route, reason = single_model.resolve(registry, "good-model")
+    assert route is not None and reason == "ok"
+
+
+def test_an_unprobed_model_is_still_selectable():
+    """`available is None` means nobody has probed it, which is the normal state
+    for most models and must not be read as `False`."""
+    from oe_max.providers.base import ModelSpec
+    from oe_max.providers.registry import Registry
+
+    models = {"fresh": ModelSpec(key="fresh", id="fresh-model")}
+    registry = Registry({"opencode_zen": Scripted("opencode_zen", models)})
+
+    assert getattr(models["fresh"], "available", "missing") is None
+    route, reason = single_model.resolve(registry, "fresh-model")
+    assert route is not None and reason == "ok"
+
+
+def test_the_endpoint_refuses_a_disabled_model_with_its_reason():
+    """End to end: the operator sees why, at the moment they click it."""
+    from oe_max.providers.base import ModelSpec
+
+    models = dict(MODELS)
+    models["broken"] = ModelSpec(key="broken", id="broken-model", available=False,
+                                 notes="probe returned 404 for this account")
+    with _client(models) as (client, _provider):
+        r = client.post("/v1/oe-max/single-model", json={"model": "broken-model"})
+        assert r.status_code == 409
+        detail = str(r.json())
+        assert "disabled" in detail
+        assert "404" in detail

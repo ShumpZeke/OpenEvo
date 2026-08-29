@@ -118,11 +118,13 @@ def resolve(registry: Any, query: str) -> Tuple[Optional[Route], str]:
     Turn what the operator typed into exactly one route.
 
     Returns `(route, reason)`. `route` is None when the query does not select
-    exactly one thing, and `reason` says which of the two ways it failed --
-    nothing matched, or several did. Both are worth distinguishing: the first is
-    a typo or a withdrawn model, the second is a query that needs narrowing, and
-    telling someone "no route" when they meant to be more specific wastes their
-    time.
+    exactly one usable thing, and `reason` says which of the three ways it
+    failed -- nothing matched, several did, or the one that matched is disabled.
+    All three are worth distinguishing: the first is a typo or a withdrawn
+    model, the second is a query that needs narrowing, the third is a model that
+    exists and will never be attempted. Telling someone "no route" when they
+    meant to be more specific wastes their time; telling them "ok" when the
+    router will skip it wastes their run.
 
     Exact matches on `model_id` or `model_key` win outright, so a query that is
     an exact id is never ambiguous even if it is a substring of another.
@@ -147,6 +149,21 @@ def resolve(registry: Any, query: str) -> Tuple[Optional[Route], str]:
             query, len(hits), ", ".join(sorted(c.model_id for c in hits)[:6]))
 
     hit = hits[0]
+
+    # A model the router will skip must not be selectable. `Router` filters
+    # `spec.available is False` before it attempts anything, so selecting one
+    # would give a mode that reports `ok` while every request 503s -- which is
+    # precisely the "says one thing, does another" failure this mode exists to
+    # prevent, pointed at itself.
+    #
+    # `None` is a different state and stays selectable: it means nobody has
+    # probed the model, which is the normal condition for most of them.
+    if hit.available is False:
+        detail = (hit.notes or "").strip()
+        return None, "{} is disabled and the router will not attempt it{}".format(
+            hit.model_id,
+            ": " + detail[:160] if detail else "")
+
     return Route(provider=hit.provider, model_key=hit.model_key,
                  model_id=hit.model_id), "ok"
 
