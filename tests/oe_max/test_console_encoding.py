@@ -134,3 +134,48 @@ def test_the_broker_banner_still_contains_the_arrow():
     source = (ROOT / "oe_max" / "broker" / "cli.py").read_text(encoding="utf-8")
     assert ARROW in source
     assert "use_utf8_stdio()" in source
+
+
+# Scripts with a real `--help`: running it proves the module imports, that its
+# argument parser is wired, and that nothing it prints on the way kills it. The
+# broker's crash was exactly this shape -- import fine, parse fine, die on the
+# banner -- and only running it would have caught it.
+HELP_SCRIPTS = [
+    "scripts/visualizer.py",
+    "scripts/local_provider.py",
+    "scripts/ablation.py",
+    "scripts/route_experiment.py",
+]
+
+
+@pytest.mark.parametrize("script", HELP_SCRIPTS)
+def test_the_operator_scripts_start_under_a_legacy_code_page(script):
+    """`--help` exits before binding a port or starting a server."""
+    path = ROOT / script
+    assert path.exists(), f"{script} has moved; update HELP_SCRIPTS"
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1252"
+    completed = subprocess.run(
+        [sys.executable, str(path), "--help"],
+        capture_output=True, text=True, errors="replace", env=env,
+        cwd=str(ROOT), timeout=180,
+    )
+    assert "UnicodeEncodeError" not in completed.stderr, completed.stderr
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_the_run_entrypoint_imports_under_a_legacy_code_page():
+    """It has no `--help`; what matters is that importing and starting it does
+    not die before it can report why it will not run."""
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1252"
+    completed = subprocess.run(
+        [sys.executable, "-m", "control_plane.runner.entrypoint", "--help"],
+        capture_output=True, text=True, errors="replace", env=env,
+        cwd=str(ROOT), timeout=180,
+    )
+    assert "UnicodeEncodeError" not in completed.stderr, completed.stderr
+    assert "Traceback" not in completed.stderr or "EVOLUTION_RUN_ID" in (
+        completed.stdout + completed.stderr
+    ), completed.stderr
