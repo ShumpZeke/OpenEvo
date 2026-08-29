@@ -163,6 +163,46 @@ would cut wall clock to whatever the upstream suite takes, and would also make
 the regression gate depend on four pytest processes not colliding over ports,
 temp directories and the telemetry bus singleton. That is a bad trade for a gate.
 
+## Concurrent generation does not help here
+
+The last plausible lever on the dominant cost, and it does not pay.
+
+Generation is memory-bandwidth bound on a partly CPU-offloaded model, and two
+requests batched together read the weights once for both — so in principle two
+concurrent generations could cost barely more than one. `OLLAMA_NUM_PARALLEL`
+was at 1, which serialises them, so this had never been tried.
+
+It does not work, because one generation already saturates all twelve logical
+cores. There is no idle capacity for a second to fill, and the attention work
+does not share.
+
+| | sequential | concurrent | ratio |
+|---|---|---|---|
+| concurrency 2, run 3 | 3.16 tok/s | 2.98 tok/s | **0.94×** |
+| concurrency 3 | 2.69 tok/s | 1.75 tok/s | **0.65×** |
+
+`OLLAMA_NUM_PARALLEL` is restored to 1, which is the right value.
+
+### The two runs that said 4.6× and 9.6×
+
+Worth writing down, because they were the first two readings and they were
+wrong.
+
+| | sequential | concurrent | ratio |
+|---|---|---|---|
+| concurrency 2, run 1 | 0.59 tok/s | 2.73 tok/s | 4.63× |
+| concurrency 2, run 2 | **0.25 tok/s** | 2.42 tok/s | 9.63× |
+
+Look at the sequential column rather than the ratio. A normal reading on this
+model is 3.16 tok/s; those arms ran at a fifth and a twelfth of it. The
+*concurrent* arms were all normal, around 2.4–3.0. So nothing was fast — the
+baseline was slow, because the first arms ran while a 16 GB model was still
+settling on a box with under a gigabyte free.
+
+A single run would have reported a mild win (an earlier one-off said 1.16×), and
+two of these would have reported a spectacular one. The rule that caught it is
+worth keeping: **when a ratio looks too good, read the denominator.**
+
 ## Measured and deliberately not changed
 
 | | |
@@ -174,3 +214,4 @@ temp directories and the telemetry bus singleton. That is a bad trade for a gate
 | the web bundle | 273 KB JS (80 KB gzipped), 53 modules, 2 runtime dependencies |
 | reusing one `httpx.AsyncClient` for the broker probe | would save 165 ms more; binds a client to an event loop for the app's lifetime, which is not worth it in a handler whose job is to report absence |
 | `parallel_evaluations` above 1 locally | the model is serial and evaluation is 36 ms; overlapping them saves 0.02% |
+| `OLLAMA_NUM_PARALLEL` above 1 | 0.94× at concurrency 2, 0.65× at 3 — one generation already saturates twelve cores |

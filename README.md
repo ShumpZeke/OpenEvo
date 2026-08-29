@@ -18,7 +18,7 @@
 >   its own lighter evolution loop in `oe_max/brain/evolution.py` — it does not
 >   go through upstream's controller, MAP-Elites or island machinery.
 >
-> **Verification status, stated plainly:** 34 tests cover the BrainPort, and 26
+> **Verification status, stated plainly:** 37 tests cover the BrainPort, and 26
 > acceptance gates pass (`scripts/verify-brainport-acceptance.ps1`). All of them
 > run against `NullBrainPort` or the stdio worker. **No BrainPort run against a
 > live OpenCode host has been recorded**, so the claim "zero source changes when
@@ -254,9 +254,9 @@ Windows: `.	est.ps1`. Measured on Windows 11 / CPython 3.11.9:
 | Suite | Result |
 |---|---|
 | Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
-| Control plane | **456 passed**, 10 skipped |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **389 passed**, 25 skipped |
-| BrainPort (OpenCode brain, worker, plugin contract) | **34 passed** |
+| Control plane | **512 passed**, 10 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **401 passed**, 25 skipped |
+| BrainPort (OpenCode brain, worker, plugin contract) | **37 passed** |
 | Web typecheck | clean |
 
 The six upstream failures are platform, not regression: four are
