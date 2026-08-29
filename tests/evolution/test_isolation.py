@@ -185,3 +185,93 @@ def test_a_cached_status_is_a_copy(workspace, monkeypatch):
     first["level"] = "tampered"
 
     assert iso.status()["level"] != "tampered"
+
+
+# -- the boundary, against the real binary ----------------------------------
+
+
+def _snapshot(paths):
+    """Every file under each path, with size and mtime. `None` means absent."""
+    out = {}
+    for root in paths:
+        if not os.path.isdir(root):
+            out[root] = None
+            continue
+        entries = {}
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                full = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(full)
+                    entries[full] = (st.st_size, st.st_mtime_ns)
+                except OSError:
+                    entries[full] = None
+        out[root] = entries
+    return out
+
+
+def test_a_real_opencode_process_cannot_reach_operator_state(workspace):
+    """The requirement, tested against the binary rather than against strings.
+
+    Every other test here checks paths and environment dictionaries. The
+    redirection is by environment rather than by policy -- a child that cannot
+    find the operator's config cannot overwrite it -- but "cannot find" is a
+    claim about a binary, and no real OpenCode process had ever been started
+    under it.
+
+    Runs `opencode models`, which is read-only but still makes OpenCode load
+    configuration and write its cache and database. Then asserts the operator's
+    own OpenCode and OMO state is byte-for-byte untouched.
+
+    It deliberately never runs OpenCode *without* isolation: establishing a
+    baseline that way would mean writing to the operator's state to prove we do
+    not write to the operator's state.
+    """
+    import subprocess
+
+    iso = OpenCodeIsolation(workspace)
+    report = iso.preflight()
+    if not report.binary:
+        pytest.skip("no OpenCode binary on this host")
+
+    forbidden = _forbidden_roots()
+    before = _snapshot(forbidden)
+
+    env = iso.env()
+    # Every redirected variable must point inside the workspace, or the rest of
+    # this test is checking nothing.
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        assert env.get(key, "").startswith(os.path.abspath(workspace)), key
+
+    completed = subprocess.run(
+        [report.binary, "models"],
+        capture_output=True, text=True, errors="replace",
+        env=env, cwd=workspace, timeout=300,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    after = _snapshot(forbidden)
+
+    changed = []
+    for root in forbidden:
+        b, a = before[root], after[root]
+        if b is None and a is None:
+            continue
+        if b is None or a is None:
+            changed.append(root)
+            continue
+        changed += [p for p in set(b) | set(a) if b.get(p) != a.get(p)]
+
+    assert not changed, (
+        "a real OpenCode process reached operator-owned state: "
+        + ", ".join(changed[:10])
+    )
+
+    # And it did write somewhere -- otherwise the process may simply have done
+    # nothing, which would make the assertion above vacuous.
+    written = [
+        os.path.join(d, f)
+        for d, _dirs, files in os.walk(iso.root) for f in files
+    ]
+    assert written, "OpenCode wrote nothing at all; the check above proves little"

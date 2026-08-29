@@ -178,9 +178,27 @@ failure.
 
 **Implemented and tested:** the isolation boundary, environment construction,
 forbidden-path enforcement, preflight and level detection, OMO detection,
-container-runtime detection, and the System/Agent Sandbox reporting. Nine tests
-in `tests/evolution/test_isolation.py` cover it, including negative assertions
-that writes into operator-owned paths are refused.
+container-runtime detection, and the System/Agent Sandbox reporting. Sixteen
+tests in `tests/evolution/test_isolation.py` cover it, including negative
+assertions that writes into operator-owned paths are refused.
+
+**Verified against the real binary, 2026-08-29.** Every earlier test checked
+paths and environment dictionaries. The redirection is by environment rather
+than by policy — a child that cannot find the operator's config cannot
+overwrite it — but "cannot find" is a claim about a binary, and no real OpenCode
+process had ever been started under it.
+
+`opencode models` was run under the isolated environment with OpenCode 1.18.25.
+All six redirected variables pointed inside the workspace; the process exited 0
+and did real work, writing eleven files — `cache/opencode/models.json`, a SQLite
+database with its WAL and shared-memory files, and a lock directory — **all of
+them inside Evolution's own tree**. All seven operator-owned paths were
+byte-for-byte unchanged: same files, same sizes, same modification times.
+
+`test_a_real_opencode_process_cannot_reach_operator_state` keeps that true, and
+skips where no binary is installed. It never runs OpenCode *without* isolation:
+establishing a baseline that way would mean writing to the operator's state to
+prove we do not write to the operator's state.
 
 **Not implemented:** the executors that would run candidates inside those
 sandboxes — the container and worktree backends, per-candidate resource limits
