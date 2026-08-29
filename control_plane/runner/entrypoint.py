@@ -35,6 +35,45 @@ from control_plane.telemetry.bus import configure_bus, emit, get_bus  # noqa: E4
 from control_plane.telemetry.events import (  # noqa: E402
     Component, Event, EventType, Status,
 )
+from oe_max.console import use_utf8_stdio  # noqa: E402
+
+
+def _ensure_utf8_logging() -> None:
+    """
+    Make this process and its workers able to write the log lines they produce.
+
+    Upstream marks a new best with a star and writes score changes with an
+    arrow. On Windows the console code page is cp1252, `logging` cannot encode
+    them, the handler raises, and the **whole record is discarded** -- measured
+    at 0 bytes written against 48 with UTF-8. So a run that found a new best can
+    produce a log that never says so.
+
+    Both halves are needed and they cover different processes:
+
+    * `PYTHONIOENCODING` is set in the environment *before* any worker is
+      spawned. Under `spawn` -- the default on Windows and macOS -- each worker
+      is a fresh interpreter that inherits this environment, and workers log
+      too. Reconfiguring streams in this process does nothing for them.
+    * `use_utf8_stdio()` fixes *this* interpreter, whose streams already exist
+      and will not re-read the variable.
+
+    The run manager sets the variable for runs it launches. This covers the
+    other ways in -- `scripts/resume-evolution.*`, and anyone invoking this
+    module directly.
+
+    An *empty* value counts as unset. Python ignores `PYTHONIOENCODING=""` and
+    falls back to the code page, but `setdefault` would see the key as present
+    and leave it -- so a blank value, which a shell or a container can easily
+    pass through, would hand every worker the encoding this exists to avoid. A
+    non-empty value is left alone: someone who set it deliberately gets what
+    they asked for, and the failure being guarded against is absence.
+    """
+    if not os.environ.get("PYTHONIOENCODING", "").strip():
+        os.environ["PYTHONIOENCODING"] = "utf-8"
+    use_utf8_stdio()
+
+
+_ensure_utf8_logging()
 
 CHECKPOINT_REQUEST_FILE = "checkpoint.request"
 STOP_REQUEST_FILE = "stop.request"

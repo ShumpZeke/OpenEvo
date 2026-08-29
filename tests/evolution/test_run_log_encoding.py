@@ -85,3 +85,72 @@ def test_the_reader_side_agrees_on_utf8():
     source = (ROOT / "control_plane" / "runner" / "manager.py").read_text(
         encoding="utf-8")
     assert 'encoding="utf-8"' in source
+
+
+def test_the_entrypoint_covers_the_paths_the_run_manager_does_not(tmp_path):
+    """`scripts/resume-evolution.*` and a direct `-m` invocation start the same
+    engine, and neither goes through the run manager that sets the variable.
+
+    Both halves are checked because they cover different processes: the
+    environment variable is what a spawned worker inherits, and reconfiguring
+    this interpreter's streams is what fixes the process already running.
+    """
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, os, logging; sys.path.insert(0, '.');"
+         "import control_plane.runner.entrypoint;"
+         "logging.basicConfig(stream=sys.stdout, level=logging.INFO,"
+         " format='%(message)s');"
+         f"logging.info({LOG_LINE!r});"
+         "print('CHILDREN_GET=' + os.environ.get('PYTHONIOENCODING', 'unset'))"],
+        capture_output=True, text=True, errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": ""},
+        cwd=str(ROOT), timeout=180,
+    )
+    assert child.returncode == 0, child.stderr
+    assert "UnicodeEncodeError" not in child.stderr, child.stderr
+    # This interpreter's own record survived ...
+    assert "New best at iteration 6" in child.stdout
+    # ... and a worker spawned from it would inherit a usable encoding.
+    assert "CHILDREN_GET=utf-8" in child.stdout
+
+
+def test_an_explicit_encoding_choice_is_not_overridden():
+    """Someone who set PYTHONIOENCODING on purpose gets what they asked for.
+
+    The failure being guarded against is the variable being absent, not a value
+    somebody chose.
+    """
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, os; sys.path.insert(0, '.');"
+         "import control_plane.runner.entrypoint;"
+         "print('KEPT=' + os.environ.get('PYTHONIOENCODING', 'unset'))"],
+        capture_output=True, text=True, errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-16"},
+        cwd=str(ROOT), timeout=180,
+    )
+    assert child.returncode == 0, child.stderr
+    assert "KEPT=utf-16" in child.stdout
+
+
+def test_a_blank_value_counts_as_unset():
+    """`PYTHONIOENCODING=""` is ignored by Python and falls back to the code
+    page, but `setdefault` sees the key as present and leaves it -- which would
+    hand every spawned worker exactly the encoding this exists to avoid. A shell
+    or a container can pass a blank value through without anyone meaning to.
+
+    Empty specifically, not whitespace: a whitespace value makes the interpreter
+    refuse to start at all ("unknown encoding"), so it never reaches this code.
+    """
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, os; sys.path.insert(0, '.');"
+         "import control_plane.runner.entrypoint;"
+         "print('CHILDREN_GET=' + os.environ.get('PYTHONIOENCODING', 'unset'))"],
+        capture_output=True, text=True, errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": ""},
+        cwd=str(ROOT), timeout=180,
+    )
+    assert child.returncode == 0, child.stderr
+    assert "CHILDREN_GET=utf-8" in child.stdout
