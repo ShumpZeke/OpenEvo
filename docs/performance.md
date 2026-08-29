@@ -48,6 +48,19 @@ a config field, so pointing it straight at Ollama takes the adapter out of the
 path along with its setting, and the symptom is every iteration failing with
 "No valid diffs found in response" while the model works perfectly.
 
+Setting it in the config applies it to whatever model runs, including a small
+one — and a small model's thinking is short enough to fit the budget, so it was
+not obvious the same answer held. Measured on `qwen3:0.6b`, n=16 each:
+
+| `reasoning_effort` | applicable diffs | per call | output | per usable diff |
+|---|---|---|---|---|
+| absent (thinks) | 8/16 | 3.87 s | 762 tok | 7.7 s |
+| `"none"` | 7/16 | **0.61 s** | 100 tok | **1.4 s** |
+
+8 against 7 of 16 is noise; 6.3× the speed is not. Right for both sizes, for
+different reasons — the large model cannot answer at all without it, the small
+one answers six times faster.
+
 ## Prompt processing is cached; the prompt defeats the cache
 
 Re-sending a prefix the server has already processed costs 3.5 s against 15.0 s
