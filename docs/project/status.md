@@ -64,16 +64,41 @@ Measured after tuning: **106.8 tok/s prompt, 3.27 tok/s generation**, 39% of the
 model resident in VRAM. Method and every intermediate number in
 [../local-tuning.md](../local-tuning.md).
 
-**Still not verified: a full evolution run driven by a local model.** The model
-generates correct mutations, and no multi-iteration run has been recorded on it
-— deliberately, since at ~3.3 tok/s a 24-iteration run is a couple of hours. So
-the plumbing, the routing and the model's output are each proven; the loop over
-them is not. Roadmap T0a.
+**A full evolution run is now driven by a local model.** Verified 2026-08-29,
+on `benchmarks/tasks/fn_min_seeded` — the seeded task, without which the scores
+below would mean nothing:
+
+| model | iterations | wall | result | score |
+|---|---|---|---|---|
+| `qwen3:0.6b` | 30 | ~3 min | raised the search budget to 2000 | 1.4513 |
+| `qwen3:0.6b` | 300 | ~30 min | **nothing** — zero new bests | 1.4061 (the seed's) |
+| Qwen3.5-27B | 19 of 30, stopped | ~180 s/iter | **Differential Evolution**, adaptive F/CR, written at iteration 6 | **1.4987** |
+
+Against the seed's 1.4061, every score re-scored independently at spread 0.
+
+At equal budget the 27B's algorithm is worth +0.090 and the budget change 0.0025,
+so its improvement is the algorithm. The 0.6B's whole gain was the budget, and
+330 iterations across two runs produced nothing that survived — the 30-iteration
+find was a lucky draw. So on this task the small model is a development
+instrument and the large one is the tool.
+
+**Not yet: a run through the broker onto a local model.** Both runs pointed
+`api_base` at Ollama's own `/v1`, to isolate the model as the only variable. The
+broker itself is verified to start in local-only mode and discover twelve local
+models across all four providers; what is untested is an evolution run served
+through it. Roadmap T0a.
 
 ## Measurable since the last revision
 
-Four things that were structurally impossible are now measurable, each verified
+Five things that were structurally impossible are now measurable, each verified
 on a live run rather than only in tests:
+
+- **Whether one model is better than another on this task.** The example task's
+  evaluator fixed no seed, so the *unchanged seed program* scored anywhere in
+  1.0330–1.4188 — a spread of 0.39, wider than any improvement worth making, and
+  a run once reported a new best whose program was byte-identical to the seed.
+  `benchmarks/tasks/fn_min_seeded` pins the draws: twenty evaluations, spread
+  exactly 0.0. Every comparison in this document rests on it.
 
 - **Candidate → model request attribution**, across the worker process
   boundary. 12 of 15 candidates attributed; the other 3 unattributable by
@@ -89,10 +114,11 @@ on a live run rather than only in tests:
 
 The honest list. Detail and rationale in [roadmap.md](roadmap.md).
 
-- No full evolution run has been driven by a local model (T0a). A local
-  model does generate correct mutations — that part is measured.
+- No evolution run has gone **through the broker** onto a local model (T0a).
+  Runs driven by a local model are now measured; both bypassed the broker to
+  isolate the model as the only variable.
 - The BrainPort has never run against a live OpenCode host — every one of its
-  34 tests runs against a stub.
+  37 tests runs against a stub.
 - The 44-per-60s rate contract is proven on a virtual clock only; the live NIM
   run peaked at 0 of 44, so it has never been under real pressure.
 - Several features are built, gated and unmeasured: multi-offspring, operator
