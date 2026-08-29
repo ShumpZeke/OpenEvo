@@ -141,7 +141,12 @@ def build_local_providers(
         # low/medium/high to keep thinking on where it is wanted -- a judge
         # sometimes should think; a diff generator that thinks instead of
         # answering produces nothing to apply.
-        effort = os.environ.get("OE_MAX_LOCAL_REASONING", "none").strip().lower()
+        #
+        # Read through `env` like `local_only` and `base_url_for` do. Reading
+        # `os.environ` directly here meant a caller that passed `env=` got its
+        # base URLs honoured and this setting silently ignored.
+        source = os.environ if env is None else env
+        effort = str(source.get("OE_MAX_LOCAL_REASONING", "none")).strip().lower()
         if effort and effort != "default":
             adapter.extra_body = {"reasoning_effort": effort}
         # A probe only has to establish that the server answers, and the

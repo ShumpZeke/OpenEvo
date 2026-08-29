@@ -31,6 +31,26 @@ llm:
   api_key: "oe-max-local"
   temperature: 0.8
 
+  # Turn thinking OFF. This is not a tuning preference -- without it the run
+  # produces nothing at all.
+  #
+  # Measured on the 27B with the same prompt, once each:
+  #
+  #   absent : 308.7s, 978 tokens, content 0 chars, reasoning 3247 chars, no diff
+  #   "none" :  99.3s, 320 tokens, content 1029 chars, one APPLICABLE diff
+  #
+  # Three times the wall clock for literally zero usable output -- the whole
+  # budget goes to hidden reasoning and `content` comes back empty, which the
+  # engine reports as "No valid diffs found in response".
+  #
+  # The broker's local adapter already sets this, so a run through 127.0.0.1:8787
+  # was always fine. It is set here as well because `api_base` is a config field:
+  # point it straight at Ollama's own /v1 -- an obvious thing to do when
+  # debugging, and what exposed this -- and the adapter is out of the path along
+  # with its setting. The broker accepts the field and its adapter sets it
+  # regardless, so having it in both places costs nothing.
+  reasoning_effort: "none"
+
   # Sized from measurement, not from what looks generous.
   #
   # A 27B IQ4_XS model on an RTX 3050 (8 GB) with ~half its layers on the CPU

@@ -228,6 +228,39 @@ majority winner is the lower scorer. The weights are deliberately left as
 upstream's — changing them would make every number already recorded
 incomparable.
 
+## Pointing the engine straight at Ollama loses `reasoning_effort`
+
+Symptom: every iteration fails with **"No valid diffs found in response"**, each
+one taking minutes. The model is working perfectly and returning nothing.
+
+A local reasoning model answers entirely in `message.reasoning` and returns an
+empty `content` unless told not to think. Measured on the tuned 27B, same prompt,
+once each:
+
+| `reasoning_effort` | wall | completion | `content` | diff |
+|---|---|---|---|---|
+| absent | 308.7 s | 978 tok | **0 chars** (3247 chars of reasoning) | none |
+| `"none"` | 99.3 s | 320 tok | 1029 chars | applicable |
+
+Three times the wall clock for nothing usable, and `finish_reason` is `stop`
+both times — so it does not look like truncation, and raising `max_tokens` does
+not help.
+
+The broker's local adapter sets this, so a run through `127.0.0.1:8787` was
+always fine. But `api_base` is a config field, and pointing it at
+`http://127.0.0.1:11434/v1` — the obvious move when you want the broker out of
+the picture — takes the adapter out of the path along with its setting. That is
+exactly how this was found.
+
+`configs/oe_max/local.yaml` now sets `llm.reasoning_effort: "none"` as well, so
+both paths are covered. Keep both: `tests/evolution/test_local_config_reasoning.py`
+fails if either half is removed, because dropping either one silently restores
+the failure on one route.
+
+`OE_MAX_LOCAL_REASONING=low|medium|high` still turns thinking back on where it is
+wanted — a judge sometimes should think; a diff generator that thinks instead of
+answering produces nothing to apply.
+
 ## A score rise on the benchmark task may just be a bigger budget
 
 Neither `examples/function_minimization` nor `benchmarks/tasks/fn_min_seeded`
