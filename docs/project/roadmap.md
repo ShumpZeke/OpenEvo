@@ -613,6 +613,36 @@ island assignment, and duplicating them would break the empty patch surface.
 
 ---
 
+## T9 — The agent kernel has no timeout anywhere
+
+**Priority:** low, but cheap and it is a hang rather than an error.
+**Effort:** small. **Found:** 2026-08-29, sweeping for the timeout bug fixed in
+`benchmarks/tasks/fn_min_seeded/evaluator.py`.
+
+`control_plane/agent/kernel.py` submits every runnable task to a
+`ThreadPoolExecutor` and then calls `future.result()` with **no timeout**, and
+`_run_task` calls `runner(task)` directly with none either. Its own comment says
+runners are model-supplied. So one runner that never returns hangs the whole
+goal, with no event, no diagnostic, and — because the pool is entered with
+`with` — a `shutdown(wait=True)` that will not return either.
+
+### Why this is not already fixed
+
+Choosing the number is a policy decision about that subsystem, and nothing here
+has evidence about how long a legitimate task takes. Guessing one and calling it
+a fix would trade a rare hang for routine spurious failures.
+
+### What is worth knowing before picking it up
+
+Python cannot kill a thread, so a timeout bounds the *wait* and leaks the
+runner. That was acceptable for the evaluator and may not be here, where a
+leaked runner holds tools open. `_run_with_timeout` in the seeded evaluator has
+the working pattern and the two traps written down: a `with ThreadPoolExecutor`
+joins the worker on exit and defeats the timeout entirely, and the executor's
+non-daemon threads then block interpreter exit.
+
+---
+
 ## Standing rules for whoever picks this up
 
 - Do not edit `openevolve/`. Wrap at runtime instead.
