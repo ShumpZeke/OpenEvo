@@ -228,6 +228,54 @@ majority winner is the lower scorer. The weights are deliberately left as
 upstream's — changing them would make every number already recorded
 incomparable.
 
+## A Windows run log deletes its most important lines
+
+Not mangles. Deletes.
+
+Upstream marks a new best with a star and writes score changes with an arrow.
+The child inherits the console code page — cp1252 here — `logging` cannot encode
+those characters, the handler raises, and the **whole record is discarded**.
+Measured, the same line through a child whose stdout is a binary file:
+
+| | bytes written |
+|---|---|
+| without `PYTHONIOENCODING` | **0** |
+| `PYTHONIOENCODING=utf-8` | 48 |
+
+So a run that found a new best can produce a log that never says so, and the
+only clue is `--- Logging error ---` on stderr, which reads like noise.
+
+Set in the runner's child environment and in both `run-evolution` scripts. If
+you add a fourth way to start a run, set it there too;
+`tests/evolution/test_run_log_encoding.py` demonstrates the loss rather than
+asserting the variable, so it will keep telling you the guard is load-bearing.
+
+Corollary worth internalising: **do not read a run's progress out of the log on
+Windows** without checking this is set. Read `best_program_info.json`, or
+re-score the best program.
+
+## A dead local port costs two seconds to discover, on Windows
+
+Windows drops the SYN for a closed port rather than refusing it, so `connect()`
+runs to its full budget instead of failing immediately.
+
+    raw socket.connect to a closed 127.0.0.1 port     2030 ms
+    constructing an httpx.AsyncClient                  177 ms
+
+That is the OS, not the client library and not TLS — a raw socket costs the
+same. `/api/broker` inherited it and took 2352 ms to report "not reachable", on
+every poll of the Models view.
+
+Split the timeout by phase rather than shortening it: the read budget stays
+generous because a broker that is up may be busy, and only the *connect* is
+short, and only for loopback where a listening server answers in single-digit
+milliseconds. `_broker_timeout` in `control_plane/api/app.py` is the pattern.
+
+One trap inside the fix: `str(httpx.ConnectTimeout())` is the empty string, so
+the natural `f"{type(exc).__name__}: {exc}"` renders a bare `ConnectTimeout:` —
+which reads as "the broker is slow" when on loopback it is the ordinary way "not
+running" presents.
+
 ## Pointing the engine straight at Ollama loses `reasoning_effort`
 
 Symptom: every iteration fails with **"No valid diffs found in response"**, each
