@@ -617,13 +617,25 @@ const SingleModelPicker: React.FC<{
                     <button
                       key={String(c.label)}
                       onClick={() => onSet(String(c.model_id))}
-                      disabled={busy || chosen}
-                      title={String(c.notes ?? "")}
+                      // Rule 3: an unsupported control is disabled with a
+                      // reason, not a button that does nothing. The router
+                      // filters `available === false` before attempting
+                      // anything, so selecting one would give a mode that
+                      // reports ok while every request fails.
+                      disabled={busy || chosen || disabled}
+                      title={
+                        disabled
+                          ? "Disabled — the router will not attempt this route. "
+                            + String(c.notes ?? "")
+                          : String(c.notes ?? "")
+                      }
                       className={
                         "text-left px-2 py-1 rounded border text-2xs "
                         + (chosen
                           ? "border-ok text-ok"
-                          : "border-line text-ink-dim hover:text-ink")
+                          : disabled
+                            ? "border-line text-ink-faint cursor-not-allowed"
+                            : "border-line text-ink-dim hover:text-ink")
                       }
                     >
                       <Mono>{String(c.model_id)}</Mono>
