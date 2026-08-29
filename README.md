@@ -275,7 +275,7 @@ Windows: `.	est.ps1`. Measured on Windows 11 / CPython 3.11.9:
 |---|---|
 | Upstream OpenEvolve (preserved) | **431 passed**, 6 failed (Windows-only, below), 17 slow deselected, 43 subtests |
 | Control plane | **557 passed**, 10 skipped |
-| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **406 passed**, 25 skipped |
+| OE-MAX (broker, limiter, gates, search, archives, verification, execution) | **411 passed**, 25 skipped |
 | BrainPort (OpenCode brain, worker, plugin contract) | **37 passed** |
 | Web typecheck | clean |
 

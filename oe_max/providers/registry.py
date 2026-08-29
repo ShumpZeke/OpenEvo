@@ -108,8 +108,13 @@ def _is_conclusive(outcome: Outcome, body: str) -> bool:
 
 def build_default_registry(
     *,
-    nim_hard_cap: int = 44,
-    nim_target_rpm: float = 42.0,
+    # 40 attempt starts per rolling 60s, set by the operator 2026-08-29.
+    # Stricter than the 48 the account allows and the 44 the spec required, so
+    # every earlier guarantee still holds. Target sits below the cap for the
+    # same reason it always did: the window guard makes the bound provable, the
+    # token bucket makes arrival at it gentle instead of 40-then-stall.
+    nim_hard_cap: int = 40,
+    nim_target_rpm: float = 38.0,
     nim_burst: float = 2.0,
     nim_state_path: Optional[str] = None,
     include_catalogue: bool = True,
@@ -208,8 +213,9 @@ def build_default_registry(
         base_url=NVIDIA_NIM_BASE,
         role=ProviderRole.SPECIALIST_AND_FALLBACK,
         api_key_env="NVIDIA_API_KEY",
-        # The one provider with a stated contract: 48 RPM. Internal hard cap 44,
-        # normal target 42. Shared globally across every worker and retry.
+        # The one provider with a stated contract: 48 RPM. Internal hard cap
+        # 40 and target 38 -- the operator's bound, stricter than the contract.
+        # Shared globally across every worker and retry.
         limiter=RateLimiter(
             "nvidia_nim", hard_cap_per_window=nim_hard_cap,
             window_seconds=60.0, target_rpm=nim_target_rpm,
@@ -278,17 +284,40 @@ def build_default_registry(
                       "later probe can re-enable it if the endpoint recovers.",
             ),
             "kimi_k3": ModelSpec(
-                key="kimi_k3", id="moonshotai/kimi-k3", priority=90,
-                notes="Agentic/coding strength. VERIFIED 2026-08-28: HTTP 200 "
-                      "in 11.5s, tools supported.",
+                key="kimi_k3", id="moonshotai/kimi-k3", priority=99,
+                notes="PRIMARY THINKING MODEL (operator decision 2026-08-29). "
+                      "RE-VERIFIED 2026-08-29 with a real key: HTTP 200, "
+                      "median 1.59s over two calls, `content` non-empty, and "
+                      "its hidden reasoning arrives in a separate channel "
+                      "rather than eating the visible budget -- which is the "
+                      "property that makes a thinking model safe here at all "
+                      "(see the reasoning-channel trap in docs/gotchas.md). "
+                      "The 11.5s recorded on 2026-08-28 no longer reproduces; "
+                      "it is 7x quicker than that measurement.",
             ),
             "deepseek_v4_flash": ModelSpec(
                 key="deepseek_v4_flash", id="deepseek-ai/deepseek-v4-flash-0731",
-                priority=85,
-                notes="VERIFIED 2026-08-28: HTTP 200, but slow — 51s on a "
-                      "two-word prompt. Note the id is date-suffixed; "
-                      "`deepseek-ai/deepseek-v4-pro`, which this project once "
-                      "configured, is not in the catalogue at all.",
+                priority=80,
+                notes="RE-VERIFIED 2026-08-29: HTTP 200, median 15.8s on a "
+                      "one-word prompt — quicker than the 51s recorded on "
+                      "2026-08-28, and still an order of magnitude slower than "
+                      "kimi-k3 or the 120B, so it stays below both. The id is "
+                      "date-suffixed; the bare `deepseek-ai/deepseek-v4-pro` "
+                      "this project once configured is still not in the "
+                      "catalogue, but the dated form is — see below.",
+            ),
+            "deepseek_v4_pro": ModelSpec(
+                key="deepseek_v4_pro", id="deepseek-ai/deepseek-v4-pro-0813",
+                priority=0, available=False,
+                notes="LISTED, SERVES, AND EXCLUDED FOR BEING SLOW. Measured "
+                      "2026-08-29: HTTP 200 with a non-empty answer, median "
+                      "183.5s on a one-word prompt — 115x kimi-k3 and 274x the "
+                      "120B on the same prompt in the same minute. Disabled by "
+                      "operator decision rather than by fault, and recorded "
+                      "rather than deleted so nobody configures it again "
+                      "wondering why it was left out. Note this corrects an "
+                      "earlier note that said no v4-pro existed: the bare id "
+                      "does not, the date-suffixed one does.",
             ),
             "nemotron_super_120b": ModelSpec(
                 key="nemotron_super_120b", id="nvidia/nemotron-3-super-120b-a12b",

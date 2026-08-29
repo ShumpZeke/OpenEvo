@@ -8,10 +8,16 @@ See oe_max/brain/README.md.
 Global provider rate limiting.
 
 The NVIDIA NIM account carries a hard contract of 48 requests/minute. The build
-spec makes the invariant explicit and absolute:
+spec made the invariant explicit and absolute, at 44:
 
     FOR EVERY CONTIGUOUS 60-SECOND WINDOW:
-        NIM ATTEMPT STARTS <= 44
+        NIM ATTEMPT STARTS <= 40
+
+The bound is now **40**, set by the operator on 2026-08-29. It is stricter than
+both the 48 the provider allows and the 44 the spec required, so nothing that
+held before stops holding -- a run bounded by 40 is bounded by 44. The number is
+a default and a parameter, not a constant: `build_default_registry` takes
+`nim_hard_cap`, so an account with a different contract passes its own.
 
 "Attempt starts", not "successful requests": retries, health probes, critic
 calls and cancelled-in-flight attempts all count. There is no emergency bypass.
@@ -79,9 +85,9 @@ class RateLimiter:
         self,
         name: str,
         *,
-        hard_cap_per_window: int = 44,
+        hard_cap_per_window: int = 40,
         window_seconds: float = 60.0,
-        target_rpm: float = 42.0,
+        target_rpm: float = 38.0,
         burst_capacity: float = 2.0,
         clock: Optional[Clock] = None,
         sleep: Optional[Sleeper] = None,

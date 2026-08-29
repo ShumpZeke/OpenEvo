@@ -10,7 +10,7 @@ is the kind of thing that gets quoted back later as if it were universal.
 |---|---|---|
 | Upstream OpenEvolve | `pytest tests/ -m "not slow" --ignore=tests/{evolution,oe_max,brain}` | **431 passed**, 6 failed (all Windows-only, see below), 43 subtests, 17 slow deselected |
 | Control plane | `pytest tests/evolution` | **557 passed**, 10 skipped |
-| OE-MAX | `pytest tests/oe_max` | **406 passed**, 25 skipped |
+| OE-MAX | `pytest tests/oe_max` | **411 passed**, 25 skipped |
 | BrainPort | `pytest tests/brain` | **37 passed** |
 | Web typecheck | `npm run typecheck` | clean |
 | Web build | `npm run build` | 254 KB (75 KB gzipped) |

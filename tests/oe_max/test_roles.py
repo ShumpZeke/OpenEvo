@@ -220,3 +220,39 @@ def test_a_role_with_nothing_serving_is_reported_rather_than_omitted():
     for role, info in snap["roles"].items():
         assert info["serving"] is None, role
         assert info["excluded"], f"{role} explains nothing about why"
+
+
+def test_kimi_k3_leads_the_thinking_role():
+    """Operator decision, 2026-08-29: kimi-k3 is the primary thinking model.
+
+    Pinned the same way NIM-leads-every-chain is, because a preference that
+    lives only in a list is one careless reorder from being lost, and the reason
+    it leads is a measurement rather than a taste: 1.59s median with a non-empty
+    `content`, against 183.5s for deepseek-v4-pro on the same prompt in the same
+    minute.
+    """
+    assert preferences()[Role.REASONER][0] == ("nvidia_nim", "kimi_k3")
+    assert preferences()[Role.CODER][0] == ("nvidia_nim", "kimi_k3")
+
+
+def test_the_slow_deepseek_is_not_on_any_chain():
+    """It serves, so nothing else would exclude it -- only its latency does.
+
+    183.5s on a one-word prompt is 115x kimi-k3. It stays configured and
+    disabled rather than deleted, so this checks it is absent from the
+    *preferences* rather than from the registry.
+    """
+    for role, chain in preferences().items():
+        assert ("nvidia_nim", "deepseek_v4_pro") not in chain, role
+
+
+def test_the_disabled_deepseek_is_recorded_rather_than_deleted():
+    """A model excluded by judgement should say so where the next person looks,
+    or they configure it again and wonder why it was left out."""
+    from oe_max.providers.registry import build_default_registry
+
+    nim = build_default_registry()["nvidia_nim"]
+    spec = nim.models.get("deepseek_v4_pro")
+    assert spec is not None, "deepseek_v4_pro was deleted rather than disabled"
+    assert spec.available is False
+    assert "183" in spec.notes, "the measurement that excluded it is not recorded"

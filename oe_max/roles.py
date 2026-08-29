@@ -84,19 +84,24 @@ ALIASES: Dict[str, Role] = {
 # NIM entries drop out and the Zen tail serves, exactly as before. With a key,
 # NIM is what runs.
 _PREFERENCES: Dict[Role, Chain] = {
-    # NIM's flagship reasoner first (4.5 s with tools, and its hidden reasoning
-    # is kept out of the visible budget, which is what makes it safe for long
-    # mutations -- see HANDOFF 3.2 for what the opposite costs). The 120B is the
-    # fast second opinion; the Zen tail keeps the role alive with no key.
+    # kimi-k3 leads (operator decision 2026-08-29). Measured that day at a
+    # 1.59s median with a non-empty `content`, and it keeps its hidden reasoning
+    # in a separate channel rather than spending the visible budget on it --
+    # which is the property that makes a thinking model usable here at all, and
+    # what HANDOFF 3.2 shows the cost of losing. The 120B is the fast second
+    # opinion at 0.67s, the flagship the deeper third, and the Zen tail keeps
+    # the role alive in a checkout with no key at all.
     Role.REASONER: [
-        ("nvidia_nim", "nemotron_ultra_253b"),
+        ("nvidia_nim", "kimi_k3"),
         ("nvidia_nim", "nemotron_super_120b"),
+        ("nvidia_nim", "nemotron_ultra_253b"),
         ("opencode_zen", "nemotron_ultra"),
         ("opencode_zen", "hy3"),
     ],
-    # Code specialist first now that it is reachable: kimi-k3 is slower (11.5 s)
-    # but it is the only route here chosen *for* code. deepseek-v4-flash serves
-    # at 51 s, so it sits below the generalist rather than above it.
+    # Code specialist first, and no longer at a latency cost: kimi-k3 re-measured
+    # at 1.59s on 2026-08-29 against the 11.5s recorded the day before.
+    # deepseek-v4-flash serves at 15.8s, so it still sits below the generalist
+    # rather than above it.
     Role.CODER: [
         ("nvidia_nim", "kimi_k3"),
         ("nvidia_nim", "nemotron_ultra_253b"),

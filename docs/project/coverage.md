@@ -136,7 +136,7 @@ Adapter layer, runtime hooks, isolated frontend package, compatibility tests,
 | 21 | Tests document what was validated | ✅ [../testing.md](../testing.md) |
 | 22 | Usable at 1080p and ultrawide | ✅ verified 1920×1080; fluid grid |
 | 23 | Upstream merge documented | ✅ [../upstream-sync.md](../upstream-sync.md) |
-| 24 | No core feature silently removed | ✅ this matrix + 1431 passing tests |
+| 24 | No core feature silently removed | ✅ this matrix + 1436 passing tests |
 | 25 | Doctor resolves the primary first | ✅ NIM at priority 0, probed first |
 | 26 | Automatic fallback when unavailable | ✅ circuit breaker + chains, tested |
 | 27 | Never labels a free route permanently unlimited | ✅ three-valued status, asserted in tests |

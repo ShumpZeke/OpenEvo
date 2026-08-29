@@ -344,3 +344,60 @@ async def test_compaction_drops_aged_out_entries(tmp_path):
 async def test_persistence_is_optional_and_off_by_default():
     lim = RateLimiter("zen")
     assert lim.snapshot()["persistent"] is False
+
+
+# -- the shipped bound ------------------------------------------------------
+
+
+def test_the_shipped_default_is_forty():
+    """The operator set 40 on 2026-08-29, below both the 48 the account allows
+    and the 44 the spec required.
+
+    Asserted on the *defaults* rather than on a limiter built with explicit
+    arguments, because every other test here passes its own cap -- so all of
+    them would keep passing if the shipped number silently changed.
+    """
+    import inspect
+
+    from oe_max.limiter import RateLimiter
+    from oe_max.providers.registry import build_default_registry
+
+    assert inspect.signature(RateLimiter.__init__) \
+        .parameters["hard_cap_per_window"].default == 40
+    assert inspect.signature(RateLimiter.__init__) \
+        .parameters["target_rpm"].default == 38.0
+
+    registry_sig = inspect.signature(build_default_registry)
+    assert registry_sig.parameters["nim_hard_cap"].default == 40
+    assert registry_sig.parameters["nim_target_rpm"].default == 38.0
+
+
+@pytest.mark.asyncio
+async def test_the_default_bound_holds_under_load():
+    """40 is the number; this is the guarantee.
+
+    Twelve concurrent workers hammering the default limiter -- the shape the
+    real thing runs in, where retries, health probes and critic calls all
+    contend -- and no contiguous 60-second window may contain more than 40
+    attempt starts. Built with no explicit cap so it measures what ships.
+    """
+    import asyncio
+
+    clock = VirtualClock()
+    limiter = RateLimiter(
+        "nim", window_seconds=60.0, clock=clock.time, sleep=clock.sleep,
+    )
+    starts = []
+
+    async def worker():
+        for _ in range(20):
+            await limiter.acquire()
+            starts.append(clock.time())
+
+    await asyncio.gather(*(worker() for _ in range(12)))
+
+    worst = assert_window_invariant(starts, cap=40)
+    assert len(starts) == 240
+    # And not so conservative it would be useless -- a limiter that let three
+    # requests a minute through would also satisfy the bound above.
+    assert worst >= 30, f"peak window only {worst}/40; the limiter is throttling far below its cap"

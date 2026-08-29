@@ -210,6 +210,23 @@ def _snapshot(paths):
     return out
 
 
+def _opencode_family_running():
+    """PIDs of anything that could be writing OpenCode/OMO state right now."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-Process -ErrorAction SilentlyContinue | "
+             "Where-Object { $_.ProcessName -match 'opencode|omo|bun' } | "
+             "ForEach-Object { $_.Id }"],
+            capture_output=True, text=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
 def test_a_real_opencode_process_cannot_reach_operator_state(workspace):
     """The requirement, tested against the binary rather than against strings.
 
@@ -223,11 +240,29 @@ def test_a_real_opencode_process_cannot_reach_operator_state(workspace):
     configuration and write its cache and database. Then asserts the operator's
     own OpenCode and OMO state is byte-for-byte untouched.
 
+    **The premise is checked, not assumed.** This watches paths the operator
+    shares with their own tools, so a change there is only attributable to our
+    subprocess if nothing else was running. The first version of this test did
+    not check that and failed once on a `tui-state` file written by something
+    outside the suite -- reporting a boundary violation that had not happened.
+    A test that cries wolf about the hardest requirement in this repository is
+    worse than no test, because people learn to skip it. If another OpenCode,
+    OMO or bun process appears, this skips and says so rather than blaming it
+    on Evolution.
+
     It deliberately never runs OpenCode *without* isolation: establishing a
     baseline that way would mean writing to the operator's state to prove we do
     not write to the operator's state.
     """
     import subprocess
+
+    concurrent_before = _opencode_family_running()
+    if concurrent_before:
+        pytest.skip(
+            "another OpenCode/OMO process is running ({}), so a change under "
+            "the shared roots would not be attributable to us".format(
+                ", ".join(sorted(concurrent_before)))
+        )
 
     iso = OpenCodeIsolation(workspace)
     report = iso.preflight()
@@ -262,6 +297,12 @@ def test_a_real_opencode_process_cannot_reach_operator_state(workspace):
             changed.append(root)
             continue
         changed += [p for p in set(b) | set(a) if b.get(p) != a.get(p)]
+
+    if changed and _opencode_family_running() - concurrent_before:
+        pytest.skip(
+            "an OpenCode/OMO process started while this ran, so {} cannot be "
+            "attributed to our subprocess".format(changed[:3])
+        )
 
     assert not changed, (
         "a real OpenCode process reached operator-owned state: "
