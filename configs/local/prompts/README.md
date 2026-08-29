@@ -45,18 +45,34 @@ they would in a run:
 That is +254 tokens of cache hit, worth roughly **1.4 s per call** at the
 measured rates.
 
-## Status: measured for speed, UNVERIFIED for quality
+## Status: measured, and rejected
 
-1.4 s is about **1%** of a 145 s call on this box — prompt processing is only
-~5% of the cost, and generation dominates. So the upside is small and certain,
-while the risk is not:
+Not for the reason expected. Six calls per arm on the 27B, prompts built by the
+engine's own sampler:
 
-Moving the instructions and the output-format specification from the end of the
-prompt to the beginning puts them further from the model's most recent context.
-Whether that changes how often the model emits an applicable SEARCH/REPLACE diff
-has **not been measured**, and the applicable-diff rate matters far more than
-1% — a single wasted call costs ~145 s, which is a hundred times the saving.
+| template | applicable diffs | mean output |
+|---|---|---|
+| upstream order | 6/6 | 315 tok |
+| this one | 4/4 (an HTTP 500 ended the arm at four) | **418 tok** |
 
-So this is kept as a measured hypothesis, not shipped. To settle it, compare the
-applicable-diff rate under both templates on the same prompts, and wire it in
-only if quality is neutral or better.
+**Diff quality: no difference detected, and no power to detect one.** Every call
+in both arms produced an applicable diff. That rules out the failure that was
+feared — moving the format specification away from the end of the prompt does
+not stop the model following it — but a test where both arms sit at 100% cannot
+distinguish a small regression from none.
+
+**Output length: 33% longer.** That is the finding. Token counts are not
+distorted by machine load the way the wall-clock figures in that run were, so
+unlike the timings it is signal rather than noise.
+
+At 3.4 tok/s, a hundred extra output tokens is about **30 seconds**. The reorder
+saves **1.4**. Even allowing that n is 6 and 4 and that output length varies a
+lot between calls, the difference would have to be wrong by a factor of twenty
+before the trade paid.
+
+So: the 4× prefix-cache effect is real, the prompt does defeat it, reordering
+does recover most of it — and taking that back appears to cost twenty times what
+it saves. Kept here as a recorded negative result, loaded by nothing.
+
+If someone revisits this, the thing to measure is output length at higher n, not
+the applicable rate.

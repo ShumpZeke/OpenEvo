@@ -75,11 +75,27 @@ a reusable prefix.
 Reordering the invariant block to the front takes that to 1609 characters,
 15% → 41%, worth about **1.4 s per call**.
 
-Not shipped. It is ~1% of a 145 s call, and moving the output-format spec from
-the end of the prompt to the beginning may change how often the model emits an
-applicable diff — one wasted call is 145 s, a hundred times the saving. The
-reordered template and the full numbers are in `configs/local/prompts/`; it is
-not wired into any config until the quality question is answered.
+**Not shipped, and now for a measured reason rather than a cautious one.**
+Six calls per arm on the 27B, prompts built by the engine's own sampler:
+
+| template | applicable diffs | mean output |
+|---|---|---|
+| upstream order | 6/6 | 315 tok |
+| invariant-first | 4/4 (a 500 ended the arm early) | **418 tok** |
+
+Diff quality is unchanged — but every call in both arms produced an applicable
+diff, so the test is at its ceiling and could not have detected a small
+regression either way. What it did show is the reordered prompt drawing **33%
+more output**. Token counts are not affected by machine load the way the
+timings in that run were, so that part is signal.
+
+At 3.4 tok/s, a hundred extra tokens is about 30 seconds. The reorder saves 1.4.
+It would have to be wrong by a factor of twenty for the trade to work, so the
+question is settled: the cacheable prefix is real, and taking it is not worth
+what it appears to cost.
+
+The template and the full numbers stay in `configs/local/prompts/` as a recorded
+negative result. Nothing loads it.
 
 ## `import openevolve` costs 2.9 seconds
 

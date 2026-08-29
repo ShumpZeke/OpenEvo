@@ -304,13 +304,15 @@ reusable prefix.
 Reordering the invariant block to the front takes that to 1609 characters
 (15% → 41%), worth about **1.4 s per call**.
 
-That is ~1% of a 145 s call, because prompt processing is only ~5% of the cost
-here and generation dominates — so it is filed as a measured hypothesis rather
-than shipped. Moving the output-format spec from the end of the prompt to the
-beginning may change how often the model emits an applicable diff, and one
-wasted call is 145 s, a hundred times the saving. The reordered template and the
-full numbers are in `configs/local/prompts/`; it is not wired into any config
-until that quality question is answered.
+It was then measured and **rejected**, for a reason that was not the one
+feared. Six calls per arm on the 27B: diff quality identical (6/6 and 4/4, both
+at the ceiling), but the reordered prompt drew **33% more output** — 418 tokens
+against 315. At 3.4 tok/s that is about 30 seconds, against 1.4 saved.
+
+So the cache effect is real, the prompt does defeat it, reordering does recover
+most of it, and taking it back appears to cost twenty times what it saves. The
+template stays in `configs/local/prompts/` as a recorded negative result and is
+loaded by nothing.
 
 ---
 
