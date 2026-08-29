@@ -403,6 +403,45 @@ worse, so measure applicable diffs rather than tokens per second. And when a
 local run shows a healthy request rate and no improvements, check whether the
 diffs are applying before assuming the model is weak.
 
+## A large local run is the whole machine, and the second thing you start ends it
+
+Cost two runs in one session, both times because something else was started
+beside a 27B that was already using every byte.
+
+The symptom does not look like memory. The run simply **stops writing log
+lines**. Its process is alive, `llama-server` is alive, and nothing reports an
+error. What has happened is that Ollama's `keep_alive` expired, the model was
+evicted, and the reload cannot fit — so `llama-server` sits paging, holding a
+working set of about 1 GB where it needs 9.7.
+
+Measured on a 16 GB box: a 27B run leaves ~0.2 GB free on its own. Starting the
+broker beside it, or a full test suite, is enough. Both were things I started
+without thinking of them as competing for RAM, because neither is large — the
+model has already taken everything, so *anything* is too much.
+
+**The diagnostic that separates "slow" from "stuck"**, since both look like a
+quiet log — sample the CPU twice:
+
+```powershell
+(Get-Process llama-server | Measure-Object CPU -Sum).Sum
+```
+
+Ten seconds later, take it again. Roughly one CPU-second per wall-second per
+core means it is generating and merely slow; near zero with free RAM near zero
+means it is thrashing and will not recover. Confirm with
+`curl 127.0.0.1:11434/api/ps` — an `expires_at` in the past, or a `size_vram`
+far below `size`, says the model is being reloaded rather than served.
+
+**What to do:** treat one large local run as exclusive use of the machine. If
+something else must run, unload first:
+
+```bash
+curl -s -X POST http://127.0.0.1:11434/api/generate -d '{"model":"<name>","keep_alive":0}'
+```
+
+Related but not the same as the `--verify` trap below, which is about loading
+several models in sequence rather than one alongside other work.
+
 ## `--verify` loads every model, which a local box cannot afford
 
 Verification smoke-tests every configured model with a real completion, twice —
