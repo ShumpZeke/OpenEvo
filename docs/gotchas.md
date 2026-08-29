@@ -180,15 +180,19 @@ happened.
 
 Measured on a local Qwen3.5-27B, two prompts for the same task:
 
-| prompt | mean tokens | applicable |
+| `system_message` | mean tokens | applicable |
 |---|---|---|
-| "Return a SEARCH/REPLACE diff." | 683 | **0 of 6** |
-| explicit output rules | 491 | **6 of 6** |
+| plain instruction | 1396 | **1 of 4** |
+| explicit output rules | 400 | **4 of 4** |
 
-The line that fixes it demands the **smallest unique** SEARCH span, copied
-exactly, character for character, with no paraphrasing or re-indentation. It
-costs nothing — the constrained prompt was also 28% shorter and 28% faster,
-because the unconstrained one rambles.
+The unconstrained arm hit its `max_tokens` ceiling in three of four samples: it
+rambles, gets truncated mid-diff, and a truncated SEARCH block matches nothing.
+Raising the ceiling does not help — it buys a longer ramble at ~0.3 s per token.
+
+The lines that fix it forbid prose around the diff and demand the **smallest
+unique** SEARCH span, copied exactly with no paraphrasing or re-indentation.
+They cost nothing: the constrained prompt was also 3.5× shorter and 3.3× faster.
+Per *usable* diff the difference is about 13×.
 
 Two things follow. Optimising a local prompt for brevity can make it strictly
 worse, so measure applicable diffs rather than tokens per second. And when a

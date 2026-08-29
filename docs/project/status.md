@@ -19,11 +19,11 @@ being true.
 |---|---|
 | Upstream (preserved) | **431 passed** on Windows, 6 failed; **437 passed, 0 failed on Linux** |
 | Control plane | **456 passed**, 10 skipped |
-| OE-MAX | **381 passed**, 25 skipped |
+| OE-MAX | **386 passed**, 25 skipped |
 | BrainPort | **34 passed** |
 | Web typecheck | clean |
 
-**1,302 passing.** The six Windows failures are platform, not regression: four
+**1,307 passing.** The six Windows failures are platform, not regression: four
 are `openevolve/config.py` opening YAML with no `encoding=`, so Windows decodes
 cp1252 and dies on a non-ASCII byte; one asserts a POSIX absolute path survives
 unchanged; one expects `ProcessLookupError`, which is POSIX `os.kill` semantics.

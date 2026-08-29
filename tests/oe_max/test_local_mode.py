@@ -448,3 +448,61 @@ class TestRolesShareOneResidentModel:
         routes, _ = router.candidates(role=Role.REASONER)
 
         assert len(routes) > 1, "no fallback if the preferred model degrades"
+
+
+class TestTheLocalPromptKeepsItsOutputRules:
+    """
+    `configs/oe_max/local.yaml` carries explicit output rules in its
+    system_message. They look like verbosity and they are the opposite.
+
+    Measured through OpenEvolve's own prompt builder, against the same task and
+    model, varying only system_message:
+
+        plain instruction   1396 tok avg   477 s avg   applicable 1 of 4
+        output rules         400 tok avg   145 s avg   applicable 4 of 4
+
+    The plain arm hit the max_tokens ceiling in three of four samples: it
+    rambles until truncated, and a truncated SEARCH block matches nothing. Per
+    *usable* diff that is ~32 minutes against ~2.4 minutes, about 13x.
+
+    This is a content assertion on a config file, which is unusual. It is here
+    because the failure mode is someone reading that block, deciding it is
+    over-explained, and shortening it -- at which point nothing errors, runs
+    just get slower and stop producing improvements.
+    """
+
+    def _system_message(self):
+        import yaml
+
+        with open("configs/oe_max/local.yaml", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)["prompt"]["system_message"]
+
+    def test_it_forbids_prose_around_the_diff(self):
+        message = self._system_message().lower()
+
+        assert "only" in message, "nothing stops the model wrapping the diff in prose"
+        assert "no explanation" in message or "no preamble" in message
+
+    def test_it_demands_the_smallest_exact_search_span(self):
+        """
+        The single line that makes diffs apply. Without it the model
+        paraphrases the code it is quoting and the SEARCH block matches
+        nothing -- see docs/gotchas.md.
+        """
+        message = self._system_message().lower()
+
+        assert "smallest" in message, "no instruction to minimise the SEARCH span"
+        assert "exactly" in message or "character for character" in message, (
+            "nothing forbids paraphrasing the quoted code")
+
+    def test_it_does_not_restate_the_diff_format(self):
+        """
+        Upstream's diff_user template already supplies the SEARCH/REPLACE spec
+        and a worked example. Repeating it here would spend prompt tokens
+        saying something the model has already been told, on a machine where
+        prompt tokens cost measurable wall clock.
+        """
+        message = self._system_message()
+
+        assert "<<<<<<< SEARCH" not in message, (
+            "the format is duplicated; upstream's template already carries it")

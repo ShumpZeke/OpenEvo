@@ -132,27 +132,39 @@ wants measuring rather than reasoning.
 The single most valuable measurement here, and it went the opposite way to the
 optimisation that produced it.
 
-Generation costs ~0.3 s per token, so shortening the answer looked like the
-obvious lever. Two system prompts, same model, same task, six runs each:
+Generation costs ~0.3 s per token, so shortening the *answer* looked like the
+obvious lever. The real lever turned out to be constraining it.
 
-| prompt | mean tokens | mean seconds | **applicable diffs** |
+Measured through `PromptSampler.build_prompt` — the same call the engine makes —
+varying only `system_message`, four runs per arm:
+
+| `system_message` | mean tokens | mean seconds | **applicable diffs** |
 |---|---|---|---|
-| shorter, "return a SEARCH/REPLACE diff" | 683 | 213 | **0 of 6** |
-| explicit output rules | 491 | 153 | **6 of 6** |
+| plain instruction | 1396 | 477 | **1 of 4** |
+| explicit output rules | 400 | 145 | **4 of 4** |
 
-The explicit rules win on every axis: 28% fewer tokens, 28% faster, and the only
-arm whose diffs apply at all. The short prompt's diffs looked right and matched
-nothing, because the model paraphrased the code it was supposed to be quoting —
-reformatted, re-indented, or lightly reworded — so the SEARCH block never
-matched the file.
+Per *usable* diff that is roughly **32 minutes against 2.4 minutes — about 13×**.
 
-Worth noting how the sample size changed the answer. At two runs per arm the
-explicit prompt looked *18% slower*, and the honest conclusion then was "slower
-but usable". Four more runs each reversed the speed result outright: the short
-prompt is not shorter, it is **more variable** (448–800 tokens against 472–530),
-which is what a model rambling toward an answer looks like beside one following
-a format. Two samples were enough to see the applicability gap and not enough to
-see the direction of the speed one.
+The mechanism is in the raw numbers: the plain arm hit the 1536-token ceiling in
+three of four samples. It rambles, gets truncated mid-diff, and a truncated
+SEARCH block cannot match anything. The model is not bad at diffs; nothing told
+it to stop talking. Raising `max_tokens` would not fix that — it would buy a
+longer ramble at 0.3 s per token.
+
+### How this was measured wrong the first time
+
+Worth recording, because the first version of this table was published and was
+not comparable to a real run.
+
+Both prompts were hand-written, and only one carried a SEARCH/REPLACE format
+spec. But OpenEvolve's `diff_user` template already supplies that spec **and a
+worked example** to every prompt it sends, so the "baseline" arm was a string
+the engine would never produce. It measured a straw man.
+
+Two lessons, both cheap to apply. Build the prompt with the code that builds
+prompts, rather than approximating it. And when an A/B needs one arm to be
+"realistic", check what the system actually sends before assuming the harness
+reproduces it — the numbers were plausible, internally consistent, and wrong.
 
 The line that fixes it is the one demanding the *smallest unique* SEARCH span,
 copied exactly. It costs tokens and buys diffs that apply.

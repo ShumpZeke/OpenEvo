@@ -59,16 +59,19 @@ llm:
       weight: 1.0
 
 prompt:
-  # The output rules below are not style. Measured against the shorter prompt
-  # they replace, six runs each on this model:
+  # The output rules below are not style. Measured through OpenEvolve's own
+  # prompt builder -- the same call the engine makes -- varying only this
+  # message, four runs each on this model:
   #
-  #     shorter prompt   683 tok avg   213 s avg   APPLICABLE 0 of 6
-  #     this prompt      491 tok avg   153 s avg   APPLICABLE 6 of 6
+  #     plain instruction   1396 tok avg   477 s avg   APPLICABLE 1 of 4
+  #     these rules          400 tok avg   145 s avg   APPLICABLE 4 of 4
   #
-  # Better on every axis: 28% fewer tokens, 28% faster, and the only one whose
-  # diffs apply at all. The shorter prompt was also far more variable
-  # (448-800 tokens against 472-530), which is what a model rambling toward an
-  # answer looks like next to one following a format.
+  # Per *usable* diff that is ~32 minutes against ~2.4 minutes: roughly 13x.
+  #
+  # The mechanism is visible in the raw numbers. The plain arm hit the 1536
+  # max_tokens ceiling in three of four samples -- it rambles, gets truncated
+  # mid-diff, and the truncated block cannot apply. It is not that the model is
+  # bad at diffs; it is that nothing told it to stop talking.
   #
   # A diff whose SEARCH block does not match the file is a wasted mutation
   # however fast it arrived, so the metric is applicable diffs per hour, not
@@ -88,6 +91,26 @@ prompt:
     - The SEARCH block must be the SMALLEST span of existing lines that is
       still unique, copied EXACTLY, character for character. Do not paraphrase,
       reformat, or re-indent it.
+
+  # Prompt context, trimmed because prompt tokens are not free here.
+  #
+  # Upstream defaults put up to 20 KB of execution artifacts plus five example
+  # programs (3 top, 2 diverse) into every prompt. At the measured 68.9 tok/s
+  # prompt rate, 20 KB alone is roughly 5,000 tokens and about 70 seconds of
+  # evaluation before the model writes anything -- on a mutation whose whole
+  # generation phase is ~150 s.
+  #
+  # Artifacts are cut hardest because they are mostly stderr: a truncated
+  # traceback carries nearly all the signal of a complete one. The example
+  # programs are trimmed only one step, since they are what the model actually
+  # reasons from.
+  #
+  # NOT measured: whether fewer examples produces worse mutations. It is a
+  # genuine trade and this is the cheap end of it, not a free win.
+  num_top_programs: 2
+  num_diverse_programs: 1
+  include_artifacts: true
+  max_artifact_bytes: 4096
 
 database:
   # Smaller than the cloud config: a local model produces candidates far more
