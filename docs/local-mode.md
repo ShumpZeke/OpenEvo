@@ -66,6 +66,43 @@ Because ids are only knowable by asking, the broker **discovers at startup** in
 local-only mode rather than waiting for `--verify`. Serving before discovering
 would mean an empty chain and a failure on every request.
 
+### Saying which model you want first
+
+Discovery gives you the server's listing order, which is not a ranking. On a
+machine with a tuned 27B and eleven experiments beside it, the chain led with
+whichever Ollama happened to list first — a 1 GB experiment, in the case that
+prompted this.
+
+Nothing in this repository ranks local models. A machine's best model depends on
+its hardware and what its operator pulled, and inventing an order would read as
+a measurement nobody took. But *you* know, so say so:
+
+```bash
+export OE_MAX_LOCAL_MODELS="qwen-evo-text,qwen3:0.6b"
+```
+
+```powershell
+$env:OE_MAX_LOCAL_MODELS = "qwen-evo-text,qwen3:0.6b"
+```
+
+Comma-separated, most preferred first. Each entry is a **substring** of the model
+id, matched case-insensitively — not a regular expression, so `qwen3:0.6b` means
+what it looks like rather than treating the dot as a wildcard.
+
+Measured on a box with fifteen models listed:
+
+| | first four routes |
+|---|---|
+| unset | `qwen-evo-local-3b-v1`, `qwen2.5:3b`, `qwen-evo-local-qwen3-tiny-v1`, … |
+| `qwen-evo-text,qwen3:0.6b` | `qwen-evo-text`, `qwen3:0.6b`, `qwen-evo-local-3b-v1`, `qwen2.5:3b` |
+
+Two properties worth relying on:
+
+* **Unset changes nothing.** The default is the listing order it always was.
+* **Naming a model you have since deleted does not empty the chain.** Everything
+  you did not name stays routable, in the server's own order, behind everything
+  you did. A chain that can empty itself is worse than one ordered imperfectly.
+
 ## Fitting a model to your card
 
 The settings below are defaults. Getting a *specific* model onto a *specific* GPU is its own exercise, and **[local-tuning.md](local-tuning.md)**

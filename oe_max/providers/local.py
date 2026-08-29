@@ -47,6 +47,11 @@ from .base import ProviderAdapter, ProviderRole
 # Set to 1/true/yes/on to refuse every non-local route.
 ENV_LOCAL_ONLY = "OE_MAX_LOCAL_ONLY"
 
+# An ordered, comma-separated list of model-id substrings, most preferred
+# first. Nothing here ranks local models -- see _preferred_patterns for why
+# this is the operator's statement rather than ours.
+ENV_PREFER_MODELS = "OE_MAX_LOCAL_MODELS"
+
 # Local generation is slow in a way remote generation is not: a 30B model on
 # CPU can spend several minutes on one mutation, and that is working correctly
 # rather than hanging. A short ceiling here would manufacture timeouts and then
@@ -91,6 +96,33 @@ def is_local_provider(name: str) -> bool:
     return name in LOCAL_PROVIDER_NAMES
 
 
+def _preferred_patterns(env: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    The operator's stated model order, as patterns for ``materialise_models``.
+
+    ``OE_MAX_LOCAL_MODELS`` is a comma-separated list, most-preferred first::
+
+        OE_MAX_LOCAL_MODELS="qwen-evo-text,qwen3:0.6b"
+
+    Each entry is a *substring* of the model id, matched case-insensitively and
+    escaped, so ``qwen3:0.6b`` means what it looks like rather than being read
+    as a regex -- a model id full of dots and colons is exactly the input that
+    would otherwise misbehave.
+
+    Unset means the list is empty and the catch-all alone survives, which is the
+    behaviour this had before. Anything not named keeps the server's own listing
+    order *behind* everything named, rather than being dropped: a chain that can
+    empty itself is worse than one ordered imperfectly, and an operator who
+    names a model they have since deleted should get a working run rather than a
+    silent outage.
+    """
+    import re
+
+    source = os.environ if env is None else env
+    raw = str(source.get(ENV_PREFER_MODELS, "") or "")
+    return [re.escape(item.strip()) for item in raw.split(",") if item.strip()]
+
+
 def build_local_providers(
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -124,7 +156,15 @@ def build_local_providers(
         # "." matches any id: what this machine serves is whatever was pulled,
         # and a pattern list cannot anticipate it. materialise_models still
         # excludes embedding/vision/rerank models.
-        adapter.prefer_patterns = ["."]
+        #
+        # OE_MAX_LOCAL_MODELS lets the operator put an order on that. Nothing
+        # here ranks local models -- a machine's "best" depends on its hardware
+        # and what was pulled, and inventing a ranking would read as a
+        # measurement nobody took. But an operator who has tuned one model and
+        # kept eleven experiments beside it *does* know, and had no way to say
+        # so: the chain took the server's listing order, so a 1 GB experiment
+        # could lead a 27B that was tuned for the box.
+        adapter.prefer_patterns = _preferred_patterns(env) + ["."]
         # Higher than a remote provider's, because a local box may host many
         # models and none of them cost anything per call.
         adapter.max_models = 12

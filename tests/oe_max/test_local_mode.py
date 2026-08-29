@@ -563,3 +563,80 @@ class TestRetryLimitsMatchLocalCosts:
 
         assert policy.max_attempts == 4
         assert policy.max_route_seconds == 240.0
+
+
+# -- operator-stated model order --------------------------------------------
+
+
+def test_no_preference_leaves_the_listing_order_alone():
+    """The default has to be exactly the previous behaviour.
+
+    Nothing here ranks local models: a machine's "best" depends on its hardware
+    and what was pulled, and inventing a ranking would read as a measurement
+    nobody took. Unset means the catch-all alone, as before.
+    """
+    from oe_max.providers.local import build_local_providers
+
+    for adapter in build_local_providers(env={}).values():
+        assert adapter.prefer_patterns == ["."]
+
+
+def test_the_operator_can_state_an_order():
+    """What the operator knows and the code does not.
+
+    Twelve models on this box, and the chain took Ollama's listing order -- so a
+    1 GB experiment led a 27B that had been tuned for the machine. There was no
+    way to say otherwise.
+    """
+    from oe_max.providers.local import build_local_providers
+    from oe_max.providers.catalogue import materialise_models
+
+    listed = [
+        "qwen-evo-local-3b-v1:latest",
+        "qwen2.5:3b",
+        "qwen-evo-text:latest",
+        "qwen3:0.6b",
+    ]
+    env = {"OE_MAX_LOCAL_MODELS": "qwen-evo-text,qwen3:0.6b"}
+    adapter = build_local_providers(env=env)["ollama"]
+
+    order = [spec.id for spec in materialise_models(adapter, listed).values()]
+    assert order[:2] == ["qwen-evo-text:latest", "qwen3:0.6b"]
+    # Everything unnamed keeps the server's own order, behind what was named.
+    assert order[2:] == ["qwen-evo-local-3b-v1:latest", "qwen2.5:3b"]
+
+
+def test_entries_are_substrings_not_regexes():
+    """A model id is full of dots and colons, which is exactly the input that
+    misbehaves if the entry is compiled as a pattern. `qwen3:0.6b` must not also
+    match `qwen3:0x6b`."""
+    from oe_max.providers.local import build_local_providers
+    from oe_max.providers.catalogue import materialise_models
+
+    listed = ["qwen3:0x6b", "qwen3:0.6b"]
+    adapter = build_local_providers(env={"OE_MAX_LOCAL_MODELS": "qwen3:0.6b"})["ollama"]
+
+    order = [spec.id for spec in materialise_models(adapter, listed).values()]
+    assert order[0] == "qwen3:0.6b"
+
+
+def test_naming_a_model_that_is_gone_does_not_empty_the_chain():
+    """An operator who names a model they have since deleted should get a
+    working run, not a silent outage. The catch-all stays behind the list."""
+    from oe_max.providers.local import build_local_providers
+    from oe_max.providers.catalogue import materialise_models
+
+    listed = ["qwen2.5:3b", "qwen3:0.6b"]
+    adapter = build_local_providers(
+        env={"OE_MAX_LOCAL_MODELS": "a-model-that-was-deleted"})["ollama"]
+
+    order = [spec.id for spec in materialise_models(adapter, listed).values()]
+    assert order == listed, "the whole listing must still be routable"
+
+
+def test_whitespace_and_empty_entries_are_ignored():
+    from oe_max.providers.local import _preferred_patterns
+
+    assert _preferred_patterns({"OE_MAX_LOCAL_MODELS": " a , ,b ,"}) == ["a", "b"]
+    assert _preferred_patterns({"OE_MAX_LOCAL_MODELS": ""}) == []
+    assert _preferred_patterns({}) == []
