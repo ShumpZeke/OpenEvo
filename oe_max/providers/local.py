@@ -144,6 +144,12 @@ def build_local_providers(
         effort = os.environ.get("OE_MAX_LOCAL_REASONING", "none").strip().lower()
         if effort and effort != "default":
             adapter.extra_body = {"reasoning_effort": effort}
+        # A probe only has to establish that the server answers, and the
+        # broker decides that on HTTP 200 rather than on the text. 16 tokens
+        # is enough to see "ok"; the default 200 costs a minute per probe at
+        # local generation rates, twice per model, and made `--verify` slower
+        # than the evolution run it precedes.
+        adapter.probe_max_tokens = 16
         adapter.liveness = f"{label} — probed at runtime; never assumed"
         out[name] = adapter
     return out

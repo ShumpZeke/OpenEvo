@@ -177,6 +177,13 @@ a fact about a build, not about llama.cpp; a CUDA build would rank differently.
 
 ---
 
+## Do not sweep-verify a local setup
+
+`--verify` smoke-tests every configured model, which locally means loading each
+one. Five discovered routes took over ten minutes here and drove free RAM to
+0.3 GB. Startup discovery — the default — only reads `/v1/models`, is instant,
+and is enough to route. See [gotchas.md](gotchas.md).
+
 ## Honest expectations
 
 At ~3.3 tok/s generation and ~107 tok/s prompt, one mutation is roughly **3–8

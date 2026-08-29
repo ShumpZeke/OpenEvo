@@ -332,3 +332,53 @@ class TestTheReportedChainIsTheRealChain:
         assert "DEFAULT_CHAIN" not in source, (
             "the broker is seeding from the constant again, which ignores "
             "local-only mode")
+
+
+class TestVerifyIsAffordableLocally:
+    """
+    `--verify` smoke-tests every model with a real completion, twice — once
+    plain and once with a tools payload.
+
+    On a remote provider that is instant. On a local 27B at ~3 tok/s a
+    200-token probe is about a minute, so five discovered local routes is ten
+    probes and roughly ten minutes, plus a model reload whenever the probe
+    moves between models a 16 GB box can only hold one of. Verification then
+    takes longer than the evolution run it was meant to precede, and the
+    natural response is to stop verifying — which is the opposite of what the
+    two-stage discovery is for.
+
+    Nothing is lost by shrinking it: `reachable` is decided by HTTP 200, not by
+    what the model said.
+    """
+
+    def test_local_probes_use_a_small_budget(self, fresh_registry):
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY="1")
+
+        for name, adapter in providers.items():
+            budget = getattr(adapter, "probe_max_tokens", None)
+            assert budget is not None, f"{name} has no probe budget"
+            assert budget <= 32, (
+                f"{name} probes with {budget} tokens; at local generation "
+                "rates that makes --verify slower than the run")
+
+    def test_a_provider_without_one_keeps_the_default(self, fresh_registry):
+        """
+        Remote providers are unaffected: their tokens are fast, and a reasoning
+        model there may genuinely need headroom to answer at all.
+        """
+        providers = fresh_registry(OE_MAX_LOCAL_ONLY=None)
+        nim = providers["nvidia_nim"]
+
+        assert getattr(nim, "probe_max_tokens", None) is None
+
+    def test_the_probe_reads_the_budget_from_the_provider(self):
+        """A setting the probe does not consult is not a setting."""
+        import inspect
+
+        from oe_max.providers.registry import Registry
+
+        source = inspect.getsource(Registry.probe_model)
+
+        assert "probe_max_tokens" in source
+        assert source.count("probe_tokens") >= 3, (
+            "both the plain probe and the tools probe must use it")

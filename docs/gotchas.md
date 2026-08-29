@@ -166,6 +166,31 @@ right default independently of the crash.
 Measured on a 16-core CI runner. It cannot reproduce on Windows, where the
 POSIX-limits tests skip entirely — which is the same reason the trap above went unseen.
 
+## `--verify` loads every model, which a local box cannot afford
+
+Verification smoke-tests every configured model with a real completion, twice —
+once plain and once with a tools payload. Against remote providers that is
+seconds. Against local ones it means **loading each model in turn**, and a
+16 GB model on a 16 GB machine cannot be loaded alongside another.
+
+Measured: five discovered local routes (three Ollama tags, two LM Studio) took
+`--verify` past ten minutes and drove free RAM to **0.3 GB**, with the machine
+paging throughout. Nothing was broken; it was doing exactly what it was asked,
+sequentially, with a working set larger than the machine.
+
+The probe budget is now provider-aware — 16 tokens locally instead of 200,
+since `reachable` is decided by HTTP 200 and not by what the model said — but
+that treats the smaller half of the cost. The load time is inherent.
+
+**What to do:** do not pass `--verify` when several large local models are
+configured. Startup discovery, which is the default, only reads `/v1/models`
+and is instant; it is enough to route. Verify one model deliberately if you
+need to know whether it serves, rather than sweeping all of them.
+
+Worth remembering that "listed but broken" — the failure two-stage discovery
+exists to catch — is a cloud-provider problem. A local model you pulled
+yourself and can see in `ollama list` is a much weaker candidate for it.
+
 ## The limiter needs its epsilon
 
 Refilling the token bucket by exactly the required amount lands on

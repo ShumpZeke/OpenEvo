@@ -478,10 +478,16 @@ class Registry:
         model_id: str, *, check_tools: bool = True,
     ) -> ProbeResult:
         """Stage 2: does it actually serve? Listing is not proof."""
+        # The probe asks "does it serve?", and `reachable` is decided by HTTP
+        # 200 rather than by what came back -- so a large budget buys nothing
+        # and, on a local model, costs real time. 200 tokens at ~3 tok/s is a
+        # minute per probe, two probes per model, and a --verify across five
+        # local routes then takes longer than the run it was meant to precede.
+        probe_tokens = getattr(provider, "probe_max_tokens", None) or 200
         r = await provider.chat(
             client, model_id,
             [{"role": "user", "content": "Reply with exactly: ok"}],
-            max_tokens=200, temperature=0,
+            max_tokens=probe_tokens, temperature=0,
         )
         if not r.ok:
             return ProbeResult(
@@ -495,7 +501,7 @@ class Registry:
             t = await provider.chat(
                 client, model_id,
                 [{"role": "user", "content": "Reply with exactly: ok"}],
-                max_tokens=200, temperature=0,
+                max_tokens=probe_tokens, temperature=0,
                 tools=[{"type": "function", "function": {
                     "name": "noop", "description": "probe",
                     "parameters": {"type": "object", "properties": {}}}}],
