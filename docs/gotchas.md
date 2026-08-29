@@ -228,6 +228,33 @@ majority winner is the lower scorer. The weights are deliberately left as
 upstream's — changing them would make every number already recorded
 incomparable.
 
+## The broker exits 1 before uvicorn starts, on Windows, with no useful message
+
+Symptom: `start-broker.ps1` returns immediately, nothing is listening on 8787,
+and the only output is a traceback ending in
+
+    UnicodeEncodeError: 'charmap' codec can't encode character '\u2192'
+
+The banner. `oe_max/broker/cli.py` printed `OE-MAX broker → http://...` before
+handing off to uvicorn, and Windows gives the child the console code page — so
+the `print` raised, nothing caught it, and the process died. It happens whenever
+stdout is not already UTF-8: a redirect, a service wrapper, a `> broker.log`.
+In an interactive terminal that happens to be UTF-8 it works, which is what
+makes it look intermittent.
+
+Fixed by `oe_max.console.use_utf8_stdio()`, called first thing in every entry
+point that prints. **If you add a CLI or a script, call it too** —
+`tests/oe_max/test_console_encoding.py` fails any fork-owned file that prints a
+non-ASCII character without it, which is the only thing standing between this
+and a rediscovery.
+
+The fix is deliberately "make the stream carry the character", not "use ASCII".
+Replacing the arrows would also go green and would quietly encode the belief
+that this repository cannot print non-ASCII.
+
+Same root cause as the run-log trap below, and worth reading together: one
+deletes records, this one kills the process.
+
 ## A Windows run log deletes its most important lines
 
 Not mangles. Deletes.
