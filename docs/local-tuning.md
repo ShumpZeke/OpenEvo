@@ -133,17 +133,26 @@ The single most valuable measurement here, and it went the opposite way to the
 optimisation that produced it.
 
 Generation costs ~0.3 s per token, so shortening the answer looked like the
-obvious lever. It is not. Two system prompts, same model, same task:
+obvious lever. Two system prompts, same model, same task, six runs each:
 
-| prompt | tokens | seconds | **applicable diffs** |
+| prompt | mean tokens | mean seconds | **applicable diffs** |
 |---|---|---|---|
-| shorter, "return a SEARCH/REPLACE diff" | 448 | 139.7 | **0 of 2** |
-| explicit output rules | 530 | 165.6 | **2 of 2** |
+| shorter, "return a SEARCH/REPLACE diff" | 683 | 213 | **0 of 6** |
+| explicit output rules | 491 | 153 | **6 of 6** |
 
-The faster prompt was **18% quicker and produced nothing usable**. Its diffs
-looked right and matched nothing, because the model paraphrased the code it was
-supposed to be quoting — reformatted, re-indented, or lightly reworded — so the
-SEARCH block never matched the file.
+The explicit rules win on every axis: 28% fewer tokens, 28% faster, and the only
+arm whose diffs apply at all. The short prompt's diffs looked right and matched
+nothing, because the model paraphrased the code it was supposed to be quoting —
+reformatted, re-indented, or lightly reworded — so the SEARCH block never
+matched the file.
+
+Worth noting how the sample size changed the answer. At two runs per arm the
+explicit prompt looked *18% slower*, and the honest conclusion then was "slower
+but usable". Four more runs each reversed the speed result outright: the short
+prompt is not shorter, it is **more variable** (448–800 tokens against 472–530),
+which is what a model rambling toward an answer looks like beside one following
+a format. Two samples were enough to see the applicability gap and not enough to
+see the direction of the speed one.
 
 The line that fixes it is the one demanding the *smallest unique* SEARCH span,
 copied exactly. It costs tokens and buys diffs that apply.

@@ -60,15 +60,19 @@ llm:
 
 prompt:
   # The output rules below are not style. Measured against the shorter prompt
-  # they replace, on this model:
+  # they replace, six runs each on this model:
   #
-  #     shorter prompt   448 tok   139.7 s   APPLICABLE 0 of 2
-  #     this prompt      530 tok   165.6 s   APPLICABLE 2 of 2
+  #     shorter prompt   683 tok avg   213 s avg   APPLICABLE 0 of 6
+  #     this prompt      491 tok avg   153 s avg   APPLICABLE 6 of 6
   #
-  # This one is ~18% slower per call and is the only one that produces diffs
-  # that apply. A diff whose SEARCH block does not match the file is a wasted
-  # mutation however fast it arrived, so tokens-per-second is the wrong thing
-  # to optimise and applicable-diffs-per-hour is the right one.
+  # Better on every axis: 28% fewer tokens, 28% faster, and the only one whose
+  # diffs apply at all. The shorter prompt was also far more variable
+  # (448-800 tokens against 472-530), which is what a model rambling toward an
+  # answer looks like next to one following a format.
+  #
+  # A diff whose SEARCH block does not match the file is a wasted mutation
+  # however fast it arrived, so the metric is applicable diffs per hour, not
+  # tokens per second.
   #
   # The line that does the work is the one demanding the SMALLEST unique
   # SEARCH span. Without it the model paraphrases the code it is quoting --

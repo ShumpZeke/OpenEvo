@@ -180,15 +180,15 @@ happened.
 
 Measured on a local Qwen3.5-27B, two prompts for the same task:
 
-| prompt | tokens | applicable |
+| prompt | mean tokens | applicable |
 |---|---|---|
-| "Return a SEARCH/REPLACE diff." | 448 | **0 of 2** |
-| explicit output rules | 530 | **2 of 2** |
+| "Return a SEARCH/REPLACE diff." | 683 | **0 of 6** |
+| explicit output rules | 491 | **6 of 6** |
 
 The line that fixes it demands the **smallest unique** SEARCH span, copied
 exactly, character for character, with no paraphrasing or re-indentation. It
-costs about 18% more tokens and is the difference between usable output and
-none.
+costs nothing — the constrained prompt was also 28% shorter and 28% faster,
+because the unconstrained one rambles.
 
 Two things follow. Optimising a local prompt for brevity can make it strictly
 worse, so measure applicable diffs rather than tokens per second. And when a
