@@ -149,6 +149,36 @@ with a star; on cp1252 `logging` raises and discards the whole record. Measured:
 best could produce a log that never says so. Set in the runner's child
 environment and both run scripts.
 
+## The dashboard's own polling
+
+Two endpoints the Control Center refetches on a timer were doing real work each
+time to answer questions whose answers had not changed.
+
+**`/api/system`, polled every 5 s by System Health: 959 ms → 146 ms.**
+
+| | |
+|---|---|
+| `_opencode_isolation_status` | **874 ms** |
+| `psutil.cpu_percent(interval=0.1)` | 100 ms |
+| `gpu_probe()` | 48 ms |
+| everything else | 0 ms |
+
+and inside that 874 ms, two subprocesses: `opencode --version` at 553 ms and a
+container-runtime probe at 256 ms. Twelve times a minute, to re-establish that
+OpenCode is still installed and Docker still is not.
+`OpenCodeIsolation.status()` now caches per workspace for 30 s.
+
+**`/api/broker`, refetched on every live tick by Models: 2352 ms → 423 ms** —
+the Windows SYN-retry behaviour described above.
+
+The remaining 146 ms on `/api/system` is deliberate. 100 ms of it is psutil's
+sample window, and `interval=None` returns 0.0 on its first call — a fabricated
+number, which is the one thing this codebase does not do. `gpu_probe` stays
+uncached because utilisation genuinely changes.
+
+Every other GET is under 130 ms at the median, and the only one near that
+(`/api/scientific/capabilities`, 128 ms) is not polled.
+
 ## The test suite
 
 The regression gate, so its wall clock is felt on every change.
