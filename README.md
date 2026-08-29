@@ -175,6 +175,26 @@ and no code path that can dial one by accident. Model ids are read from each
 server's own `/v1/models` at startup — nothing is written down, because what
 your machine serves is whatever you pulled.
 
+That listing is not a ranking, so if you have several models say which you want
+first:
+
+```bash
+export OE_MAX_LOCAL_MODELS="qwen-evo-text,qwen3:0.6b"
+```
+
+Comma-separated, most preferred first, matched as substrings of the model id.
+Unset keeps the server's own order. Anything you do not name stays routable
+behind everything you do, so naming a model you have since deleted cannot empty
+the chain.
+
+Verified end to end on 2026-08-29: a broker in local-only mode discovered twelve
+local models and served a complete evolution run, 10 requests, 0 errors, at
+**+2 ms** over calling Ollama directly. Fitting a model to your card is a
+measured worked example in
+**[docs/local-tuning.md](docs/local-tuning.md)** — the single largest lever there
+is `reasoning_effort`, worth 3× on a 27B and the difference between an
+applicable diff and an empty answer.
+
 Full detail, including what is and is not verified: **[docs/local-mode.md](docs/local-mode.md)**.
 
 ### Using NVIDIA NIM
