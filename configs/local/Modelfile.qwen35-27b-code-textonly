@@ -22,5 +22,23 @@ PARAMETER top_k 20
 PARAMETER min_p 0
 PARAMETER repeat_penalty 1.05
 PARAMETER num_ctx 8192
+
+# DO NOT add `PARAMETER num_gpu`. Measured on this box, forcing it is
+# monotonically worse -- every step up costs throughput:
+#
+#     auto (39% resident)   3.26 tok/s      <-- leave it alone
+#     num_gpu 36 (54%)      2.56 tok/s      -21%
+#     num_gpu 40 (60%)      2.08 tok/s      -36%
+#     num_gpu 44            1.65 tok/s      -49%
+#     num_gpu 48            1.39 tok/s      -57%
+#
+# Prompt evaluation collapses with it, 68.9 -> ~20 tok/s. The cause is that
+# "more layers on the GPU" stops being true past what actually fits: Windows
+# lets the driver spill into shared GPU memory, which is system RAM addressed
+# over PCIe and slower than simply running those layers on the CPU. Ollama's
+# automatic split already accounts for the KV cache and compute buffers.
+#
+# num_ctx 4096 measured identical to 8192 (3.25 vs 3.26 tok/s), so context is
+# not the constraint here and there is nothing to buy by shrinking it.
 PARAMETER stop "</think>"
 PARAMETER stop "<|im_end|>"

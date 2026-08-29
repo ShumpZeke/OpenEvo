@@ -166,6 +166,35 @@ right default independently of the crash.
 Measured on a 16-core CI runner. It cannot reproduce on Windows, where the
 POSIX-limits tests skip entirely — which is the same reason the trap above went unseen.
 
+## A model paraphrases the code it is quoting, and the diff matches nothing
+
+A SEARCH/REPLACE diff only applies if the SEARCH block is byte-identical to the
+file. Ask a model for a diff without saying so and it will often *tidy* the code
+it quotes — re-indent it, normalise quotes, drop a blank line, reword a comment.
+The result reads like a correct diff and matches nothing.
+
+Nothing reports an error. The request succeeded, the model answered, the block
+is well-formed. It simply fails to apply, and the iteration is scored as a
+mutation that produced no improvement rather than as a mutation that never
+happened.
+
+Measured on a local Qwen3.5-27B, two prompts for the same task:
+
+| prompt | tokens | applicable |
+|---|---|---|
+| "Return a SEARCH/REPLACE diff." | 448 | **0 of 2** |
+| explicit output rules | 530 | **2 of 2** |
+
+The line that fixes it demands the **smallest unique** SEARCH span, copied
+exactly, character for character, with no paraphrasing or re-indentation. It
+costs about 18% more tokens and is the difference between usable output and
+none.
+
+Two things follow. Optimising a local prompt for brevity can make it strictly
+worse, so measure applicable diffs rather than tokens per second. And when a
+local run shows a healthy request rate and no improvements, check whether the
+diffs are applying before assuming the model is weak.
+
 ## `--verify` loads every model, which a local box cannot afford
 
 Verification smoke-tests every configured model with a real completion, twice —

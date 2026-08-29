@@ -92,6 +92,69 @@ existing code *verbatim*; punish repetition harder and the restatement drifts,
 the diff stops applying, and it looks like a bad mutation rather than a bad
 setting.
 
+### 5. Do NOT force the GPU layer count
+
+The most counterintuitive result here, and worth the space. Ollama picks a
+GPU/CPU split automatically. Overriding it with `num_gpu` was **monotonically
+worse at every step**:
+
+| `num_gpu` | resident | generation | vs auto |
+|---|---|---|---|
+| auto | 39% | **3.26 tok/s** | — |
+| 36 | 54% | 2.56 tok/s | −21% |
+| 40 | 60% | 2.08 tok/s | −36% |
+| 44 | — | 1.65 tok/s | −49% |
+| 48 | — | 1.39 tok/s | −57% |
+
+Prompt evaluation collapses alongside it, 68.9 → ~20 tok/s.
+
+"More layers on the GPU" stops being true past the point where they fit. On
+Windows the driver will happily place the overflow in **shared GPU memory** —
+system RAM addressed across PCIe — and a layer there is slower than the same
+layer running natively on the CPU. Ollama's heuristic already accounts for the
+KV cache and the compute buffers, which the naive
+`VRAM ÷ bytes-per-layer` arithmetic does not.
+
+`num_ctx` 4096 measured identical to 8192 (3.25 vs 3.26 tok/s), so context is
+not the binding constraint here either. There is nothing to buy by shrinking it,
+and 8192 comfortably holds a mutation prompt.
+
+**If your runtime has no auto-split** — llama.cpp defaults `-ngl` to 0 — start
+low and raise it a few at a time, keeping the value where throughput stops
+improving. A server that dies during load is well past the limit; one that
+merely got slower is just past it, which is harder to notice and is why this
+wants measuring rather than reasoning.
+
+---
+
+## Optimise applicable diffs, not tokens per second
+
+The single most valuable measurement here, and it went the opposite way to the
+optimisation that produced it.
+
+Generation costs ~0.3 s per token, so shortening the answer looked like the
+obvious lever. It is not. Two system prompts, same model, same task:
+
+| prompt | tokens | seconds | **applicable diffs** |
+|---|---|---|---|
+| shorter, "return a SEARCH/REPLACE diff" | 448 | 139.7 | **0 of 2** |
+| explicit output rules | 530 | 165.6 | **2 of 2** |
+
+The faster prompt was **18% quicker and produced nothing usable**. Its diffs
+looked right and matched nothing, because the model paraphrased the code it was
+supposed to be quoting — reformatted, re-indented, or lightly reworded — so the
+SEARCH block never matched the file.
+
+The line that fixes it is the one demanding the *smallest unique* SEARCH span,
+copied exactly. It costs tokens and buys diffs that apply.
+
+So the metric to tune is **applicable diffs per hour**, not tokens per second.
+On these numbers the fast prompt scores zero at any speed, and that is not a
+narrow margin that better sampling would close.
+
+This is the same distinction the project already draws between raw and useful
+yield, arriving from a different direction.
+
 ---
 
 ## The one that produced no error at all

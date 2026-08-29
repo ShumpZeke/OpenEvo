@@ -59,11 +59,31 @@ llm:
       weight: 1.0
 
 prompt:
+  # The output rules below are not style. Measured against the shorter prompt
+  # they replace, on this model:
+  #
+  #     shorter prompt   448 tok   139.7 s   APPLICABLE 0 of 2
+  #     this prompt      530 tok   165.6 s   APPLICABLE 2 of 2
+  #
+  # This one is ~18% slower per call and is the only one that produces diffs
+  # that apply. A diff whose SEARCH block does not match the file is a wasted
+  # mutation however fast it arrived, so tokens-per-second is the wrong thing
+  # to optimise and applicable-diffs-per-hour is the right one.
+  #
+  # The line that does the work is the one demanding the SMALLEST unique
+  # SEARCH span. Without it the model paraphrases the code it is quoting --
+  # which reads correctly and matches nothing.
   system_message: |
-    You are an expert algorithm designer improving a function-minimization
-    routine. Find the global minimum of
-    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20
-    Escape local minima. Return a SEARCH/REPLACE diff.
+    Improve the search algorithm to find the global minimum of
+    f(x, y) = sin(x)*cos(y) + sin(x*y) + (x^2 + y^2)/20 and escape local minima.
+
+    OUTPUT RULES - follow exactly:
+    - Output ONLY SEARCH/REPLACE blocks. Nothing before, nothing after.
+    - No explanation, no preamble, no summary, no commentary on your reasoning.
+    - Do not restate the problem or describe what you changed.
+    - The SEARCH block must be the SMALLEST span of existing lines that is
+      still unique, copied EXACTLY, character for character. Do not paraphrase,
+      reformat, or re-indent it.
 
 database:
   # Smaller than the cloud config: a local model produces candidates far more
