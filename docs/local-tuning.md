@@ -412,14 +412,20 @@ model behaves better.
 ### Quality
 
 Now measurable, because `benchmarks/tasks/fn_min_seeded` fixes the random draws
-— see that directory's README. Thirty iterations each, same task, same config
-apart from the model:
+— see that directory's README. Same task, same config apart from the model.
+
+**The 27B run is not finished.** It is configured for thirty iterations and had
+completed 19 when this was written; its best was found at iteration 6, so
+finishing can only improve its number, not weaken the comparison. The 0.6B row
+is a completed thirty-iteration run. Stated plainly rather than rounded up,
+because "thirty iterations each" would have been the tidier sentence and not a
+true one.
 
 | | best program | score |
 |---|---|---|
 | seed program | random search, budget 1000 | 1.4061 |
 | `qwen3:0.6b`, 30 iterations, **3 minutes** | the same random search, budget **2000** | 1.4513 |
-| Qwen3.5-27B, best found at iteration 6 | **Differential Evolution**, adaptive F/CR, budget 1200 | **1.4987** |
+| Qwen3.5-27B, best found at iteration 6 (run still going) | **Differential Evolution**, adaptive F/CR, budget 1200 | **1.4987** |
 
 Both improvements are real and reproduce exactly on re-scoring. They are not the
 same kind of thing.
