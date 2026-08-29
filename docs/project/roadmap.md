@@ -50,54 +50,52 @@ The unanswerable comparisons are now answerable and worth actually running:
 27B vs 0.6B on quality, and whether the shipped prompt's rules arm helps or only
 shortens.
 
-## T0a — Run local mode against a real local LLM
+## T0a — Run local mode against a real local LLM — DONE (2026-08-29)
 
-**Priority:** highest. **Effort:** minutes, once a server is installed.
-**Blocked by:** no Ollama/LM Studio/vLLM/llama.cpp on this machine.
-**Status:** the whole path is built and verified; only a real model is missing.
+Two complete runs against models on this machine, through Ollama. Both produced
+real, reproducible improvements, so the claim "no local model has generated a
+mutation here" is retired.
 
-### Why
+| model | iterations | wall | best program | score |
+|---|---|---|---|---|
+| `qwen3:0.6b` | 30 | ~3 min | the seed's search at budget 2000 | 1.4513 |
+| Qwen3.5-27B (tuned) | 30 configured, best at 6 | ~180 s/iteration | Differential Evolution, adaptive F/CR | 1.4987 |
 
-Local mode is verified end to end *except for the model*. On 2026-08-28 a broker
-started with `OE_MAX_LOCAL_ONLY=1` discovered a local OpenAI-compatible server,
-built its chains from the discovered listing, and ran a 6-iteration evolution to
-completion — 6 requests served, 0 failed, only the four local
-adapters in the process.
+Against the seed's 1.4061, on `benchmarks/tasks/fn_min_seeded` — the seeded task
+from T0-noise, without which neither number would mean anything.
 
-That server was `scripts/local_provider.py`: a genuine HTTP server, and a
-deterministic generator rather than a model. So discovery, materialisation,
-chain construction, routing, the offline guarantee and a full evolution cycle
-are proven, and **no local model has generated a mutation here**.
+The 27B's gain is almost entirely algorithmic: held at the seed's budget of 1000
+it still scores 1.4962, so +0.090 is the algorithm and 0.0025 is the budget. The
+0.6B's whole gain was the budget. `docs/local-tuning.md` has the full comparison.
 
-### How
+### What this run surfaced, which was the more valuable half
 
-```bash
-ollama pull qwen2.5-coder:7b
-OE_MAX_LOCAL_ONLY=1 ./scripts/start-broker.sh
-curl -s 127.0.0.1:8787/health | grep routes      # the pulled model should appear
-./scripts/run-evolution.sh --config configs/oe_max/local.yaml --iterations 12
-```
+Both fixes are committed; they are recorded here because each was invisible
+until a real model ran.
 
-### Done when
+* Pointing `api_base` straight at Ollama loses the broker adapter's
+  `reasoning_effort: "none"`, and a local reasoning model then answers entirely
+  in `message.reasoning` with an empty `content`. Every iteration fails with "No
+  valid diffs found in response" — 308.7 s per iteration to produce nothing,
+  against 99.3 s to produce an applicable diff. Now set in the config as well as
+  the adapter.
+* On Windows the run log **deletes** records it cannot encode rather than
+  mangling them. Upstream marks a new best with a star; cp1252 cannot encode it,
+  `logging` raises, and the record is dropped — 0 bytes. A run that found a new
+  best could produce a log that never says so. `PYTHONIOENCODING=utf-8` is now
+  set on all three launch paths.
+* The seeded task's trial timeout did not time out. `with ThreadPoolExecutor(...)`
+  joins the worker on exit, so a 12 s trial under a 5 s limit returned after
+  12.0 s — and the executor's non-daemon threads then blocked interpreter exit.
 
-A run is recorded in ../benchmarks.md with the local model named, next to the
-hosted numbers and clearly separated. The interesting figure is not the score —
-it is candidates per request, because that is where a small model is expected to
-differ most from a hosted one.
+### Still not done
 
-### Careful
-
-Expect to tune `max_tokens` and the timeouts together, never alone
-(§3.3). A small model that reasons before answering hits exactly the truncation
-failure in §3.2, and it will look like "the diff was empty" rather than like a
-budget problem. `configs/oe_max/local.yaml` starts at 4,096 tokens and a 1,800s
-ceiling for that reason.
-
-Do not read a weak score as "local mode does not work". A 7B model producing
-poor mutations is a fact about the model; the plumbing carrying them is what
-was built here, and it is already proven.
-
----
+The broker was **not** in the path for either run: both pointed `api_base` at
+Ollama's own `/v1` to isolate the model as the only variable. So the local
+adapters, discovery and the offline guarantee remain proven only against
+`scripts/local_provider.py`, which is a real HTTP server but a deterministic
+generator rather than a model. A run through `127.0.0.1:8787` onto a real local
+model is the remaining gap, and it is small.
 
 ## T0 — Record one live BrainPort run against a real OpenCode host
 
