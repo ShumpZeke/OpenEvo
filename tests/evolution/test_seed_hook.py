@@ -301,3 +301,20 @@ def test_it_works_with_the_real_example_evaluator(seeding, monkeypatch):
 
     assert len(scores) == 2
     assert all(s.get("combined_score") for s in scores)
+
+
+def test_every_code_gets_a_slot_in_the_result(seeding):
+    """`_forge_and_add` zips codes against scores, and zip truncates silently.
+
+    So `_evaluate_all` returning a short list would drop variants with no error
+    and no log line -- the forge would just quietly add fewer than it forged.
+    One score per code, in order, is the contract that keeps that from being
+    possible.
+    """
+    hook = seed_hook.get_hook()
+    broken = "def run_search():\n    raise ValueError('no')\n"
+
+    for codes in ([SEED], [SEED, broken], [broken, broken], [SEED] * 4):
+        scores = hook._evaluate_all(codes, EVALUATOR)
+        assert len(scores) == len(codes), codes
+        assert all(isinstance(s, dict) for s in scores)
