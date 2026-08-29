@@ -8,9 +8,12 @@ until the provider strings are removed from the core.
 Run: pytest tests/test_brainport_acceptance.py -v
 """
 
+import json
 import os
 import re
 import pathlib
+
+import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -254,3 +257,53 @@ def test_plugin_exposes_every_evolution_tool():
     assert "inherit" in text
     for pat in FORBIDDEN_PATTERNS:
         assert pat not in text, f"plugin source hardcodes provider string {pat}"
+
+
+def test_importing_brainport_does_not_load_the_engine():
+    """The package docstring calls this a hard boundary; make it one at import.
+
+    `oe_max/brain/llm.py` legitimately subclasses `openevolve.llm.base.LLMInterface`
+    -- that adapter is how the unmodified engine can be handed a BrainPort. But
+    importing it from `__init__` dragged the whole engine in behind it:
+    `openevolve/__init__` reaches controller -> evaluator -> llm.openai ->
+    openai, so `import oe_max.brain` cost 4.56s, of which 3.0s was an API client
+    this package is defined by not using. Deferred, it is 0.15s.
+
+    Run in a child so the check is honest: this test process has almost
+    certainly imported openevolve already.
+    """
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [sys.executable, "-c",
+         "import oe_max.brain, sys, json;"
+         "print(json.dumps(sorted(m for m in sys.modules"
+         " if m in ('openai', 'openevolve'))))"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout.strip()) == [], (
+        "importing oe_max.brain pulled in the engine or the OpenAI SDK"
+    )
+
+
+def test_the_adapter_is_still_reachable_by_name():
+    """Deferring must not change the public API."""
+    from oe_max.brain import BrainLLM, NullBrainLLM
+
+    assert BrainLLM.__name__ == "BrainLLM"
+    assert NullBrainLLM.__name__ == "NullBrainLLM"
+
+    import oe_max.brain as brain
+
+    assert brain.BrainLLM is BrainLLM
+    assert "BrainLLM" in dir(brain)
+
+
+def test_an_unknown_attribute_still_raises_attribute_error():
+    """The deferred-import hook must not swallow typos into ImportError."""
+    import oe_max.brain as brain
+
+    with pytest.raises(AttributeError):
+        brain.NoSuchThing
