@@ -129,7 +129,14 @@ The regression gate, so its wall clock is felt on every change.
 | upstream (the gate; untouchable) | ~85 s | ~85 s |
 | control plane | 89.5 s | **60.0 s** |
 | OE-MAX | ~17 s | ~17 s |
-| BrainPort | ~17 s | ~13 s |
+| BrainPort | not measured cleanly | not measured cleanly |
+
+The BrainPort row is honest rather than flattering: every timing taken for it
+was taken while a 27B evolution run had the machine, and the readings ranged
+from 12.7 s to 163 s for the same 37 tests. The deferred import is measured at
+the import (4.56 s → 0.15 s) and that number is sound; a suite figure taken
+under that much contention is not, and the suite imports `BrainLLM` in its own
+tests anyway, so most of the cost is still paid there by design.
 
 Almost all of the control-plane saving was one file. `test_seed_hook.py` scored
 variants in child processes using the example evaluator, whose only engine
