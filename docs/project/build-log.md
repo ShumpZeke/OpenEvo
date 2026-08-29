@@ -338,6 +338,95 @@ verification, Control Center. Tests 437 + 327 + 295.
 
 ---
 
+## Session: making the numbers mean something, then making them smaller (2026-08-29)
+
+Started as "make the system faster" and spent its first hours making speed
+measurable at all, because nothing on the benchmark task could be compared.
+
+### The blocker
+
+`examples/function_minimization` evaluates a stochastic program and fixes no
+seed, so the **unchanged seed program** scored 1.0330–1.4188 across evaluations
+— a spread of **0.39**, wider than any improvement worth making. A 12-iteration
+run had already reported "new best solution found at iteration 9" and finished
+with a best program **byte-identical to the seed**.
+
+`benchmarks/tasks/fn_min_seeded` is the same task with the draws pinned: twenty
+evaluations, spread exactly **0.0**. Everything below rests on it.
+
+### What the comparisons then said
+
+| | |
+|---|---|
+| `qwen3:0.6b`, 30 iterations, 3 min | raised the search budget to 2000 → 1.4513 |
+| `qwen3:0.6b`, **300** iterations, 30 min | **nothing**, zero new bests |
+| Qwen3.5-27B, 19 of 30 | wrote **adaptive differential evolution** at iteration 6 → **1.4987** |
+
+At equal budget the 27B's algorithm is worth +0.090 and its budget change
+0.0025. The 0.6B's entire gain was the budget, and its 30-iteration find did not
+reproduce in 300. So the small model is a development instrument — a full run in
+three minutes while debugging a pipeline — and the large one is the tool.
+
+### Measured, and rejected
+
+Recorded because the next person will otherwise measure them again.
+
+* **Concurrent generation.** 0.94× at concurrency 2, 0.65× at 3. One generation
+  already saturates twelve logical cores. Two earlier readings said 4.6× and
+  9.6× — both were a cold sequential *baseline*, not a fast concurrent arm.
+  When a ratio looks too good, read the denominator.
+* **Reordering the prompt** to recover the KV prefix cache. The cache is real
+  (4×) and upstream's template does defeat it (diverges at character 44), but
+  the reordered prompt drew **33% more output** — ~30 s against 1.4 s saved.
+
+### Defects found by running things
+
+Each was invisible until something real ran.
+
+* **The broker could not start on Windows** with its output redirected. Its
+  banner contained an arrow; cp1252 cannot encode it; the print raised and the
+  process exited 1 before uvicorn started. An audit found ten such call sites in
+  five files, and the audit script crashed printing its own results.
+* **The run log deleted the lines that mattered.** Upstream marks a new best
+  with a star. `logging` cannot encode it on cp1252, raises, and discards the
+  **whole record** — 0 bytes written, not mangled text. A run that found a new
+  best could produce a log that never said so.
+* **`reasoning_effort` was lost** whenever `api_base` bypassed the broker: 308.7 s
+  per iteration producing an empty `content`, against 99.3 s producing an
+  applicable diff.
+* **The seeded task's trial timeout did not time out.** `with ThreadPoolExecutor(...)`
+  joins the worker on exit, so a 12 s trial under a 5 s limit returned at 12.0 s
+  — and the executor's non-daemon threads then blocked interpreter exit.
+* **`build_local_providers` ignored its own `env` argument** for one setting,
+  found while writing a test for a different thing.
+
+### Speed, once it could be measured
+
+| | before | after |
+|---|---|---|
+| `/api/system` (polled every 5 s) | 959 ms | **146 ms** |
+| `/api/broker` (polled per live tick) | 2352 ms | **423 ms** |
+| `import oe_max.brain` | 4.56 s | **0.15 s** |
+| seed forge, 3 variants | 14.5 s | ~4.5 s |
+| `tests/evolution/test_seed_hook.py` | 55.9 s (5 tests) | **5.2 s (16)** |
+| the fork's test suites | ~130 s | **~64 s** |
+
+Two themes. `import openevolve` costs 2.9 s — 2.24 s of it the OpenAI SDK,
+pulled in transitively whether or not a model will ever be called — so anything
+spawning a child to evaluate a program was paying for an API client. And the
+dashboard was re-running subprocesses on a timer to answer questions whose
+answers do not change.
+
+### Closed
+
+T0-noise and T0a. The last part of T0a — an evolution run *through* the broker
+onto a real local model — ran at the end: twelve models discovered in local-only
+mode, `ollama/qwen3:0.6b` serving 10 of 10 requests with no errors, on the route
+`OE_MAX_LOCAL_MODELS` named. Broker overhead against calling Ollama directly is
+**+2 ms**.
+
+Tests 1310 → 1432.
+
 ## Blocked
 
 **Live NIM and catalogue-provider verification.** No credential for any of them
@@ -358,6 +447,10 @@ withdrawn from Zen entirely. The route that replaced it, `nemotron-3-ultra-free`
 measured 67% success and ~90 s per request over a real run — better, and still
 the flakiest part of the system.
 
-**The PowerShell scripts.** `verify-providers.ps1` and `ablation.ps1` were added
-for parity and have **never been run**: there is no PowerShell in this
-container. The Python they call is tested.
+**The PowerShell scripts.** No longer wholly unrun. As of 2026-08-29 all
+sixteen are parse-checked by `tests/evolution/test_scripts_parse.py` on every
+Windows CI run, and `test.ps1`, `start-broker.ps1` and the broker CLI have been
+executed on a real Windows host — which is how the broker's startup crash was
+found. `verify-providers.ps1` and `ablation.ps1` still have not been *run*,
+because both need provider credentials; the Python they call is tested and now
+also smoke-tested through `--help` under a legacy code page.
