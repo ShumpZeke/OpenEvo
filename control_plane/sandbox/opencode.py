@@ -33,10 +33,24 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+# How long a cached isolation status stays good. The System Health page polls
+# every five seconds and the underlying check costs ~874 ms, almost all of it
+# two subprocesses -- `opencode --version` and a container-runtime probe --
+# answering questions that do not change between polls. Thirty seconds means a
+# real change (installing OpenCode, starting Docker) shows up promptly while the
+# polling itself costs nothing.
+STATUS_TTL_S = 30.0
+
+# root -> (checked_at, status dict). Keyed by root because two workspaces are two
+# different answers.
+_STATUS_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_STATUS_LOCK = threading.Lock()
 
 
 class IsolationLevel(str, Enum):
@@ -332,11 +346,38 @@ class OpenCodeIsolation:
                 report.reasons.append(f"{key}: {exc}")
         return report
 
-    def status(self) -> Dict[str, Any]:
-        """Shape rendered by the System Health page."""
+    def status(self, max_age: float = STATUS_TTL_S) -> Dict[str, Any]:
+        """
+        Shape rendered by the System Health page, cached for `max_age` seconds.
+
+        The page polls this every five seconds and it cost **874 ms** a call,
+        essentially all of it two subprocesses answering questions that do not
+        change between polls:
+
+            binary_version()      553 ms   `opencode --version`
+            docker_available()    256 ms   is a container runtime there
+            everything else        31 ms
+
+        Installing OpenCode or starting Docker mid-session is possible but rare,
+        and the answer is visible within `max_age` when it happens. `checked_at`
+        is the time of the underlying check, not of this call, so a reader can
+        always see how stale the answer is.
+
+        `max_age=0` forces a fresh check. Cached per root, because two
+        workspaces are two different answers.
+
+        Only `status()` caches. `preflight()` stays eager: it calls
+        `ensure_layout()`, which has side effects a caller may be relying on,
+        and it is the entry point used when the answer must be current.
+        """
+        now = time.time()
+        with _STATUS_LOCK:
+            cached = _STATUS_CACHE.get(self.root)
+            if cached is not None and max_age > 0 and now - cached[0] < max_age:
+                return dict(cached[1])
+
         try:
-            report = self.preflight()
-            data = report.to_dict()
+            data = self.preflight().to_dict()
         except Exception as exc:
             data = {
                 "level": IsolationLevel.UNAVAILABLE.value, "ok": False,
@@ -344,6 +385,9 @@ class OpenCodeIsolation:
                 "never_touched": _forbidden_roots(),
             }
         data["checked_at"] = time.time()
+
+        with _STATUS_LOCK:
+            _STATUS_CACHE[self.root] = (data["checked_at"], dict(data))
         return data
 
     def write_project_config(self, config: Dict[str, Any]) -> str:

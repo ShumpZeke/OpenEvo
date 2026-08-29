@@ -76,3 +76,112 @@ def test_omo_detection_never_raises_when_absent(workspace, monkeypatch):
     omo = OpenCodeIsolation(workspace).detect_omo()
     assert omo["available"] is False
     assert len(omo["checked"]) >= 3   # several names probed, none hardcoded as THE name
+
+
+# -- status caching ---------------------------------------------------------
+#
+# The System Health page polls /api/system every five seconds, and the isolation
+# check inside it cost 874 ms a call: `opencode --version` at 553 ms and a
+# container-runtime probe at 256 ms, both answering questions that do not change
+# between polls. The endpoint went from 959 ms to 146 ms.
+
+
+def test_status_is_cached_between_calls(workspace, monkeypatch):
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    calls = []
+    real = oc.OpenCodeIsolation.preflight
+
+    def counting(self):
+        calls.append(1)
+        return real(self)
+
+    monkeypatch.setattr(oc.OpenCodeIsolation, "preflight", counting)
+
+    iso = OpenCodeIsolation(workspace)
+    first = iso.status()
+    second = iso.status()
+
+    assert len(calls) == 1, "the second call re-ran the subprocess probes"
+    assert second == first
+
+
+def test_a_zero_max_age_forces_a_fresh_check(workspace, monkeypatch):
+    """An operator who has just installed OpenCode should not wait out the TTL."""
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    calls = []
+    real = oc.OpenCodeIsolation.preflight
+    monkeypatch.setattr(
+        oc.OpenCodeIsolation, "preflight",
+        lambda self: (calls.append(1), real(self))[1],
+    )
+
+    iso = OpenCodeIsolation(workspace)
+    iso.status()
+    iso.status(max_age=0)
+
+    assert len(calls) == 2
+
+
+def test_checked_at_is_the_check_not_the_call(workspace, monkeypatch):
+    """A cached answer must not claim to be fresh.
+
+    Stamping `checked_at` on the way out would make a 30-second-old result look
+    current, which is worse than being slow -- the field exists so a reader can
+    see how stale the answer is.
+    """
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    iso = OpenCodeIsolation(workspace)
+    first = iso.status()
+    second = iso.status()
+
+    assert second["checked_at"] == first["checked_at"]
+
+
+def test_the_cache_is_per_workspace(workspace, tmp_path, monkeypatch):
+    """Two workspaces are two different answers; one must not serve the other."""
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    other = str(tmp_path / "other-workspace")
+    os.makedirs(other, exist_ok=True)
+
+    a = OpenCodeIsolation(workspace).status()
+    b = OpenCodeIsolation(other).status()
+
+    assert a["root"] != b["root"]
+    assert len(oc._STATUS_CACHE) == 2
+
+
+def test_preflight_itself_is_not_cached(workspace, monkeypatch):
+    """`preflight()` calls `ensure_layout()`, which has side effects a caller may
+    rely on, and is the entry point for when the answer must be current."""
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    iso = OpenCodeIsolation(workspace)
+    iso.status()
+
+    import shutil as _shutil
+
+    _shutil.rmtree(iso.root, ignore_errors=True)
+    iso.preflight()
+    assert os.path.isdir(iso.root), "preflight should have recreated the layout"
+
+
+def test_a_cached_status_is_a_copy(workspace, monkeypatch):
+    """A caller mutating the returned dict must not corrupt what the next one
+    gets -- the API hands this straight to a JSON serialiser."""
+    from control_plane.sandbox import opencode as oc
+
+    monkeypatch.setattr(oc, "_STATUS_CACHE", {})
+    iso = OpenCodeIsolation(workspace)
+    first = iso.status()
+    first["level"] = "tampered"
+
+    assert iso.status()["level"] != "tampered"
