@@ -82,11 +82,19 @@ so its improvement is the algorithm. The 0.6B's whole gain was the budget, and
 find was a lucky draw. So on this task the small model is a development
 instrument and the large one is the tool.
 
-**Not yet: a run through the broker onto a local model.** Both runs pointed
-`api_base` at Ollama's own `/v1`, to isolate the model as the only variable. The
-broker itself is verified to start in local-only mode and discover twelve local
-models across all four providers; what is untested is an evolution run served
-through it. Roadmap T0a.
+**Through the broker, too.** Verified 2026-08-29: a broker started with
+`OE_MAX_LOCAL_ONLY=1` discovered twelve local models, built its chain from that
+listing, and served a complete evolution run against
+`benchmarks/tasks/fn_min_seeded`.
+
+    ollama/qwen3:0.6b   10 requests, 10 ok, 0 errors, 23,196 tokens, 1055 ms mean
+
+The route is the one `OE_MAX_LOCAL_MODELS` named, so the operator's stated
+preference reaches the chain rather than only the adapter.
+
+The broker's own cost is **+2 ms** at the median against calling Ollama directly
+(n=10 per arm, alternated). Against a 100–300 s local generation that is not a
+number anyone needs to think about again.
 
 ## Measurable since the last revision
 
@@ -114,9 +122,6 @@ on a live run rather than only in tests:
 
 The honest list. Detail and rationale in [roadmap.md](roadmap.md).
 
-- No evolution run has gone **through the broker** onto a local model (T0a).
-  Runs driven by a local model are now measured; both bypassed the broker to
-  isolate the model as the only variable.
 - The BrainPort has never run against a live OpenCode host — every one of its
   37 tests runs against a stub.
 - The 44-per-60s rate contract is proven on a virtual clock only; the live NIM

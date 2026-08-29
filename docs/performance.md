@@ -229,5 +229,6 @@ worth keeping: **when a ratio looks too good, read the denominator.**
 | every dashboard GET except `/api/broker` | under 130 ms at the median |
 | the web bundle | 273 KB JS (80 KB gzipped), 53 modules, 2 runtime dependencies |
 | reusing one `httpx.AsyncClient` for the broker probe | would save 165 ms more; binds a client to an event loop for the app's lifetime, which is not worth it in a handler whose job is to report absence |
+| the broker, per request | **+2 ms** at the median against calling Ollama directly (n=10 per arm, alternated) — against a 100–300 s generation, not worth thinking about again |
 | `parallel_evaluations` above 1 locally | the model is serial and evaluation is 36 ms; overlapping them saves 0.02% |
 | `OLLAMA_NUM_PARALLEL` above 1 | 0.94× at concurrency 2, 0.65× at 3 — one generation already saturates twelve cores |

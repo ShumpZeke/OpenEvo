@@ -89,14 +89,21 @@ until a real model ran.
   joins the worker on exit, so a 12 s trial under a 5 s limit returned after
   12.0 s — and the executor's non-daemon threads then blocked interpreter exit.
 
-### Still not done
+### Through the broker as well
 
-The broker was **not** in the path for either run: both pointed `api_base` at
-Ollama's own `/v1` to isolate the model as the only variable. So the local
-adapters, discovery and the offline guarantee remain proven only against
-`scripts/local_provider.py`, which is a real HTTP server but a deterministic
-generator rather than a model. A run through `127.0.0.1:8787` onto a real local
-model is the remaining gap, and it is small.
+Closed the same day. A broker started with `OE_MAX_LOCAL_ONLY=1` discovered
+twelve local models, built its chain from that listing, and served a complete
+run:
+
+    ollama/qwen3:0.6b   10 requests, 10 ok, 0 errors, 23,196 tokens, 1055 ms mean
+
+The route is the one `OE_MAX_LOCAL_MODELS` named, so the operator preference
+reaches the chain and not only the adapter. Broker overhead against calling
+Ollama directly is **+2 ms** at the median, n=10 per arm alternated.
+
+So discovery, materialisation, chain construction, routing, the offline
+guarantee and a full evolution cycle are now proven against a real local model
+rather than against `scripts/local_provider.py`.
 
 ## T0 — Record one live BrainPort run against a real OpenCode host
 
