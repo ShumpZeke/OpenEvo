@@ -59,7 +59,7 @@ mutation here" is retired.
 | model | iterations | wall | best program | score |
 |---|---|---|---|---|
 | `qwen3:0.6b` | 30 | ~3 min | the seed's search at budget 2000 | 1.4513 |
-| Qwen3.5-27B (tuned) | 30 configured, best at 6 | ~180 s/iteration | Differential Evolution, adaptive F/CR | 1.4987 |
+| Qwen3.5-27B (tuned) | 19 of 30, stopped; best at 6 | ~180 s/iteration | Differential Evolution, adaptive F/CR | 1.4987 |
 
 Against the seed's 1.4061, on `benchmarks/tasks/fn_min_seeded` — the seeded task
 from T0-noise, without which neither number would mean anything.

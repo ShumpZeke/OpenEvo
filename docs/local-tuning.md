@@ -414,18 +414,23 @@ model behaves better.
 Now measurable, because `benchmarks/tasks/fn_min_seeded` fixes the random draws
 — see that directory's README. Same task, same config apart from the model.
 
-**The 27B run is not finished.** It is configured for thirty iterations and had
-completed 19 when this was written; its best was found at iteration 6, so
-finishing can only improve its number, not weaken the comparison. The 0.6B row
-is a completed thirty-iteration run. Stated plainly rather than rounded up,
-because "thirty iterations each" would have been the tidier sentence and not a
-true one.
+**The 27B run did not finish.** It was configured for thirty iterations and
+stopped after **19**. Its best was found at iteration 6 and re-scored
+independently, so finishing could only have improved its number, not weakened
+the comparison — but the row is 19 iterations, not 30, and the 0.6B row is a
+completed 30.
+
+It stopped because the machine ran out of memory: starting the broker alongside
+a run holding a 16 GB model left 0.2 GB free, Ollama's keep-alive expired, and
+`llama-server` sat thrashing trying to reload a model that no longer fit. Worth
+knowing as an operating constraint on a 16 GB box — one 27B run is the whole
+machine, and anything else started beside it is what ends it.
 
 | | best program | score |
 |---|---|---|
 | seed program | random search, budget 1000 | 1.4061 |
 | `qwen3:0.6b`, 30 iterations, **3 minutes** | the same random search, budget **2000** | 1.4513 |
-| Qwen3.5-27B, best found at iteration 6 (run still going) | **Differential Evolution**, adaptive F/CR, budget 1200 | **1.4987** |
+| Qwen3.5-27B, best at iteration 6 of 19 run | **Differential Evolution**, adaptive F/CR, budget 1200 | **1.4987** |
 
 Both improvements are real and reproduce exactly on re-scoring. They are not the
 same kind of thing.
