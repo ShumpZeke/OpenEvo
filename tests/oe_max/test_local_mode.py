@@ -281,3 +281,54 @@ class TestTheAgentLayerIsAlsoLocal:
         for profile in profiles_mod.default_profiles():
             assert profile.model == "", (
                 f"{profile.id} ships the model name {profile.model!r}")
+
+
+class TestTheReportedChainIsTheRealChain:
+    """
+    The Models page renders the broker's chain under the words "the chain the
+    broker will actually try, in order".
+
+    In local-only mode it read `nvidia_nim/... -> opencode_zen/...` — providers
+    that are never constructed in that process. Routing was not wrong (those
+    entries are skipped as "provider not configured" and the discovered local
+    routes serve), but the UI stated an order that cannot happen, to an operator
+    whose reason for reading that page is to confirm their run is offline.
+
+    A displayed chain that is not the chain is the no-fabricated-data rule
+    broken exactly where it matters most.
+    """
+
+    def test_the_starting_chain_is_empty_in_local_only(self, monkeypatch):
+        monkeypatch.setenv(local_mod.ENV_LOCAL_ONLY, "1")
+        import importlib
+
+        router = importlib.import_module("oe_max.router")
+
+        assert router.default_chain() == [], (
+            "the broker would report cloud routes it cannot use")
+
+    def test_the_cloud_chain_is_unchanged_when_the_switch_is_off(self, monkeypatch):
+        monkeypatch.delenv(local_mod.ENV_LOCAL_ONLY, raising=False)
+        import importlib
+
+        router = importlib.import_module("oe_max.router")
+        chain = router.default_chain()
+
+        assert chain, "the normal chain must not be emptied"
+        assert chain[0][0] == "nvidia_nim", "NIM still leads outside local mode"
+
+    def test_the_broker_seeds_from_default_chain_not_the_constant(self):
+        """
+        The bug was that BrokerState hardcoded `list(DEFAULT_CHAIN)`, so the
+        mode-aware function could never take effect.
+        """
+        import inspect
+
+        from oe_max.broker import app as broker_app
+
+        source = inspect.getsource(broker_app.BrokerState.__init__)
+
+        assert "default_chain()" in source
+        assert "DEFAULT_CHAIN" not in source, (
+            "the broker is seeding from the constant again, which ignores "
+            "local-only mode")

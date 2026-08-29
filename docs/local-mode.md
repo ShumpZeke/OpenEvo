@@ -66,6 +66,13 @@ Because ids are only knowable by asking, the broker **discovers at startup** in
 local-only mode rather than waiting for `--verify`. Serving before discovering
 would mean an empty chain and a failure on every request.
 
+## Fitting a model to your card
+
+The settings below are defaults. Getting a *specific* model onto a *specific* GPU is its own exercise, and **[local-tuning.md](local-tuning.md)**
+works through a real one end to end — a 27B model on an 8 GB card, what
+each change was worth in measured tokens per second, and the silent
+failure that cost the most (an empty answer, HTTP 200, no error anywhere).
+
 ## Settings that differ from a cloud run
 
 `configs/oe_max/local.yaml` is not the cloud config with a different URL. Three

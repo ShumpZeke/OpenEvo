@@ -10,6 +10,7 @@ directory is the detail.
 | [architecture.md](architecture.md) | how the pieces fit, and why the engine is untouched |
 | [gotchas.md](gotchas.md) | **defects that produced no error, or the wrong one — read before debugging** |
 | [local-mode.md](local-mode.md) | running entirely on your own machine, with no credentials |
+| [local-tuning.md](local-tuning.md) | **fitting a model to your GPU: a measured worked example** |
 | [providers.md](providers.md) | routing policy, and what each provider actually does |
 | [telemetry.md](telemetry.md) | the event model, and the rule that nothing is invented |
 | [sandbox.md](sandbox.md) | candidate isolation, and what it does and does not contain |

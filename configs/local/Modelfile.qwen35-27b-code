@@ -1,0 +1,49 @@
+# Qwen3.5-27B tuned for OpenEvolve code mutation on a constrained box.
+#
+# Build:  ollama create qwen-evo -f configs/local/Modelfile.qwen35-27b-code
+# Use:    the broker discovers it as `qwen-evo:latest` from /v1/models
+#
+# MEASURED BASELINE on the machine this was written for (i5-12400F, RTX 3050
+# 8 GB, 16 GB RAM), stock settings, 8192 context:
+#
+#     load            46.0 s
+#     prompt eval      1.07 tok/s      <-- the number that matters
+#     generation       5.63 tok/s
+#     GPU/CPU split    33% VRAM / 67% RAM
+#
+# Prompt processing is the binding constraint, not generation. An OpenEvolve
+# mutation prompt is ~1,500-2,500 tokens, so at 1.07 tok/s the model spends
+# ~25-40 minutes *reading* before it writes anything. Every setting below
+# exists to move layers onto the GPU, because layers on the CPU are what makes
+# prompt evaluation slow.
+
+FROM orcarouter/Qwen3.8-27B-Uncensored:iq4_xs
+
+# --- sampling -------------------------------------------------------------
+# The stock model ships temperature 1, which is Qwen's default for open-ended
+# chat. Code mutation is not open-ended: a diff either applies or it does not,
+# and a high temperature buys creative failures. These are Qwen3's own
+# recommended NON-THINKING values, which is the mode this runs in.
+PARAMETER temperature 0.7
+PARAMETER top_p 0.8
+PARAMETER top_k 20
+PARAMETER min_p 0
+# Diffs legitimately repeat themselves -- the SEARCH block restates existing
+# code verbatim. A repeat penalty above ~1.05 starts corrupting that restatement
+# and the diff then fails to apply, which looks like a bad mutation rather than
+# a bad setting.
+PARAMETER repeat_penalty 1.05
+
+# --- context --------------------------------------------------------------
+# The model declares 262,144. Do not use it. KV cache scales linearly with
+# context, and on this box every megabyte of KV is a megabyte of weights that
+# gets evicted to system RAM -- which is precisely what makes prompt evaluation
+# slow. 8192 comfortably holds an OpenEvolve mutation prompt plus its answer.
+PARAMETER num_ctx 8192
+
+# --- stop tokens ----------------------------------------------------------
+# Belt and braces: the qwen3.5 parser handles these, but a stray thinking block
+# leaking into a diff is the failure mode documented in docs/gotchas.md, and it
+# is cheap to guard twice.
+PARAMETER stop "</think>"
+PARAMETER stop "<|im_end|>"

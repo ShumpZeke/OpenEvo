@@ -31,17 +31,29 @@ llm:
   api_key: "oe-max-local"
   temperature: 0.8
 
-  # Smaller than the cloud config on purpose. A 7B-13B model on consumer
-  # hardware is generating at a fraction of a hosted model's rate, and a
-  # 16,000-token budget is minutes of wall clock per mutation rather than
-  # seconds. Raise it if your model reasons before answering — but raise the
-  # timeouts with it, never alone (docs/gotchas.md).
-  max_tokens: 4096
+  # Sized from measurement, not from what looks generous.
+  #
+  # A 27B IQ4_XS model on an RTX 3050 (8 GB) with ~half its layers on the CPU
+  # generates at ~3.3 tok/s. At that rate a 4,096-token budget is a TWENTY
+  # MINUTE mutation, and a 16,000-token one -- the cloud default -- is over an
+  # hour. Neither is a useful iteration.
+  #
+  # A SEARCH/REPLACE diff is typically 300-600 tokens. 1536 leaves generous
+  # headroom for a large one while capping a rambling answer at ~8 minutes.
+  # Raise it only if you see diffs actually being cut off; raising it "to be
+  # safe" costs wall clock on every single iteration.
+  #
+  # Do not raise it alone. max_tokens, the provider timeout and the client
+  # timeout are one coupled setting (docs/gotchas.md).
+  max_tokens: 1536
   # Generous because local generation is slow and that is not a fault. The
   # broker's own provider timeout for local servers is 1800s for the same
   # reason: a short ceiling manufactures timeouts and then blames the model.
   timeout: 1800
 
+  # The judge runs on the same local model. On one machine there is nothing
+  # to specialise between, and pointing it elsewhere would mean a second model
+  # resident in memory -- which this class of box cannot hold.
   evaluator_models:
     - name: "oe-max-judge"
       weight: 1.0

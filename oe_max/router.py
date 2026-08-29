@@ -81,6 +81,21 @@ DEFAULT_CHAIN: List[Tuple[str, str]] = [
 ]
 
 
+def default_chain() -> List[Tuple[str, str]]:
+    """
+    The chain to start from, for the mode this process is running in.
+
+    Empty under OE_MAX_LOCAL_ONLY. The cloud entries in DEFAULT_CHAIN name
+    providers that are never constructed in that mode, so keeping them would
+    mean the broker reporting -- and the Models page displaying -- a routing
+    order it cannot follow. Local routes are not knowable in advance anyway:
+    they come from each server's own listing at startup.
+    """
+    from .providers.local import local_only
+
+    return [] if local_only() else list(DEFAULT_CHAIN)
+
+
 class NoRouteAvailable(RuntimeError):
     def __init__(self, reasons: Dict[str, str]) -> None:
         self.reasons = reasons

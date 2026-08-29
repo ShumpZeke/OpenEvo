@@ -128,6 +128,22 @@ def build_local_providers(
         # Higher than a remote provider's, because a local box may host many
         # models and none of them cost anything per call.
         adapter.max_models = 12
+        # Tell a local reasoning model not to think.
+        #
+        # Measured on Qwen3.5-27B through Ollama: without this the model
+        # answers entirely in `message.reasoning` and returns an EMPTY
+        # `content` -- a 400-token budget finished after 16, so it is not
+        # truncation, it is the model choosing to think and never answer. With
+        # `reasoning_effort: "none"` the same request returns "READY".
+        #
+        # OpenAI-standard parameter, so a server that does not implement it
+        # ignores it rather than failing. Set OE_MAX_LOCAL_REASONING to
+        # low/medium/high to keep thinking on where it is wanted -- a judge
+        # sometimes should think; a diff generator that thinks instead of
+        # answering produces nothing to apply.
+        effort = os.environ.get("OE_MAX_LOCAL_REASONING", "none").strip().lower()
+        if effort and effort != "default":
+            adapter.extra_body = {"reasoning_effort": effort}
         adapter.liveness = f"{label} — probed at runtime; never assumed"
         out[name] = adapter
     return out

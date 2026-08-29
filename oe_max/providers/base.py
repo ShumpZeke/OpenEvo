@@ -103,13 +103,66 @@ class ChatResult:
         return (self.body or {}).get("usage") or {}
 
     @property
+    def reasoning_text(self) -> str:
+        """
+        Hidden reasoning the provider returned alongside (or instead of) content.
+
+        OpenAI reports reasoning only as a token *count*. Ollama returns the
+        text in `message.reasoning` and no count at all, so a response whose
+        entire budget went to thinking looked identical to a normal one.
+        """
+        try:
+            message = self.body["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            return ""
+        for field in ("reasoning", "reasoning_content", "thinking"):
+            value = message.get(field)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    @property
     def reasoning_tokens(self) -> int:
-        """Completion tokens spent on hidden reasoning, when reported."""
+        """
+        Completion tokens spent on hidden reasoning, when knowable.
+
+        Prefers the provider's own count. Falls back to estimating from the
+        reasoning text, because a provider that returns the text without a
+        count would otherwise report zero -- and zero is exactly the answer
+        that makes an empty completion look inexplicable.
+        """
         details = (self.usage or {}).get("completion_tokens_details") or {}
         try:
-            return int(details.get("reasoning_tokens") or 0)
+            reported = int(details.get("reasoning_tokens") or 0)
         except (TypeError, ValueError):
+            reported = 0
+        if reported:
+            return reported
+        text = self.reasoning_text
+        if not text:
             return 0
+        # ~4 characters per token. Deliberately rough: this exists to make a
+        # non-zero number visible, not to be an accounting figure, and it is
+        # labelled `reasoning_tokens_estimated` in the log so nobody treats it
+        # as measured.
+        return max(1, len(text) // 4)
+
+    @property
+    def reasoning_tokens_are_estimated(self) -> bool:
+        details = (self.usage or {}).get("completion_tokens_details") or {}
+        return not details.get("reasoning_tokens") and bool(self.reasoning_text)
+
+    @property
+    def answered_only_in_reasoning(self) -> bool:
+        """
+        The response is empty but the model did think.
+
+        Worth its own name because it is not a transport failure, not a refusal
+        and not a truncation: the request succeeded, the model worked, and the
+        visible answer is empty. Anything reading `content` alone sees a model
+        that returned nothing for no reason.
+        """
+        return not self.content.strip() and bool(self.reasoning_text)
 
     @property
     def finish_reason(self) -> Optional[str]:
@@ -132,6 +185,8 @@ class ChatResult:
             "outcome": self.outcome.value, "status": self.status_code,
             "latency_ms": round(self.latency_ms, 1), "attempt": self.attempt,
             "usage": self.usage, "reasoning_tokens": self.reasoning_tokens,
+            "reasoning_tokens_estimated": self.reasoning_tokens_are_estimated,
+            "answered_only_in_reasoning": self.answered_only_in_reasoning,
             "finish_reason": self.finish_reason, "error": self.error,
         }
 
@@ -245,6 +300,11 @@ class ProviderAdapter:
         await self.limiter.acquire()
 
         body: Dict[str, Any] = {"model": model_id, "messages": messages}
+        # Provider-level defaults first, so a caller can still override any of
+        # them per request. `extra_body` is how a provider says something true
+        # about itself -- e.g. a local reasoning model that must be told not to
+        # think -- without every call site having to know it.
+        body.update(getattr(self, "extra_body", None) or {})
         body.update({k: v for k, v in params.items() if v is not None})
 
         t0 = time.perf_counter()

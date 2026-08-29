@@ -38,7 +38,7 @@ from ..health import RetryPolicy, RouteHealth
 from ..providers.registry import Registry, build_default_registry
 from ..roles import ALIASES, PRIMARY_ALIAS, Role, role_for_alias, validate_preferences
 from ..providers.local import local_only
-from ..router import DEFAULT_CHAIN, NoRouteAvailable, Route, Router
+from ..router import NoRouteAvailable, Route, Router, default_chain
 
 # Requests naming a role alias select that role's chain; naming a concrete
 # model pins that route; anything unrecognised falls to the default role.
@@ -77,7 +77,10 @@ class BrokerState:
         self.registry = registry or Registry(build_default_registry())
         self.router = Router(
             self.registry,
-            chain=list(DEFAULT_CHAIN),
+            # Empty in local-only mode: see router.default_chain(). The chain
+            # is then exactly what startup discovery found, so what /health
+            # reports is what will actually be tried.
+            chain=default_chain(),
             retry=RetryPolicy(max_attempts=4),
             health=RouteHealth(),
         )

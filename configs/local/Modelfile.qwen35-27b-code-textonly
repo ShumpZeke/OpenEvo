@@ -1,0 +1,26 @@
+# Text-only build of Qwen3.5-27B for code mutation.
+#
+# Identical to Modelfile.qwen35-27b-code except that it names the weights blob
+# directly instead of inheriting the packaged model, which drops the 0.87 GB
+# CLIP vision projector. OpenEvolve mutates source code and never sends an
+# image, so that projector is memory spent on a capability this workload cannot
+# use -- and on a box where only ~32 of 65 layers fit on the GPU, 0.87 GB is
+# roughly four more layers that stop running on the CPU.
+#
+# RENDERER/PARSER are restated because naming a blob directly does not inherit
+# them, and without them the chat template is wrong in ways that look like the
+# model being bad at instructions.
+
+FROM C:\Users\vardh\.ollama\models\blobs\sha256-ce18b852ff0f7f7fc3cbe3467b4a87d3b27e7b3e611bf41e0a529220604aa79f
+TEMPLATE {{ .Prompt }}
+RENDERER qwen3.5
+PARSER qwen3.5
+
+PARAMETER temperature 0.7
+PARAMETER top_p 0.8
+PARAMETER top_k 20
+PARAMETER min_p 0
+PARAMETER repeat_penalty 1.05
+PARAMETER num_ctx 8192
+PARAMETER stop "</think>"
+PARAMETER stop "<|im_end|>"
