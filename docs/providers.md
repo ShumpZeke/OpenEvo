@@ -281,8 +281,30 @@ block of `configs/oe_max/providers.yaml`.
 | **Zen `deepseek-v4-flash-free`** | Listed but unserveable: HTTP 400 "Model is unavailable", unchanged since 2026-08-25. The original evidence that a listing is not a working model. | 2026-08-26 |
 | **Zen `mimo-v2.5-free`** | HTTP 429 `FreeUsageLimitError` on every attempt. A shared free pool that is empty, not a per-account rate limit. | 2026-08-26 |
 | **Zen `muse-spark-1.2-contributor-free`** | Newly listed, returns HTTP 500. The name suggests contributor-gating. | 2026-08-26 |
-| **NIM `deepseek-ai/deepseek-v4-pro`** | Not in NVIDIA's catalogue, and appears never to have been. Was configured as the strong fallback. | 2026-08-26 |
+| **NIM `deepseek-ai/deepseek-v4-pro`** (bare id) | Not in NVIDIA's catalogue. Was configured as the strong fallback. **The date-suffixed form does exist** — see the row below; the original note said no v4-pro existed at all, which is no longer true. | 2026-08-26, corrected 2026-08-29 |
+| **NIM `deepseek-ai/deepseek-v4-pro-0813`** | Listed, serves, and excluded **for being slow**: HTTP 200 with a real answer, median **183.5 s** on a one-word prompt — 115× kimi-k3 and 274× the 120B on the same prompt in the same minute. Kept configured with `available=False` rather than deleted, so nobody adds it back wondering why it was left out. | 2026-08-29 |
+| **NIM `moonshotai/kimi-k2.6`** | In the listing, HTTP **404** on use. The third model to prove a listing is not a promise. | 2026-08-29 |
 | **NIM `qwen/qwen2.5-coder-32b-instruct`** | Not in NVIDIA's catalogue. NIM hosts no Qwen model. | 2026-08-26 |
+
+### A per-model allowance is a third thing again
+
+`moonshotai/kimi-k3` is not in the table above because it works: HTTP 200,
+median **1.59 s**, and it keeps its reasoning in a separate channel. It is worth
+knowing about anyway.
+
+Roughly **ten calls over twenty minutes** exhausted its allowance on this
+account, after which it refused with HTTP 429 in **0.2 s** — instant, not
+queued — for at least five minutes. Three nemotron routes returned 200
+throughout, which is what identifies it: not the account, not our limiter, and
+not something retrying will fix.
+
+It therefore sits *second* on the reasoner and coder chains rather than leading
+them. Leading with it worked — failover served on attempt 2 — but spent one of
+four attempts on a refusal for every request. Second, it costs nothing while
+exhausted and is used the moment the allowance returns.
+
+Measure the allowance, not just the latency. A latency table alone would tell
+you to promote exactly the model you should not.
 
 ### An exhausted allowance is not a rate limit
 

@@ -318,11 +318,35 @@ retired:
   - name: nvidia_nim_deepseek_v4_pro
     base_url: https://integrate.api.nvidia.com/v1
     finding: >-
-      `deepseek-ai/deepseek-v4-pro` is NOT in NVIDIA's catalogue and appears
-      never to have been. This project configured it as its strong fallback,
-      so the fallback could not have served a request. NIM's /v1/models is
-      public — one unauthenticated GET would have caught it.
-    verified: "2026-08-26"
+      `deepseek-ai/deepseek-v4-pro` (bare id) is NOT in NVIDIA's catalogue.
+      This project configured it as its strong fallback, so the fallback could
+      not have served a request. NIM's /v1/models is public — one
+      unauthenticated GET would have caught it.
+
+      CORRECTED 2026-08-29: the earlier note said no v4-pro existed at all.
+      The DATE-SUFFIXED `deepseek-ai/deepseek-v4-pro-0813` does exist and does
+      serve. See nvidia_nim_deepseek_v4_pro_0813 below — it is excluded for a
+      completely different reason.
+    verified: "2026-08-26, corrected 2026-08-29"
+
+  - name: nvidia_nim_deepseek_v4_pro_0813
+    base_url: https://integrate.api.nvidia.com/v1
+    finding: >-
+      `deepseek-ai/deepseek-v4-pro-0813` is listed, serves, and is excluded for
+      being SLOW rather than broken: HTTP 200 with a real answer, median 183.5s
+      on a one-word prompt — 115x kimi-k3 and 274x nemotron-3-super-120b on the
+      same prompt in the same minute. Kept configured with available=False
+      rather than deleted, so it is not added back by someone who only checks
+      the catalogue.
+    verified: "2026-08-29"
+
+  - name: nvidia_nim_kimi_k2_6
+    base_url: https://integrate.api.nvidia.com/v1
+    finding: >-
+      `moonshotai/kimi-k2.6` is in NVIDIA's public listing and returns HTTP 404
+      on use. The third model in this file to prove that a listing is not a
+      promise.
+    verified: "2026-08-29"
 
   - name: nvidia_nim_qwen_coder
     base_url: https://integrate.api.nvidia.com/v1
